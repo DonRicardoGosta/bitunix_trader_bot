@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { buildCsv, downloadCsvFile } from "@/lib/csvExport";
 import { api, type StrategyInfo, type StrategyRun } from "@/lib/api";
 
 export default function StrategiesPage() {
@@ -27,6 +28,34 @@ export default function StrategiesPage() {
     const id = setInterval(refresh, 7000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  const exportRunsCsv = useCallback(() => {
+    if (!runs?.length) return;
+    const headers = [
+      "id",
+      "started_at",
+      "finished_at",
+      "strategy_name",
+      "triggered_by",
+      "status",
+      "error",
+      "details_json",
+    ];
+    const dataRows = runs.map((r) => [
+      String(r.id),
+      r.started_at ?? "",
+      r.finished_at ?? "",
+      r.strategy_name,
+      r.triggered_by,
+      r.status ?? "",
+      r.error ?? "",
+      r.details ? JSON.stringify(r.details) : "",
+    ]);
+    downloadCsvFile(
+      `strategy-runs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`,
+      buildCsv(headers, dataRows),
+    );
+  }, [runs]);
 
   async function trigger(name: string) {
     setRunning(name);
@@ -105,8 +134,18 @@ export default function StrategiesPage() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Legutóbbi futások</CardTitle>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="shrink-0"
+            disabled={!runs?.length}
+            onClick={() => exportRunsCsv()}
+          >
+            CSV export
+          </Button>
         </CardHeader>
         <CardContent>
           {!runs && <p className="text-muted text-sm">Betöltés…</p>}
@@ -138,12 +177,8 @@ export default function StrategiesPage() {
                       <td className="py-2 pr-3">
                         <StatusBadge status={r.status} />
                       </td>
-                      <td className="py-2 pr-3">
-                        {r.error ? (
-                          <span className="text-loss">{r.error}</span>
-                        ) : (
-                          <RunDetailsSummary details={r.details} />
-                        )}
+                      <td className="py-2 pr-3 max-w-xl">
+                        <RunResultCell run={r} />
                       </td>
                     </tr>
                   ))}
@@ -172,6 +207,36 @@ function StatusBadge({ status }: { status: string | null }) {
       {status}
     </span>
   );
+}
+
+function RunResultCell({ run }: { run: StrategyRun }) {
+  if (run.error) {
+    const failure =
+      run.details &&
+      typeof run.details === "object" &&
+      run.details !== null &&
+      "failure" in run.details
+        ? (run.details as Record<string, unknown>).failure
+        : null;
+    return (
+      <div className="space-y-2">
+        <pre className="whitespace-pre-wrap break-words text-loss text-xs leading-snug">
+          {run.error}
+        </pre>
+        {failure != null && (
+          <details className="text-xs">
+            <summary className="cursor-pointer text-muted hover:text-fg">
+              Strukturált hiba (API / traceback)
+            </summary>
+            <pre className="mt-2 max-h-64 overflow-auto rounded-md border border-border bg-bg-subtle p-2 font-mono text-[11px] leading-snug">
+              {JSON.stringify(failure, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
+    );
+  }
+  return <RunDetailsSummary details={run.details} />;
 }
 
 function RunDetailsSummary({ details }: { details: Record<string, unknown> | null }) {

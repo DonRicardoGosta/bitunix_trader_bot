@@ -6,6 +6,7 @@ végpont-listát később egyszerű kibővíteni a Bitunix dokumentációja alap
 
 from __future__ import annotations
 
+import json as json_std
 from decimal import Decimal
 from typing import Any
 
@@ -279,18 +280,51 @@ class BitunixClient:
                 method, path, params=params, json=json, headers=headers
             )
         except httpx.HTTPError as exc:
-            raise BitunixAPIError(f"HTTP hiba: {exc}") from exc
+            raise BitunixAPIError(f"HTTP hiba: {exc}", path=path) from exc
 
         if response.status_code >= 400:
+            parsed: object
+            try:
+                parsed = response.json()
+            except Exception:
+                parsed = response.text
+            if isinstance(parsed, dict):
+                body = parsed
+                bitmsg = (
+                    parsed.get("msg")
+                    or parsed.get("message")
+                    or json_std.dumps(parsed, ensure_ascii=False)[:1500]
+                )
+            else:
+                raw = str(parsed)[:4000]
+                body = {"raw": raw}
+                bitmsg = raw[:1500]
             raise BitunixAPIError(
-                f"Bitunix {response.status_code}: {response.text}",
+                f"{bitmsg} (HTTP {response.status_code})",
                 status_code=response.status_code,
+                path=path,
+                response_body=body,
             )
 
         data = response.json()
         if isinstance(data, dict) and data.get("code") not in (None, 0, "0", "00000"):
+            code = data.get("code")
+            msg = data.get("msg") or "Bitunix üzleti hiba"
+            extra = {
+                k: v
+                for k, v in data.items()
+                if k not in ("code", "msg")
+            }
+            extra_s = (
+                json_std.dumps(extra, ensure_ascii=False)[:2000] if extra else ""
+            )
+            full = f"{msg} [Bitunix code={code}]"
+            if extra_s and extra_s != "{}":
+                full += f" | {extra_s}"
             raise BitunixAPIError(
-                data.get("msg") or "Bitunix üzleti hiba",
-                code=str(data.get("code")),
+                full,
+                code=str(code),
+                path=path,
+                response_body=data,
             )
         return data

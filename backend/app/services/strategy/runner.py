@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.bitunix.client import BitunixClient
+from app.bitunix.error_reporting import format_strategy_run_error, structured_exception
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
 from app.config import get_settings
 from app.db import audit
@@ -48,6 +49,7 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
     )
 
     error: str | None = None
+    failure_detail: dict[str, Any] | None = None
     result: StrategyResult | None = None
     try:
         async with AsyncSessionLocal() as session:
@@ -62,10 +64,12 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
                 await session.commit()
             except (BitunixAPIError, BitunixSignatureError) as exc:
                 await session.rollback()
-                error = f"{type(exc).__name__}: {exc}"
+                failure_detail = structured_exception(exc)
+                error = format_strategy_run_error(exc)
             except Exception as exc:  # noqa: BLE001
                 await session.rollback()
-                error = f"{type(exc).__name__}: {exc}"
+                failure_detail = structured_exception(exc)
+                error = format_strategy_run_error(exc)
     finally:
         await client.close()
 
@@ -76,6 +80,9 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
             if error:
                 db_run.status = StrategyRunStatus.FAILED
                 db_run.error = error
+                db_run.details = (
+                    {"failure": failure_detail} if failure_detail is not None else None
+                )
             elif result is None:
                 db_run.status = StrategyRunStatus.FAILED
                 db_run.error = "no result"
@@ -86,19 +93,25 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
                 db_run.status = StrategyRunStatus.SUCCESS
                 db_run.details = _result_to_details(result)
 
+            audit_msg = (
+                f"{name} stratégia futás {db_run.status.value if db_run.status else 'UNKNOWN'} "
+                f"(triggered_by={triggered_by})."
+            )
+            if error and db_run.status == StrategyRunStatus.FAILED:
+                short = error if len(error) <= 600 else error[:597] + "…"
+                audit_msg += f" Hiba: {short}"
+
             await audit.record(
                 session,
                 f"strategy.run.{(db_run.status.value if db_run.status else 'unknown').lower()}",
                 level=AuditLevel.ERROR if db_run.status == StrategyRunStatus.FAILED
                 else AuditLevel.INFO,
-                message=(
-                    f"{name} stratégia futás {db_run.status.value if db_run.status else 'UNKNOWN'} "
-                    f"(triggered_by={triggered_by})."
-                ),
+                message=audit_msg,
                 payload={
                     "run_id": db_run.id,
                     "status": db_run.status.value if db_run.status else None,
                     "error": db_run.error,
+                    "failure": failure_detail,
                     "details": db_run.details,
                 },
                 strategy_name=name,
@@ -109,6 +122,7 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
             "run_id": run_id,
             "status": db_run.status.value if db_run and db_run.status else "UNKNOWN",
             "error": error,
+            "failure": failure_detail,
             "details": _result_to_details(result) if result else None,
         }
 
