@@ -77,3 +77,9 @@ def test_place_order_dry_run_via_http() -> None:
         assert "exchange" in first
         assert "lifecycle" in first["exchange"]
         assert "lifecycle_label" in first["exchange"]
+
+        dbg_list = client.get("/api/orders?debug_sync=true")
+        assert dbg_list.status_code == 200
+        dbg_row = next(r for r in dbg_list.json() if r["client_order_id"] == body["client_order_id"])
+        assert "debug" in dbg_row["exchange"]
+        assert dbg_row["exchange"]["debug"]["history_row_found"] is False

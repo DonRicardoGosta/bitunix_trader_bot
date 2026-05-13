@@ -241,3 +241,18 @@ def test_build_order_open_overrides_filled_row() -> None:
     hist = {"status": "FILLED", "realizedPNL": "0", "qty": "1", "price": "2000", "leverage": 5}
     out = build_order_api_dict(o, hist_row=hist, open_symbols={"ETHUSDT"})
     assert out["exchange"]["lifecycle"] == "open"
+
+
+def test_build_order_api_dict_include_debug() -> None:
+    o = _order(client_order_id="bt-dbg", symbol="ZUSDT", quantity="1", price=None, leverage=5)
+    hist = {"status": "FILLED", "realizedPNL": "0", "qty": "1", "price": "0", "clientId": "bt-dbg"}
+    out = build_order_api_dict(
+        o,
+        hist_row=hist,
+        open_symbols=set(),
+        include_debug=True,
+        debug_extras={"note": "unit"},
+    )
+    assert out["exchange"]["debug"]["history_row_found"] is True
+    assert "roi_blocked" in out["exchange"]["debug"]
+    assert out["exchange"]["debug"]["extras"]["note"] == "unit"

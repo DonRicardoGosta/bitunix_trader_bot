@@ -9,6 +9,16 @@ export default function OrdersPage() {
         <span className="text-xs text-muted">
           forrás: saját Postgres napló + Bitunix history / nyitott pozíció (5 mp-enként frissül)
         </span>
+        <p className="text-xs text-muted mt-2 max-w-3xl leading-relaxed">
+          Ha a realizált PnL vagy az ROI üres: nyisd meg böngészőben a backend JSON-t:{" "}
+          <code className="rounded bg-bg-card px-1 py-0.5 text-[11px]">
+            /api/orders?debug_sync=1
+          </code>{" "}
+          — másold be a chatbe <strong>egy érintett sor</strong> teljes{" "}
+          <code className="rounded bg-bg-card px-1 py-0.5 text-[11px]">exchange.debug</code>{" "}
+          objektumát, és ha van, a tábla feletti sárga „Bitunix szinkron” üzenetet is (API kulcsot /
+          secretet ne küldj).
+        </p>
       </CardHeader>
       <CardContent>
         <OrdersTable />

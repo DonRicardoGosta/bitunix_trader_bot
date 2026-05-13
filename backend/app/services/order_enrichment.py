@@ -341,6 +341,8 @@ def build_order_api_dict(
     sync_error: str | None = None,
     trade_augment: TradeAugment | None = None,
     mark_price: Decimal | None = None,
+    include_debug: bool = False,
+    debug_extras: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Egy Order ORM → API listaelem (HU mezők a frontendnek)."""
     sym_u = o.symbol.upper()
@@ -411,6 +413,63 @@ def build_order_api_dict(
             lifecycle = "unknown"
             lifecycle_label = st or "Ismeretlen"
 
+    exchange: dict[str, Any] = {
+        "synced": sync_error is None,
+        "sync_error": sync_error,
+        "order_status": exchange_status,
+        "lifecycle": lifecycle,
+        "lifecycle_label": lifecycle_label,
+        "realized_pnl_usdt": str(realized) if realized is not None else None,
+        "roi_pct": (
+            str(roi_pct.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+            if roi_pct is not None
+            else None
+        ),
+        "margin_usdt_estimate": (
+            str(margin.quantize(Decimal("0.0001"))) if margin is not None else None
+        ),
+    }
+
+    if include_debug:
+        roi_blocked: str | None = None
+        if margin is None or margin <= 0:
+            roi_blocked = "no_margin (qty×price/leverage nem számolható)"
+        elif realized is None:
+            roi_blocked = "no_realized (nincs PnL forrás)"
+        dbg: dict[str, Any] = {
+            "history_row_found": hist_row is not None,
+            "history_row_keys": sorted(hist_row.keys())[:50] if hist_row else [],
+            "history_clientId_raw": hist_row.get("clientId") if hist_row else None,
+            "history_orderId_raw": hist_row.get("orderId") if hist_row else None,
+            "history_positionId_raw": (hist_row.get("positionId") if hist_row else None)
+            or (hist_row.get("position_id") if hist_row else None),
+            "history_status_raw": exchange_status,
+            "history_realized_raw": hist_row.get("realizedPNL") if hist_row else None,
+            "realized_hist_parsed": str(realized_hist)
+            if realized_hist is not None
+            else None,
+            "realized_effective": str(realized) if realized is not None else None,
+            "trade_augment_chosen": {
+                "realized_sum": str(trade_augment.realized_sum),
+                "avg_price": str(trade_augment.avg_price),
+            }
+            if trade_augment
+            else None,
+            "qty_for_margin": str(qty),
+            "leverage_used": lev,
+            "price_hist": str(price_hist) if price_hist else None,
+            "price_db": str(db_price) if db_price else None,
+            "price_trade_vwap": str(ta_price) if ta_price else None,
+            "price_ticker_fallback": str(mp) if mp else None,
+            "price_chosen_for_margin": str(price) if price and price > 0 else None,
+            "margin_usdt": str(margin) if margin else None,
+            "roi_blocked": roi_blocked,
+            "symbol_in_open_positions": sym_u in open_symbols,
+        }
+        if debug_extras:
+            dbg["extras"] = debug_extras
+        exchange["debug"] = dbg
+
     return {
         "id": o.id,
         "client_order_id": o.client_order_id,
@@ -423,20 +482,5 @@ def build_order_api_dict(
         "leverage": o.leverage,
         "status": o.status.value,
         "created_at": o.created_at.isoformat(),
-        "exchange": {
-            "synced": sync_error is None,
-            "sync_error": sync_error,
-            "order_status": exchange_status,
-            "lifecycle": lifecycle,
-            "lifecycle_label": lifecycle_label,
-            "realized_pnl_usdt": str(realized) if realized is not None else None,
-            "roi_pct": (
-                str(roi_pct.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-                if roi_pct is not None
-                else None
-            ),
-            "margin_usdt_estimate": (
-                str(margin.quantize(Decimal("0.0001"))) if margin is not None else None
-            ),
-        },
+        "exchange": exchange,
     }

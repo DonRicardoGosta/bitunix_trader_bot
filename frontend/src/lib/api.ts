@@ -24,6 +24,8 @@ export interface OrderExchangeInfo {
   realized_pnl_usdt: string | null;
   roi_pct: string | null;
   margin_usdt_estimate: string | null;
+  /** Csak GET /api/orders?debug_sync=1 esetén – hibakereséshez */
+  debug?: Record<string, unknown>;
 }
 
 export interface OrderRow {

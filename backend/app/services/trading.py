@@ -135,7 +135,7 @@ class TradingService:
             raw=response,
         )
 
-    async def list_orders(self, limit: int = 50) -> list[dict[str, Any]]:
+    async def list_orders(self, limit: int = 50, *, debug_sync: bool = False) -> list[dict[str, Any]]:
         """Legutóbbi rendelések DB-ből, Bitunix history + nyitott pozíció szinkronnal."""
         stmt = select(Order).order_by(Order.created_at.desc()).limit(limit)
         result = await self._session.execute(stmt)
@@ -149,6 +149,8 @@ class TradingService:
                     hist_row=None,
                     open_symbols=set(),
                     sync_error="Bitunix API kulcs nincs beállítva – nincs tőzsdei szinkron.",
+                    include_debug=debug_sync,
+                    debug_extras={"reason": "missing_api_credentials"},
                 )
                 for o in orders
             ]
@@ -291,6 +293,14 @@ class TradingService:
 
         global_sync_error = None if got_any_exchange else sync_err
 
+        sync_index_meta = {
+            "hist_by_client_count": len(hist_by_client),
+            "trade_by_client_count": len(trade_by_client),
+            "trade_by_order_count": len(trade_by_order),
+            "trade_by_position_count": len(trade_by_position),
+            "hist_client_id_prefix_sample": sorted(hist_by_client.keys())[:20],
+        }
+
         return [
             self._order_api_row(
                 o,
@@ -301,6 +311,8 @@ class TradingService:
                 trade_by_order=trade_by_order,
                 trade_by_position=trade_by_position,
                 mark_by_symbol=mark_by_symbol,
+                include_debug=debug_sync,
+                sync_index_meta=sync_index_meta,
             )
             for o in orders
         ]
@@ -316,6 +328,8 @@ class TradingService:
         trade_by_order: dict[str, TradeAugment],
         trade_by_position: dict[tuple[str, str], TradeAugment],
         mark_by_symbol: dict[str, Decimal],
+        include_debug: bool = False,
+        sync_index_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
         hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
@@ -332,6 +346,29 @@ class TradingService:
             bitunix_order_id=o.bitunix_order_id,
         )
         aug = best_trade_augment(aug_pos, aug_pick)
+        extras: dict[str, Any] | None = None
+        if include_debug:
+            extras = {
+                "sync_index_meta": sync_index_meta,
+                "aug_position": {
+                    "realized_sum": str(aug_pos.realized_sum),
+                    "avg_price": str(aug_pos.avg_price),
+                }
+                if aug_pos
+                else None,
+                "aug_from_client_or_order": {
+                    "realized_sum": str(aug_pick.realized_sum),
+                    "avg_price": str(aug_pick.avg_price),
+                }
+                if aug_pick
+                else None,
+                "aug_best_chosen": {
+                    "realized_sum": str(aug.realized_sum),
+                    "avg_price": str(aug.avg_price),
+                }
+                if aug
+                else None,
+            }
         return build_order_api_dict(
             o,
             hist_row=hr,
@@ -339,6 +376,8 @@ class TradingService:
             sync_error=global_sync_error,
             trade_augment=aug,
             mark_price=mark_by_symbol.get(o.symbol.upper()),
+            include_debug=include_debug,
+            debug_extras=extras,
         )
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_trading_service
@@ -64,7 +64,14 @@ async def place_order(
 @router.get("")
 async def list_orders(
     limit: int = 50,
+    debug_sync: bool = Query(
+        False,
+        description=(
+            "Ha true: minden sor exchange.debug mezőben technikai részletek "
+            "(PnL/ROI számítás hibakereséséhez; ne oszd meg nyilvánosan)."
+        ),
+    ),
     service: TradingService = Depends(get_trading_service),
 ) -> list[dict[str, Any]]:
     """Legutóbbi rendelések (saját DB + Bitunix history / nyitott pozíció)."""
-    return await service.list_orders(limit=limit)
+    return await service.list_orders(limit=limit, debug_sync=debug_sync)
