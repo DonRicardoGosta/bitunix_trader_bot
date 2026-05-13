@@ -136,7 +136,7 @@ def _result_to_details(result: StrategyResult) -> dict[str, Any]:
 
 
 class StrategyRunner:
-    """Egyszerű asyncio-alapú ütemező: minden bekapcsolt stratégiát N percenként futtat.
+    """Egyszerű asyncio-alapú ütemező: minden regisztrált stratégiát rendszeresen futtat.
 
     Indítás:  ``await runner.start()``
     Leállítás:``await runner.stop()``

@@ -46,8 +46,9 @@ class Settings(BaseSettings):
     bitunix_margin_coin: str = "USDT"
 
     # -- stratégia / scheduler ----------------------------------------------
-    strategy_runner_enabled: bool = False
-    strategy_interval_seconds: int = 300
+    # Alapból be: induláskor elindul a háttér-futó; tesztekben kapcsold ki env-vel.
+    strategy_runner_enabled: bool = True
+    strategy_interval_seconds: int = 30
     strategy_top_movers_enabled: bool = True
     strategy_top_movers_count: int = 3
     strategy_top_movers_scan_limit: int = 60

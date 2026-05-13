@@ -52,8 +52,8 @@ Elérhetőség:
 | Változó                              | Alap            | Hatás                                                   |
 | ------------------------------------ | --------------- | ------------------------------------------------------- |
 | `BITUNIX_LIVE_TRADING`                     | `false`             | Ha `false`, semmilyen rendelés nem megy a Bitunixhoz.            |
-| `STRATEGY_RUNNER_ENABLED`                  | `false`             | A háttér scheduler kapcsolója.                                   |
-| `STRATEGY_INTERVAL_SECONDS`                | `300`               | Két lefutás közti idő.                                           |
+| `STRATEGY_RUNNER_ENABLED`                  | `true`              | A háttér scheduler kapcsolója (induláskor indul).                 |
+| `STRATEGY_INTERVAL_SECONDS`                | `30`                | Két scheduler-kör közti várakozás (mp).                          |
 | `STRATEGY_TOP_MOVERS_COUNT`                | `3`                 | Hány párhuzamos slot (nyitott pozíció cél a Bitunix szerint).     |
 | `STRATEGY_TOP_MOVERS_SCAN_LIMIT`           | `60`                | Rangsorolt coinok max. száma slot-feltöltéshez (TP/SL után pótlás). |
 | `STRATEGY_TOP_MOVERS_COOLDOWN_MINUTES`     | `240`               | Per-szimbólum cooldown a `top_movers` stratégiához.              |
@@ -154,7 +154,7 @@ egy banner jelzi ha a trading **le van tiltva**.
 
 Indítás:
 * API: `POST /api/strategies/top_movers/run` (manuális)
-* Scheduler: `STRATEGY_RUNNER_ENABLED=true` (5 percenként, vagy ahogy beállítod)
+* Scheduler: alapból be (`STRATEGY_RUNNER_ENABLED=true`), ~30 mp-enként új kör (`STRATEGY_INTERVAL_SECONDS`)
 * UI: a **Stratégiák** oldalon `Indítás most` gomb
 
 A teljes audit látható a **Eseménynapló** oldalon, vagy
