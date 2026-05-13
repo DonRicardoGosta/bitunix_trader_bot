@@ -39,9 +39,14 @@ from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
 from app.db import audit
 from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
+from app.services.calibration_runner import get_active_calibration_result
 from app.services.risk import compute_margin, compute_quantity
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
-from app.services.tpsl import compute_tp_sl_prices, is_risky_sl_roi
+from app.services.tpsl import (
+    compute_tp_sl_prices,
+    compute_tp_sl_prices_from_move_pct,
+    is_risky_sl_roi,
+)
 from app.services.trading import TradingService
 
 
@@ -63,6 +68,22 @@ class TopMoversStrategy(Strategy):
                 strategy_name=self.name,
             )
             result.details["reason"] = "disabled"
+            return result
+
+        # GATE: kell-e friss kalibráció?
+        calibration = await get_active_calibration_result(ctx.session)
+        if settings.require_calibration_for_trading and calibration is None:
+            await audit.record(
+                ctx.session,
+                "strategy.top_movers.calibration_missing",
+                level=AuditLevel.WARNING,
+                message=(
+                    "Nincs friss TP/SL kalibráció – a stratégia kihagyja "
+                    "a kereskedést, amíg a calibration runner lefut."
+                ),
+                strategy_name=self.name,
+            )
+            result.details["reason"] = "calibration_missing"
             return result
 
         top_n = max(1, int(settings.strategy_top_movers_count))
@@ -138,17 +159,34 @@ class TopMoversStrategy(Strategy):
         tp_roi = Decimal(settings.strategy_tp_roi_pct)
         sl_roi = Decimal(settings.strategy_sl_roi_pct)
         result.details["direction_mode"] = direction_mode
-        result.details["tp_roi_pct"] = str(tp_roi)
-        result.details["sl_roi_pct"] = str(sl_roi)
+        result.details["calibration_used"] = calibration is not None
+        if calibration is not None:
+            result.details["calibration_global"] = {
+                "tp_move_pct": (
+                    str(calibration.global_tp_move_pct)
+                    if calibration.global_tp_move_pct is not None
+                    else None
+                ),
+                "sl_move_pct": (
+                    str(calibration.global_sl_move_pct)
+                    if calibration.global_sl_move_pct is not None
+                    else None
+                ),
+                "symbol_count": len(calibration.per_symbol),
+            }
+        else:
+            result.details["tp_roi_pct"] = str(tp_roi)
+            result.details["sl_roi_pct"] = str(sl_roi)
 
-        if is_risky_sl_roi(sl_roi):
+        if calibration is None and is_risky_sl_roi(sl_roi):
             await audit.record(
                 ctx.session,
                 "strategy.top_movers.risky_sl_warning",
                 level=AuditLevel.WARNING,
                 message=(
                     f"SL ROI {sl_roi}% magas (likvidáció-közeli). "
-                    "Megfontolandó 50-75% közé csökkenteni."
+                    "Megfontolandó 50-75% közé csökkenteni, vagy hagyatkozni "
+                    "a kalibrációra."
                 ),
                 payload={"sl_roi_pct": str(sl_roi)},
                 strategy_name=self.name,
@@ -167,6 +205,7 @@ class TopMoversStrategy(Strategy):
                 tp_roi=tp_roi,
                 sl_roi=sl_roi,
                 stop_type=settings.strategy_tpsl_stop_type,
+                calibration=calibration,
             )
             if decision.get("placed"):
                 result.placed_orders.append(decision)
@@ -189,6 +228,7 @@ class TopMoversStrategy(Strategy):
         tp_roi: Decimal,
         sl_roi: Decimal,
         stop_type: str,
+        calibration: Any | None = None,
     ) -> dict[str, Any]:
         """Egy szimbólumra a teljes döntéslánc + végrehajtás."""
         symbol = mover.symbol
@@ -307,16 +347,45 @@ class TopMoversStrategy(Strategy):
             )
             return out
 
-        # 6) TP / SL trigger árak ROI-ból
+        # 6) TP / SL trigger árak — kalibráció elsődleges, ROI fallback
+        tp_source = "roi_fallback"
         try:
-            tp_price, sl_price = compute_tp_sl_prices(
-                entry_price=mover.last_price,
-                side=side,
-                leverage=leverage,
-                tp_roi_pct=tp_roi,
-                sl_roi_pct=sl_roi,
-                price_precision=meta.price_precision,
-            )
+            if calibration is not None:
+                lookup = calibration.lookup(symbol)
+                if lookup is not None:
+                    tp_move_pct, sl_move_pct = lookup
+                    tp_price, sl_price = compute_tp_sl_prices_from_move_pct(
+                        entry_price=mover.last_price,
+                        side=side,
+                        tp_move_pct=tp_move_pct,
+                        sl_move_pct=sl_move_pct,
+                        price_precision=meta.price_precision,
+                    )
+                    tp_source = (
+                        "calibration_per_symbol"
+                        if symbol in calibration.per_symbol
+                        else "calibration_global"
+                    )
+                    out["tp_move_pct"] = str(tp_move_pct)
+                    out["sl_move_pct"] = str(sl_move_pct)
+                else:
+                    tp_price, sl_price = compute_tp_sl_prices(
+                        entry_price=mover.last_price,
+                        side=side,
+                        leverage=leverage,
+                        tp_roi_pct=tp_roi,
+                        sl_roi_pct=sl_roi,
+                        price_precision=meta.price_precision,
+                    )
+            else:
+                tp_price, sl_price = compute_tp_sl_prices(
+                    entry_price=mover.last_price,
+                    side=side,
+                    leverage=leverage,
+                    tp_roi_pct=tp_roi,
+                    sl_roi_pct=sl_roi,
+                    price_precision=meta.price_precision,
+                )
         except ValueError as exc:
             out["placed"] = False
             out["reason"] = "tpsl_computation_failed"
@@ -330,6 +399,7 @@ class TopMoversStrategy(Strategy):
                 strategy_name=self.name,
             )
             return out
+        out["tp_source"] = tp_source
 
         # 7) belépés natív TP/SL-lel (atomi REST hívás a Bitunixhoz)
         request = OrderRequest.model_validate(
@@ -355,11 +425,12 @@ class TopMoversStrategy(Strategy):
             entry_price=str(mover.last_price),
             tp_price=str(tp_price),
             sl_price=str(sl_price),
-            tp_roi_pct=str(tp_roi),
-            sl_roi_pct=str(sl_roi),
             client_order_id=order_resp.client_order_id,
             dry_run=order_resp.dry_run,
         )
+        if tp_source.startswith("calibration") is False:
+            out["tp_roi_pct"] = str(tp_roi)
+            out["sl_roi_pct"] = str(sl_roi)
         await audit.record(
             ctx.session,
             "strategy.top_movers.tpsl_set",

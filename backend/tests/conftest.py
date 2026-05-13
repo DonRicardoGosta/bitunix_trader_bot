@@ -11,6 +11,7 @@ os.environ.setdefault(
 os.environ.setdefault("BITUNIX_API_KEY", "test_api_key")
 os.environ.setdefault("BITUNIX_API_SECRET", "test_secret_key")
 os.environ.setdefault("BITUNIX_LIVE_TRADING", "false")
+os.environ.setdefault("CALIBRATION_ENABLED", "false")
 
 import pytest
 from fastapi.testclient import TestClient

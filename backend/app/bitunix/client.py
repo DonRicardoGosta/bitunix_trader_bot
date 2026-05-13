@@ -87,6 +87,43 @@ class BitunixClient:
             authenticated=False,
         )
 
+    async def get_klines(
+        self,
+        symbol: str,
+        *,
+        interval: str = "1m",
+        limit: int = 200,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        kline_type: str = "LAST_PRICE",
+    ) -> dict[str, Any]:
+        """Kline (gyertyák) lekérdezés egy szimbólumra.
+
+        Args:
+            symbol: pl. ``"BTCUSDT"``.
+            interval: ``1m``, ``5m``, ``15m``, ``30m``, ``1h``, ``2h``, ``4h``,
+                ``6h``, ``8h``, ``12h``, ``1d``, ``3d``, ``1w``, ``1M``.
+            limit: max 200.
+            start_time_ms / end_time_ms: opcionális szűrés (Unix ms).
+            kline_type: ``LAST_PRICE`` vagy ``MARK_PRICE``.
+        """
+        params: dict[str, Any] = {
+            "symbol": symbol,
+            "interval": interval,
+            "limit": min(max(1, limit), 200),
+            "type": kline_type,
+        }
+        if start_time_ms is not None:
+            params["startTime"] = int(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = int(end_time_ms)
+        return await self._request(
+            "GET",
+            "/api/v1/futures/market/kline",
+            params=params,
+            authenticated=False,
+        )
+
     # -- privát végpontok --------------------------------------------------
 
     async def get_account(self, margin_coin: str = "USDT") -> dict[str, Any]:

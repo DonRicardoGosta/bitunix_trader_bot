@@ -183,7 +183,14 @@ export function OrderForm() {
 
       {error && (
         <div className="rounded-md border border-loss/50 bg-loss/10 p-3 text-sm text-red-300">
-          Hiba: {error}
+          {error.includes("Trading is locked") ? (
+            <>
+              <div className="font-semibold mb-1">⛔ Trading le van tiltva</div>
+              <span>{error}</span>
+            </>
+          ) : (
+            <>Hiba: {error}</>
+          )}
         </div>
       )}
       {result && (

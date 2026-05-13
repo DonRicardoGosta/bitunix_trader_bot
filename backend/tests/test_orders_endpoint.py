@@ -7,12 +7,15 @@ Alembic migráció gondoskodik ugyanerről.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from app.db.base import Base
-from app.db.session import engine
+from app.db.models import CalibrationStatus, TpSlCalibration
+from app.db.session import AsyncSessionLocal, engine
 from app.main import create_app
 
 
@@ -27,7 +30,26 @@ async def _create_all() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
+async def _seed_calibration() -> None:
+    """Friss SUCCESS kalibráció, hogy a trading gate átengedjen."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(TpSlCalibration))
+        session.add(
+            TpSlCalibration(
+                status=CalibrationStatus.SUCCESS,
+                triggered_by="test_setup",
+                lookback_minutes=120,
+                top_n=20,
+                summary={"global": {"tp_move_pct": "1", "sl_move_pct": "0.5"}},
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
 def test_place_order_dry_run_via_http() -> None:
+    asyncio.run(_seed_calibration())
     app = create_app()
     with TestClient(app) as client:
         payload = {

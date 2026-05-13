@@ -6,6 +6,7 @@ const links = [
   { href: "/orders", label: "Rendelések" },
   { href: "/positions", label: "Pozíciók" },
   { href: "/strategies", label: "Stratégiák" },
+  { href: "/calibration", label: "Kalibráció" },
   { href: "/events", label: "Eseménynapló" },
 ];
 

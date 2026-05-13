@@ -58,9 +58,28 @@ class Settings(BaseSettings):
 
     # -- TP / SL beállítások (ROI százalékban a margin-on, leverage-vel együtt) --
     # 200 / 100 a userspec; a kockázat-kommentet lásd a tpsl.py-ban.
+    # Csak fallback-ként használjuk, ha nincs friss kalibráció.
     strategy_tp_roi_pct: str = "200"
     strategy_sl_roi_pct: str = "100"
     strategy_tpsl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = "MARK_PRICE"
+
+    # -- TP/SL automatikus belövő / calibration --
+    calibration_enabled: bool = True
+    calibration_interval_seconds: int = 3600  # 1 óra
+    calibration_lookback_minutes: int = 120  # 2 óra
+    calibration_top_n: int = 20
+    calibration_kline_interval: str = "1m"
+    calibration_tp_atr_mult: str = "3.0"
+    calibration_sl_atr_mult: str = "1.5"
+    calibration_min_tp_move_pct: str = "0.20"
+    calibration_min_sl_move_pct: str = "0.10"
+    calibration_max_tp_move_pct: str = "10.0"
+    calibration_max_sl_move_pct: str = "5.0"
+    # A trading akkor "engedélyezett", ha a legutóbbi SIKERES kalibráció
+    # fiatalabb mint ez (vagy az interval × 2, amelyik nagyobb).
+    calibration_max_age_minutes: int = 180
+    # Ha True, a tradelés (manuális is) blokkolva van amíg nincs friss kalibráció.
+    require_calibration_for_trading: bool = True
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod

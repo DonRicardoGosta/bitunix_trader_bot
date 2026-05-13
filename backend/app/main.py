@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.api.routes import (
     account,
+    calibration,
     events,
     health,
     market,
@@ -28,6 +29,7 @@ from app.api.routes import (
 from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel
+from app.services.calibration_runner import CalibrationRunner
 from app.services.strategy.runner import StrategyRunner
 
 
@@ -54,6 +56,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:  # noqa: BLE001
         print(f"[bitunix-trader] audit init failed: {exc}", file=sys.stderr, flush=True)
 
+    calibration_runner: CalibrationRunner | None = None
+    if settings.calibration_enabled:
+        calibration_runner = CalibrationRunner(
+            interval_seconds=settings.calibration_interval_seconds,
+        )
+        await calibration_runner.start()
+        app.state.calibration_runner = calibration_runner
+
     runner: StrategyRunner | None = None
     if settings.strategy_runner_enabled:
         runner = StrategyRunner(
@@ -67,6 +77,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         if runner is not None:
             await runner.stop()
+        if calibration_runner is not None:
+            await calibration_runner.stop()
         print("[bitunix-trader] shutdown", file=sys.stdout, flush=True)
         with contextlib.suppress(Exception):
             await audit.record_isolated(
@@ -103,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(account.router, prefix="/api")
     app.include_router(strategies.router, prefix="/api")
     app.include_router(events.router, prefix="/api")
+    app.include_router(calibration.router, prefix="/api")
 
     return app
 

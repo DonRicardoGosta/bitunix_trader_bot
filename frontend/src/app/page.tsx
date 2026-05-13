@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MarketTicker } from "@/components/MarketTicker";
+import { TradingGateBanner } from "@/components/TradingGateBanner";
 
 export default function HomePage() {
   return (
@@ -14,6 +15,8 @@ export default function HomePage() {
           flag-et.
         </p>
       </section>
+
+      <TradingGateBanner />
 
       <MarketTicker symbol="BTCUSDT" />
 

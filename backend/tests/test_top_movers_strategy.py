@@ -3,11 +3,16 @@
 A Bitunix klienst egy ``FakeBitunixClient`` helyettesíti, amely előre megadott
 válaszokat ad. Így a teljes ``TopMoversStrategy.run`` lefuttatható DB-vel,
 és tudjuk ellenőrizni az audit eseményeket, a cooldownt és a kerekítést.
+
+Minden teszt egy friss SUCCESS ``TpSlCalibration`` rekorddal indul, hogy a
+kalibrációs gate ne akadályozza a kereskedést – a gate viselkedését külön
+``test_calibration_gating.py`` ellenőrzi.
 """
 
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -18,14 +23,41 @@ from app.db.base import Base
 from app.db.models import (
     AuditEvent,
     AuditLevel,
+    CalibrationStatus,
     Order,
     OrderSide,
     OrderStatus,
     OrderType,
+    TpSlCalibration,
 )
 from app.db.session import AsyncSessionLocal, engine
 from app.services.strategy.base import StrategyContext
 from app.services.strategy.top_movers import TopMoversStrategy
+
+
+async def _seed_fresh_calibration() -> None:
+    """Friss SUCCESS kalibráció DB-be – per-symbol nélkül (global fallback)."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(TpSlCalibration))
+        session.add(
+            TpSlCalibration(
+                status=CalibrationStatus.SUCCESS,
+                triggered_by="test_setup",
+                lookback_minutes=120,
+                top_n=20,
+                summary={
+                    "lookback_minutes": 120,
+                    "top_n": 20,
+                    "tp_atr_mult": "3.0",
+                    "sl_atr_mult": "1.5",
+                    "global": {"tp_move_pct": "1.5", "sl_move_pct": "0.75"},
+                    "per_symbol": {},
+                },
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
 
 
 class FakeBitunixClient:
@@ -119,6 +151,10 @@ async def test_top_movers_places_orders_for_top3_with_correct_direction() -> Non
     """Top3 absolute mover → három rendelés, irány a breakout helyzettel összhangban,
     TP/SL trigger árak natívan az entry order paraméterei között.
     """
+    await _seed_fresh_calibration()
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.commit()
     fake = FakeBitunixClient(
         tickers=_make_tickers(),
         trading_pairs=_make_pairs(),
@@ -154,24 +190,25 @@ async def test_top_movers_places_orders_for_top3_with_correct_direction() -> Non
         assert by_symbol[sym]["tp_stop_type"] == "MARK_PRICE"
         assert by_symbol[sym]["sl_stop_type"] == "MARK_PRICE"
 
-    # +25% CCC: entry=125, lev=100, ROI 200%/100% → mozgás 2% / 1%
-    assert Decimal(placed["CCC"]["tp_price"]) == Decimal("127.50")
-    assert Decimal(placed["CCC"]["sl_price"]) == Decimal("123.75")
-    # -40% BBB SHORT: entry=60, lev=75 → mozgás 200/75≈2.667% / 100/75≈1.333%
-    # 60 * (1 - 0.02667) = 58.40 (round_up 2 dec)
-    # 60 * (1 + 0.01333) = 60.80 (round_up 2 dec)
-    assert Decimal(placed["BBB"]["tp_price"]) <= Decimal("60")
-    assert Decimal(placed["BBB"]["sl_price"]) >= Decimal("60")
+    # Kalibráció globális fallback: tp_move=1.5%, sl_move=0.75%
+    # +25% CCC LONG  entry=125 → tp=126.87(5), sl=124.06(25), 2 dec round_down
+    assert Decimal(placed["CCC"]["tp_price"]) == Decimal("126.87")
+    assert Decimal(placed["CCC"]["sl_price"]) == Decimal("124.06")
+    # -40% BBB SHORT entry=60 → tp=59.10, sl=60.45 (round_up 2dec)
+    assert Decimal(placed["BBB"]["tp_price"]) == Decimal("59.10")
+    assert Decimal(placed["BBB"]["sl_price"]) == Decimal("60.45")
+    assert placed["BBB"]["tp_source"] == "calibration_global"
 
     assert result.details["margin_per_position_usdt"] == "10.00"
-    assert result.details["tp_roi_pct"] == "200"
-    assert result.details["sl_roi_pct"] == "100"
+    assert result.details["calibration_used"] is True
 
 
 @pytest.mark.asyncio
 async def test_top_movers_respects_4h_cooldown() -> None:
     """Friss order ugyanarra a stratégiára + szimbólumra → cooldown skip."""
+    await _seed_fresh_calibration()
     async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
         recent = Order(
             client_order_id="bt-recent-1",
             symbol="BBB",
@@ -209,6 +246,10 @@ async def test_top_movers_respects_4h_cooldown() -> None:
 @pytest.mark.asyncio
 async def test_top_movers_uses_min_margin_when_balance_low() -> None:
     """5 USDT egyenleg → 1% = 0.05 USDT, de 0.25 minimum lép életbe."""
+    await _seed_fresh_calibration()
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.commit()
     fake = FakeBitunixClient(
         tickers={
             "data": [
@@ -244,6 +285,7 @@ async def test_top_movers_uses_min_margin_when_balance_low() -> None:
 @pytest.mark.asyncio
 async def test_top_movers_skips_ambiguous_in_momentum_breakout_mode() -> None:
     """Ha az ár a 24h tartomány közepén van, ne nyissunk pozíciót."""
+    await _seed_fresh_calibration()
     fake = FakeBitunixClient(
         tickers={
             "data": [
@@ -290,6 +332,7 @@ async def test_top_movers_skips_ambiguous_in_momentum_breakout_mode() -> None:
 @pytest.mark.asyncio
 async def test_top_movers_writes_audit_events() -> None:
     """Minden lényeges lépés DB audit_events-be kerül."""
+    await _seed_fresh_calibration()
     async with AsyncSessionLocal() as session:
         await session.execute(sa.delete(AuditEvent))
         await session.execute(sa.delete(Order))
@@ -324,9 +367,6 @@ async def test_top_movers_writes_audit_events() -> None:
     assert "strategy.top_movers.margin_computed" in events
     assert "strategy.top_movers.leverage_set" in events
     assert "strategy.top_movers.tpsl_set" in events
-    assert "strategy.top_movers.risky_sl_warning" in events
     assert "trade.order_placed" in events
-    # A risky_sl_warning WARNING szintű, a többi info
     levels = {r.event: r.level for r in rows}
-    assert levels["strategy.top_movers.risky_sl_warning"] == AuditLevel.WARNING
     assert levels["strategy.top_movers.tpsl_set"] == AuditLevel.INFO

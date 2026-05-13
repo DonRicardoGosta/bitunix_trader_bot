@@ -59,9 +59,15 @@ Elérhetőség:
 | `STRATEGY_TOP_MOVERS_RANGE_THRESHOLD`      | `0.66`              | Momentum_breakout küszöb a 24h tartomány felső/alsó zónájához.   |
 | `STRATEGY_MARGIN_PCT_OF_BALANCE`           | `0.01`              | Margin arány a futures egyenlegből (1%).                         |
 | `STRATEGY_MIN_MARGIN_USDT`                 | `0.25`              | Margin padló.                                                    |
-| `STRATEGY_TP_ROI_PCT`                      | `200`               | Take-profit ROI cél (% a margin-on, leverage figyelembe véve).   |
-| `STRATEGY_SL_ROI_PCT`                      | `100`               | Stop-loss ROI cél (likvidáció-közeli, lásd alábbi javaslat).     |
+| `STRATEGY_TP_ROI_PCT`                      | `200`               | TP ROI fallback (ha nincs friss kalibráció).                     |
+| `STRATEGY_SL_ROI_PCT`                      | `100`               | SL ROI fallback (likvidáció-közeli, lásd alábbi javaslat).       |
 | `STRATEGY_TPSL_STOP_TYPE`                  | `MARK_PRICE`        | `MARK_PRICE` vagy `LAST_PRICE` – Bitunix trigger típus.          |
+| `CALIBRATION_ENABLED`                      | `true`              | TP/SL kalibrációs scheduler kapcsoló.                            |
+| `CALIBRATION_INTERVAL_SECONDS`             | `3600`              | Két kalibrációs futás között eltelő idő.                         |
+| `CALIBRATION_LOOKBACK_MINUTES`             | `120`               | Visszanéző ablak (2 óra) ATR számításhoz.                        |
+| `CALIBRATION_TOP_N`                        | `20`                | Hány top szimbólumra fusson le.                                  |
+| `CALIBRATION_TP_ATR_MULT` / `_SL_ATR_MULT` | `3.0` / `1.5`       | ATR multiplikátorok → TP/SL price move % (R:R = 2:1).            |
+| `REQUIRE_CALIBRATION_FOR_TRADING`          | `true`              | Ha igaz, tradelés csak friss SIKERES kalibráció után.            |
 | `DB_CPU_LIMIT` / `DB_MEM_LIMIT`            | `1.0` / `512M`      | Docker erőforrás-korlát a Postgresre.                            |
 | `BACKEND_CPU_LIMIT` / `BACKEND_MEM_LIMIT`  | `1.0` / `512M`      | Docker korlát a backendre.                                       |
 | `FRONTEND_CPU_LIMIT` / `FRONTEND_MEM_LIMIT`| `1.0` / `1G`        | Docker korlát a frontendre.                                      |
@@ -117,6 +123,33 @@ Konzervatívabb és tipikusan **profitabilisebb** elrendezés:
 A backend `WARNING` szintű audit eseményt ír a `audit_events` táblába minden
 futás elején, ha az SL ROI ≥ 80% (`strategy.top_movers.risky_sl_warning`).
 
+### 🎯 TP/SL automatikus belövés (kalibráció)
+
+A `top_movers` stratégia **per-szimbólum kalibrált TP/SL targeteket** is
+használ, ami felülírja a fenti ROI defaulteket. A kalibrációs process az
+**app indulásakor azonnal lefut**, majd **óránként** újra. Trading csak
+akkor engedélyezett, ha létezik friss, sikeres kalibráció.
+
+**Mit csinál a kalibrációs runner:**
+1. Lekéri a top 20 szimbólumot (`|24h % változás|` alapján).
+2. Mindegyikre lekér **2 órányi 1-perces gyertyát** (= 120 minta).
+3. Kiszámolja az **ATR**-t a closing ár százalékában (recent realized
+   volatility).
+4. `tp_move% = ATR × 3.0` és `sl_move% = ATR × 1.5` → **R:R = 2:1**, ami
+   matematikailag pozitív várt érték már ~40% hit rate-nél is.
+5. Plafon / padló: `CALIBRATION_MIN_/MAX_TP_/SL_MOVE_PCT` korlátok között.
+6. Per-symbol és globális mediánt is tárol – ha a stratégia egy olyan
+   coint választ, ami nem volt a top 20-ban, a globális mediánt használja.
+
+**Endpointok:**
+* `GET /api/calibration/latest` – aktuális állapot, `trading_enabled` flag
+* `GET /api/calibration/runs` – futási történet
+* `POST /api/calibration/run` – kézi indítás (háttér task)
+
+A `Kalibráció` UI oldal mutatja a status badge-et, a globális TP/SL
+targeteket, a per-szimbólum tábláját, és a futási történetet. A dashboardon
+egy banner jelzi ha a trading **le van tiltva**.
+
 Indítás:
 * API: `POST /api/strategies/top_movers/run` (manuális)
 * Scheduler: `STRATEGY_RUNNER_ENABLED=true` (5 percenként, vagy ahogy beállítod)
@@ -148,8 +181,8 @@ A teljes audit látható a **Eseménynapló** oldalon, vagy
 │   │   ├── services/strategy/   # stratégia framework (base, registry, runner)
 │   │   │                        # + top_movers stratégia
 │   │   └── db/audit.py    # authoritatív DB-be írt eseménynapló
-│   ├── alembic/           # DB migrációk (2 revision)
-│   ├── tests/             # pytest (47 teszt)
+│   ├── alembic/           # DB migrációk (3 revision)
+│   ├── tests/             # pytest (64 teszt)
 │   └── pyproject.toml
 ├── frontend/
 │   ├── src/
@@ -157,7 +190,7 @@ A teljes audit látható a **Eseménynapló** oldalon, vagy
 │   │   │                  #   positions, strategies, events)
 │   │   ├── components/    # üzleti komponensek + UI primitívek
 │   │   └── lib/           # API kliens, segédfüggvények
-│   ├── tests              # Vitest (17 teszt) — komponensek mellett
+│   ├── tests              # Vitest (21 teszt) — komponensek mellett
 │   └── package.json
 └── ARCHITECTURE.md        # részletes architektúra
 ```

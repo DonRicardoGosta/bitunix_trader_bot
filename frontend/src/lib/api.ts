@@ -86,6 +86,35 @@ export interface StrategyInfo {
   last_run: StrategyRun | null;
 }
 
+export interface CalibrationRun {
+  id: number;
+  status: "RUNNING" | "SUCCESS" | "FAILED" | null;
+  triggered_by: string;
+  lookback_minutes: number;
+  top_n: number;
+  summary: {
+    global?: {
+      tp_move_pct?: string | null;
+      sl_move_pct?: string | null;
+      symbol_count?: number;
+    };
+    per_symbol?: Record<
+      string,
+      {
+        tp_move_pct: string;
+        sl_move_pct: string;
+        atr_pct: string;
+        samples: number;
+        last_close: string;
+        abs_change_24h_pct: string;
+      }
+    >;
+  } | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export interface AuditEventRow {
   id: number;
   level: "DEBUG" | "INFO" | "WARNING" | "ERROR" | null;
@@ -121,6 +150,20 @@ export const api = {
       `/api/strategies/${encodeURIComponent(name)}/run`,
       { method: "POST" },
     ),
+  calibrationLatest: () =>
+    request<{
+      trading_enabled: boolean;
+      require_calibration_for_trading: boolean;
+      max_age_minutes: number;
+      now: string;
+      next_run_after: string | null;
+      latest: CalibrationRun | null;
+      latest_successful: CalibrationRun | null;
+    }>("/api/calibration/latest"),
+  calibrationRuns: (limit = 20) =>
+    request<CalibrationRun[]>(`/api/calibration/runs?limit=${limit}`),
+  triggerCalibration: () =>
+    request<{ queued: boolean }>(`/api/calibration/run`, { method: "POST" }),
   events: (params?: {
     level?: string;
     event_prefix?: string;

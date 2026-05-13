@@ -61,6 +61,12 @@ class StrategyRunStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class CalibrationStatus(str, Enum):
+    RUNNING = "RUNNING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
 class Order(Base, TimestampMixin):
     """Rendelés audit napló (a Bitunix saját rendelés-ID-jával társítva)."""
 
@@ -154,6 +160,43 @@ class AuditEvent(Base):
         server_default=func.now(),
         nullable=False,
         index=True,
+    )
+
+
+class TpSlCalibration(Base):
+    """TP/SL paraméterek óránkénti automatikus belövése.
+
+    Egy rekord = egy kalibrációs futtatás. A ``summary`` JSON tartalmazza
+    a globális mediánokat és a per-symbol célmozgás-százalékokat
+    (raw price move %, leverage-független). A stratégia ezekből számolja
+    a konkrét trigger árakat a belépéskor.
+
+    A trading akkor "engedélyezett", ha legalább egy SUCCESS rekord van,
+    aminek a ``finished_at``-je nem öregebb mint a kalibrációs intervallum
+    kétszerese (default: 2 óra).
+    """
+
+    __tablename__ = "tpsl_calibrations"
+    __table_args__ = (Index("ix_tpsl_calibrations_status_ts", "status", "finished_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[CalibrationStatus] = mapped_column(
+        SQLEnum(CalibrationStatus, name="calibration_status"),
+        default=CalibrationStatus.RUNNING,
+    )
+    triggered_by: Mapped[str] = mapped_column(String(32), default="scheduler")
+    lookback_minutes: Mapped[int] = mapped_column(default=120)
+    top_n: Mapped[int] = mapped_column(default=20)
+    summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 

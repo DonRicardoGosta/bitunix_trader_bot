@@ -77,6 +77,55 @@ def compute_tp_sl_prices(
     return tp_rounded, sl_rounded
 
 
+def compute_tp_sl_prices_from_move_pct(
+    *,
+    entry_price: Decimal,
+    side: str,
+    tp_move_pct: Decimal,
+    sl_move_pct: Decimal,
+    price_precision: int = 4,
+) -> tuple[Decimal, Decimal]:
+    """TP / SL ár közvetlenül **price move %** alapján (leverage-független).
+
+    A kalibrációs service ezt a verziót használja, mert a kalibráció
+    leverage-független százalékot ad.
+
+    Args:
+        entry_price: Belépő ár.
+        side: ``"BUY"`` / ``"SELL"``.
+        tp_move_pct: Take-profit kívánt ár-elmozdulás % (>0).
+        sl_move_pct: Stop-loss kívánt ár-elmozdulás % (>0).
+        price_precision: Tizedeshelyek a kerekítéshez.
+    """
+    if entry_price <= 0:
+        raise ValueError("entry_price must be positive")
+    if tp_move_pct <= 0 or sl_move_pct <= 0:
+        raise ValueError("move percentages must be positive")
+    tp_move = tp_move_pct / Decimal(100)
+    sl_move = sl_move_pct / Decimal(100)
+    quant = Decimal(10) ** -int(price_precision)
+    side_u = side.upper()
+    if side_u == "BUY":
+        tp = (entry_price * (Decimal(1) + tp_move)).quantize(
+            quant, rounding=ROUND_DOWN
+        )
+        sl = (entry_price * (Decimal(1) - sl_move)).quantize(
+            quant, rounding=ROUND_DOWN
+        )
+    elif side_u == "SELL":
+        tp = (entry_price * (Decimal(1) - tp_move)).quantize(
+            quant, rounding=ROUND_UP
+        )
+        sl = (entry_price * (Decimal(1) + sl_move)).quantize(
+            quant, rounding=ROUND_UP
+        )
+    else:
+        raise ValueError(f"Invalid side: {side}")
+    if tp <= 0 or sl <= 0:
+        raise ValueError("Computed TP/SL <= 0; review inputs")
+    return tp, sl
+
+
 def recommended_sl_roi(user_sl_roi_pct: Decimal) -> Decimal:
     """Konzervatív ajánlás a stop-loss ROI-ra.
 
