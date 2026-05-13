@@ -9,7 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class OrderRequest(BaseModel):
-    """Új rendelés feladás bemenet."""
+    """Új rendelés feladás bemenet.
+
+    Az opcionális ``tp_price`` / ``sl_price`` mezőkkel a Bitunix natívan
+    rögzíti a take profit / stop loss triggert a belépő rendelésre.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -21,6 +25,14 @@ class OrderRequest(BaseModel):
     leverage: int = Field(default=1, ge=1, le=125)
     reduce_only: bool = Field(default=False, alias="reduceOnly")
     client_order_id: str | None = Field(default=None, alias="clientOrderId")
+    tp_price: Decimal | None = Field(default=None, gt=0, alias="tpPrice")
+    sl_price: Decimal | None = Field(default=None, gt=0, alias="slPrice")
+    tp_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = Field(
+        default="MARK_PRICE", alias="tpStopType"
+    )
+    sl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = Field(
+        default="MARK_PRICE", alias="slStopType"
+    )
 
 
 class OrderResponse(BaseModel):

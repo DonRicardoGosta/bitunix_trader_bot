@@ -68,6 +68,10 @@ class TradingService:
             leverage=payload.leverage,
             reduce_only=payload.reduce_only,
             client_order_id=client_order_id,
+            tp_price=payload.tp_price,
+            sl_price=payload.sl_price,
+            tp_stop_type=payload.tp_stop_type,
+            sl_stop_type=payload.sl_stop_type,
         )
 
         dry_run = bool(response.get("dryRun"))
@@ -96,6 +100,8 @@ class TradingService:
                 "price": str(payload.price) if payload.price else None,
                 "leverage": payload.leverage,
                 "reduce_only": payload.reduce_only,
+                "tp_price": str(payload.tp_price) if payload.tp_price else None,
+                "sl_price": str(payload.sl_price) if payload.sl_price else None,
                 "dry_run": dry_run,
             },
             strategy_name=strategy_name,

@@ -49,8 +49,18 @@ class Settings(BaseSettings):
     strategy_top_movers_enabled: bool = True
     strategy_top_movers_count: int = 3
     strategy_top_movers_cooldown_minutes: int = 240
+    strategy_top_movers_direction_mode: Literal[
+        "trend", "momentum_breakout", "mean_revert"
+    ] = "momentum_breakout"
+    strategy_top_movers_range_threshold: str = "0.66"
     strategy_min_margin_usdt: str = "0.25"
     strategy_margin_pct_of_balance: str = "0.01"
+
+    # -- TP / SL beállítások (ROI százalékban a margin-on, leverage-vel együtt) --
+    # 200 / 100 a userspec; a kockázat-kommentet lásd a tpsl.py-ban.
+    strategy_tp_roi_pct: str = "200"
+    strategy_sl_roi_pct: str = "100"
+    strategy_tpsl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = "MARK_PRICE"
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod

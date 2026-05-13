@@ -51,14 +51,22 @@ Elérhetőség:
 
 | Változó                              | Alap            | Hatás                                                   |
 | ------------------------------------ | --------------- | ------------------------------------------------------- |
-| `BITUNIX_LIVE_TRADING`               | `false`         | Ha `false`, semmilyen rendelés nem megy a Bitunixhoz – csak DB-be naplóz. |
-| `STRATEGY_RUNNER_ENABLED`            | `false`         | A háttér scheduler kapcsolója (kézi indítás API-n mindig elérhető). |
-| `STRATEGY_INTERVAL_SECONDS`          | `300`           | Két lefutás közti idő.                                  |
-| `STRATEGY_TOP_MOVERS_COOLDOWN_MINUTES` | `240`         | Per-szimbólum cooldown a `top_movers` stratégiához.    |
-| `STRATEGY_MARGIN_PCT_OF_BALANCE`     | `0.01`          | Margin arány a futures egyenlegből (1%).                |
-| `STRATEGY_MIN_MARGIN_USDT`           | `0.25`          | Margin padló érték.                                     |
-| `APP_ENV`                            | `development`   | `production` esetén szigorúbb defaultok.                |
-| `BACKEND_CORS_ORIGINS`               | localhost:3000  | Engedélyezett CORS originek (vesszővel elválasztva).    |
+| `BITUNIX_LIVE_TRADING`                     | `false`             | Ha `false`, semmilyen rendelés nem megy a Bitunixhoz.            |
+| `STRATEGY_RUNNER_ENABLED`                  | `false`             | A háttér scheduler kapcsolója.                                   |
+| `STRATEGY_INTERVAL_SECONDS`                | `300`               | Két lefutás közti idő.                                           |
+| `STRATEGY_TOP_MOVERS_COOLDOWN_MINUTES`     | `240`               | Per-szimbólum cooldown a `top_movers` stratégiához.              |
+| `STRATEGY_TOP_MOVERS_DIRECTION_MODE`       | `momentum_breakout` | `trend` \| `momentum_breakout` \| `mean_revert`                  |
+| `STRATEGY_TOP_MOVERS_RANGE_THRESHOLD`      | `0.66`              | Momentum_breakout küszöb a 24h tartomány felső/alsó zónájához.   |
+| `STRATEGY_MARGIN_PCT_OF_BALANCE`           | `0.01`              | Margin arány a futures egyenlegből (1%).                         |
+| `STRATEGY_MIN_MARGIN_USDT`                 | `0.25`              | Margin padló.                                                    |
+| `STRATEGY_TP_ROI_PCT`                      | `200`               | Take-profit ROI cél (% a margin-on, leverage figyelembe véve).   |
+| `STRATEGY_SL_ROI_PCT`                      | `100`               | Stop-loss ROI cél (likvidáció-közeli, lásd alábbi javaslat).     |
+| `STRATEGY_TPSL_STOP_TYPE`                  | `MARK_PRICE`        | `MARK_PRICE` vagy `LAST_PRICE` – Bitunix trigger típus.          |
+| `DB_CPU_LIMIT` / `DB_MEM_LIMIT`            | `1.0` / `512M`      | Docker erőforrás-korlát a Postgresre.                            |
+| `BACKEND_CPU_LIMIT` / `BACKEND_MEM_LIMIT`  | `1.0` / `512M`      | Docker korlát a backendre.                                       |
+| `FRONTEND_CPU_LIMIT` / `FRONTEND_MEM_LIMIT`| `1.0` / `1G`        | Docker korlát a frontendre.                                      |
+| `APP_ENV`                                  | `development`       | `production` esetén szigorúbb defaultok.                         |
+| `BACKEND_CORS_ORIGINS`                     | localhost:3000      | Engedélyezett CORS originek.                                     |
 
 **Soha** ne add ki a `BITUNIX_API_SECRET`-et és **soha** ne kommitold az
 `.env` fájlt. A `.gitignore` ezt eleve kizárja.
@@ -76,11 +84,38 @@ A stratégia keretrendszer pluggable: a regisztrált logikák a
 2. Rangsorolja őket **|24h % változás|** csökkenő sorrendben (az esések is játszanak).
 3. Veszi a **top 3**-at.
 4. Szimbólumonként ellenőrzi a **4 órás cooldownt** (per-stratégia, per-szimbólum).
-5. Lekéri a szimbólum `maxLeverage`-ét (`GET /futures/market/trading_pairs`),
-   és **beállítja** azt a Bitunixon (`POST /futures/account/change_leverage`).
-6. Kiszámolja a margin-t: `max(1% × futures USDT egyenleg, 0.25 USDT)`.
-7. Trend-követő irány: pozitív % → LONG (BUY), negatív → SHORT (SELL).
-8. Piaci rendelést ad fel (a `BITUNIX_LIVE_TRADING` flag-tisztelve).
+5. **Irány** (configurálható, `STRATEGY_TOP_MOVERS_DIRECTION_MODE`):
+   * `momentum_breakout` (**alapértelmezett, ajánlott**): pozitív 24h változás
+     **és** ár a 24h tartomány felső harmadában → LONG. Negatív változás
+     **és** ár az alsó harmadban → SHORT. Egyébként **skip** (kétértelmű
+     mozgás, valószínűleg konszolidál vagy fordul).
+   * `trend`: tisztán a 24h változás előjele dönt.
+   * `mean_revert`: ellenirány (a "túlfutott" mozgás visszafelé fade-elése).
+6. Lekéri a `maxLeverage`-ét (`GET /futures/market/trading_pairs`), és
+   **beállítja** (`POST /futures/account/change_leverage`).
+7. Margin: `max(1% × futures USDT egyenleg, 0.25 USDT)`.
+8. **TP / SL** trigger árak kiszámolva ROI-célokból, atomi módon az entry
+   order-rel **egyetlen REST hívásban** (a Bitunix `place_order` támogatja a
+   `tpPrice` és `slPrice` paramétereket). Lásd `app/services/tpsl.py`.
+
+### ⚠️ Javaslat a TP/SL beállításra
+
+A felhasználói specifikáció szerint a default `TP_ROI=200%` és `SL_ROI=100%`.
+Az SL ROI=100% **gyakorlatilag a likvidációs árszint**. Ez kockázatos, mert:
+* A likvidáció előtti néhány tickben a slippage könnyen "túlszalad" az SL-en,
+* A tőzsde likvidációs díja is felemésztheti a maradékot,
+* Egy "wick" (rövid ártranziens) is kiviheti, miközben nincs hova kilépni.
+
+Konzervatívabb és tipikusan **profitabilisebb** elrendezés:
+
+| Paraméter        | User spec | Ajánlott          |
+| ---------------- | --------- | ----------------- |
+| `STRATEGY_TP_ROI_PCT` | `200` | `100`–`200`       |
+| `STRATEGY_SL_ROI_PCT` | `100` | `50`–`75`         |
+| R:R arány        | 2:1       | 2:1–4:1           |
+
+A backend `WARNING` szintű audit eseményt ír a `audit_events` táblába minden
+futás elején, ha az SL ROI ≥ 80% (`strategy.top_movers.risky_sl_warning`).
 
 Indítás:
 * API: `POST /api/strategies/top_movers/run` (manuális)
@@ -114,7 +149,7 @@ A teljes audit látható a **Eseménynapló** oldalon, vagy
 │   │   │                        # + top_movers stratégia
 │   │   └── db/audit.py    # authoritatív DB-be írt eseménynapló
 │   ├── alembic/           # DB migrációk (2 revision)
-│   ├── tests/             # pytest (33 teszt)
+│   ├── tests/             # pytest (47 teszt)
 │   └── pyproject.toml
 ├── frontend/
 │   ├── src/

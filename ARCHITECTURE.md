@@ -154,8 +154,8 @@ stratégia ide kerül berakásra.
 ### `TopMoversStrategy` döntéslánc
 
 ```
-GET /futures/market/tickers  ─┐
-GET /futures/market/trading_pairs ─┤
+GET /futures/market/tickers       ─┐
+GET /futures/market/trading_pairs  ─┤  (párhuzamos)
 GET /futures/account?marginCoin=USDT ┘
             │
             ▼  _rank_top_movers (abs % csökkenő, top N)
@@ -163,16 +163,39 @@ GET /futures/account?marginCoin=USDT ┘
             ▼  cooldown check: SELECT MAX(orders.created_at)
             │  WHERE strategy_name='top_movers' AND symbol=?
             │
+            ▼  decide_direction(mover, mode, range_threshold)
+            │      trend             → 24h % előjele
+            │      momentum_breakout → 24h % + ár 24h range pozíciója
+            │      mean_revert       → ellenirány
+            │  → ha None: SKIP
+            │
             ▼  change_leverage(symbol, maxLeverage)
             │
             ▼  compute_margin = max(1% × balance, 0.25 USDT)
-            ▼  compute_quantity = (margin × leverage) / price [round down to precision]
+            ▼  compute_quantity = (margin × leverage) / price
+            │  [precíziónak megfelelően lefelé kerekítve]
             │
-            ▼  TradingService.place_order(..., strategy_name='top_movers')
+            ▼  compute_tp_sl_prices(entry, side, leverage, tp_roi, sl_roi)
+            │      LONG:  TP = entry × (1 + tp_roi/lev/100)
+            │             SL = entry × (1 - sl_roi/lev/100)
+            │      SHORT: ↔
+            │
+            ▼  TradingService.place_order(... tpPrice, slPrice, strategy_name)
                   ├── INSERT INTO orders
-                  ├── BitunixClient.place_order (dry-run vagy live)
-                  └── audit.record('trade.order_placed', ...)
+                  ├── BitunixClient.place_order  → atomi POST /trade/place_order
+                  │                                tpPrice, slPrice mezőkkel
+                  ├── audit.record('trade.order_placed', ...)
+                  └── audit.record('strategy.top_movers.tpsl_set', ...)
 ```
+
+### Miért az "atomi TP/SL"?
+
+A Bitunix `place_order` endpoint támogatja `tpPrice` és `slPrice` paramétereket
+(`POST /api/v1/futures/trade/place_order`), így **egyetlen REST hívásban** megy
+a entry order és a TP/SL trigger. Ezzel:
+- Nem fordulhat elő, hogy a entry order beteljesül, de a TP/SL beállítása
+  hálózati hiba miatt elmarad.
+- Nem kell külön a `positionId`-t lekérdezni, ami egy második körkérés lenne.
 
 ## 8. Biztonsági réteg
 

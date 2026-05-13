@@ -13,6 +13,8 @@ interface State {
   price: string;
   leverage: string;
   reduceOnly: boolean;
+  tpPrice: string;
+  slPrice: string;
 }
 
 const INITIAL: State = {
@@ -23,6 +25,8 @@ const INITIAL: State = {
   price: "",
   leverage: "5",
   reduceOnly: false,
+  tpPrice: "",
+  slPrice: "",
 };
 
 export function OrderForm() {
@@ -50,6 +54,8 @@ export function OrderForm() {
           state.orderType === "LIMIT" && state.price ? state.price : undefined,
         leverage: Number(state.leverage),
         reduceOnly: state.reduceOnly,
+        tpPrice: state.tpPrice || undefined,
+        slPrice: state.slPrice || undefined,
       });
       setResult(res);
     } catch (err) {
@@ -126,6 +132,28 @@ export function OrderForm() {
             value={state.price}
             onChange={(e) => update("price", e.target.value)}
             disabled={state.orderType === "MARKET"}
+          />
+        </div>
+        <div>
+          <Label htmlFor="tp">TP ár (opcionális)</Label>
+          <Input
+            id="tp"
+            type="number"
+            step="any"
+            placeholder="pl. 105.50"
+            value={state.tpPrice}
+            onChange={(e) => update("tpPrice", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="sl">SL ár (opcionális)</Label>
+          <Input
+            id="sl"
+            type="number"
+            step="any"
+            placeholder="pl. 95.00"
+            value={state.slPrice}
+            onChange={(e) => update("slPrice", e.target.value)}
           />
         </div>
       </div>

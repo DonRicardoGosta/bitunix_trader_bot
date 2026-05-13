@@ -12,7 +12,9 @@ from decimal import Decimal
 from app.services.strategy.top_movers import (
     _extract_available_usdt,
     _index_trading_pairs,
+    _Mover,
     _rank_top_movers,
+    decide_direction,
 )
 
 
@@ -60,7 +62,12 @@ def test_rank_top_movers_accepts_bare_list() -> None:
 def test_index_trading_pairs_returns_max_leverage_per_symbol() -> None:
     raw = {
         "data": [
-            {"symbol": "BTCUSDT", "maxLeverage": "125", "basePrecision": "3"},
+            {
+                "symbol": "BTCUSDT",
+                "maxLeverage": "125",
+                "basePrecision": "3",
+                "pricePrecision": "2",
+            },
             {"symbol": "ETHUSDT", "maxLeverage": "100", "basePrecision": "2"},
             {"symbol": "WEIRD"},  # hiányos – default 1x és 4 tizedes
         ]
@@ -68,7 +75,9 @@ def test_index_trading_pairs_returns_max_leverage_per_symbol() -> None:
     index = _index_trading_pairs(raw)
     assert index["BTCUSDT"].max_leverage == 125
     assert index["BTCUSDT"].base_precision == 3
+    assert index["BTCUSDT"].price_precision == 2
     assert index["ETHUSDT"].max_leverage == 100
+    assert index["ETHUSDT"].price_precision == 4
     assert index["WEIRD"].max_leverage == 1
     assert index["WEIRD"].base_precision == 4
 
@@ -81,3 +90,76 @@ def test_extract_available_usdt_from_account_payload() -> None:
 def test_extract_available_usdt_empty() -> None:
     assert _extract_available_usdt({}) == Decimal("0")
     assert _extract_available_usdt({"data": {}}) == Decimal("0")
+
+
+# -------- direction logika ---------------------------------------------------
+
+
+def _mover(symbol: str, change: str, last: str, high: str, low: str) -> _Mover:
+    return _Mover(
+        symbol=symbol,
+        last_price=Decimal(last),
+        change_pct=Decimal(change),
+        high=Decimal(high),
+        low=Decimal(low),
+    )
+
+
+def test_decide_direction_trend_mode_follows_sign() -> None:
+    up = _mover("X", "+5", "105", "110", "95")
+    down = _mover("Y", "-7", "93", "100", "90")
+    assert decide_direction(up, mode="trend", range_threshold=Decimal("0.66"))[0] == "BUY"
+    assert decide_direction(down, mode="trend", range_threshold=Decimal("0.66"))[0] == "SELL"
+
+
+def test_decide_direction_mean_revert_inverts_sign() -> None:
+    up = _mover("X", "+5", "105", "110", "95")
+    down = _mover("Y", "-7", "93", "100", "90")
+    assert decide_direction(up, mode="mean_revert", range_threshold=Decimal("0.66"))[0] == "SELL"
+    assert decide_direction(down, mode="mean_revert", range_threshold=Decimal("0.66"))[0] == "BUY"
+
+
+def test_decide_direction_momentum_breakout_buys_near_high() -> None:
+    """Pozitív változás + ár a 24h tartomány felső harmadában → BUY."""
+    near_high = _mover("X", "+10", "108", "110", "90")  # pos = 18/20 = 0.9
+    side, reason = decide_direction(
+        near_high, mode="momentum_breakout", range_threshold=Decimal("0.66")
+    )
+    assert side == "BUY"
+    assert "breakout" in reason
+
+
+def test_decide_direction_momentum_breakout_sells_near_low() -> None:
+    """Negatív változás + ár a 24h tartomány alsó harmadában → SELL."""
+    near_low = _mover("Y", "-10", "92", "110", "90")  # pos = 2/20 = 0.1
+    side, reason = decide_direction(
+        near_low, mode="momentum_breakout", range_threshold=Decimal("0.66")
+    )
+    assert side == "SELL"
+    assert "breakdown" in reason
+
+
+def test_decide_direction_momentum_breakout_skips_ambiguous() -> None:
+    """Pozitív változás, de ár középen → kétértelmű, SKIP."""
+    mid = _mover("Z", "+15", "100", "110", "90")  # pos = 0.5
+    side, reason = decide_direction(
+        mid, mode="momentum_breakout", range_threshold=Decimal("0.66")
+    )
+    assert side is None
+    assert "mixed" in reason
+
+
+def test_decide_direction_no_range_data() -> None:
+    """Ha nincs high/low, momentum_breakout módban SKIP."""
+    bare = _Mover(
+        symbol="X",
+        last_price=Decimal("100"),
+        change_pct=Decimal("5"),
+        high=None,
+        low=None,
+    )
+    side, reason = decide_direction(
+        bare, mode="momentum_breakout", range_threshold=Decimal("0.66")
+    )
+    assert side is None
+    assert reason == "no_range_data"

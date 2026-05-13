@@ -37,6 +37,10 @@ export interface PlaceOrderInput {
   price?: string;
   leverage?: number;
   reduceOnly?: boolean;
+  tpPrice?: string;
+  slPrice?: string;
+  tpStopType?: "MARK_PRICE" | "LAST_PRICE";
+  slStopType?: "MARK_PRICE" | "LAST_PRICE";
 }
 
 export interface PlaceOrderResult {

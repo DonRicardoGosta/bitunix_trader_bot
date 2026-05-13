@@ -3,20 +3,28 @@
 Specifikáció:
 
 * Kérdezzük le a Bitunix futures piac **összes szimbólumát** 24h tickerekkel.
-* Rangsoroljuk őket az **abszolút** 24h % változás szerint csökkenő sorrendben
-  (függetlenül attól, hogy fel- vagy le-mozdulás).
+* Rangsoroljuk őket az **abszolút** 24h % változás szerint csökkenő sorrendben.
 * Vegyük a **top 3-at**.
 * Minden szimbólumra:
     * **Cooldown:** ha 4 órán belül már nyitottunk ugyanennek a stratégiának
       ezzel a szimbólummal, kihagyjuk.
     * **Leverage:** lekérdezzük a ``trading_pairs``-ből a ``maxLeverage``-t,
-      és beállítjuk az adott szimbólumra.
+      és beállítjuk az adott szimbólumra (``change_leverage`` REST hívás).
     * **Margin:** a futures USDT egyenleg 1%-a, de minimum 0.25 USDT.
-    * **Irány:** trend-követő – ha +% → BUY (LONG), ha −% → SELL (SHORT).
-    * Piaci rendelés.
+    * **Irány:** konfigurálható (``trend`` / ``momentum_breakout`` /
+      ``mean_revert``). Az alapérték a ``momentum_breakout`` – az ár 24h
+      range-en belüli helyzetét is figyelembe veszi és kihagyja a kétértelmű
+      eseteket. Lásd ``decide_direction``.
+    * **TP/SL:** natív, az entry order-rel egy atomi hívásban – ROI célok:
+      ``STRATEGY_TP_ROI_PCT=200`` (+200% profit) és
+      ``STRATEGY_SL_ROI_PCT=100`` (-100% veszteség). Lásd ``app/services/tpsl.py``
+      a képletekért és a kockázati javaslatért (≤75% SL ROI biztonságosabb).
+    * Piaci rendelés a Bitunix ``/futures/trade/place_order``-en, beépített
+      ``tpPrice`` és ``slPrice`` paraméterekkel.
 
-Megjegyzés: a Bitunix dokumentáció ``lastPrice`` és ``open`` mezőket ad
-24h ticker-ben → a változás % így számolt: ``(last - open) / open × 100``.
+Megjegyzés: a Bitunix dokumentáció ``lastPrice``, ``open``, ``high``, ``low``
+mezőket ad a 24h tickerben → a változás % így számolt:
+``(last - open) / open × 100``, a range pozíció: ``(last - low) / (high - low)``.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
 from app.services.risk import compute_margin, compute_quantity
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
+from app.services.tpsl import compute_tp_sl_prices, is_risky_sl_roi
 from app.services.trading import TradingService
 
 
@@ -124,8 +133,27 @@ class TopMoversStrategy(Strategy):
 
         cooldown_until_after = datetime.now(UTC) - timedelta(minutes=cooldown_minutes)
         trading_service = TradingService(ctx.client, ctx.session)
+        direction_mode = settings.strategy_top_movers_direction_mode
+        range_threshold = Decimal(settings.strategy_top_movers_range_threshold)
+        tp_roi = Decimal(settings.strategy_tp_roi_pct)
+        sl_roi = Decimal(settings.strategy_sl_roi_pct)
+        result.details["direction_mode"] = direction_mode
+        result.details["tp_roi_pct"] = str(tp_roi)
+        result.details["sl_roi_pct"] = str(sl_roi)
 
-        # 4) Iteráció a top-n moveren
+        if is_risky_sl_roi(sl_roi):
+            await audit.record(
+                ctx.session,
+                "strategy.top_movers.risky_sl_warning",
+                level=AuditLevel.WARNING,
+                message=(
+                    f"SL ROI {sl_roi}% magas (likvidáció-közeli). "
+                    "Megfontolandó 50-75% közé csökkenteni."
+                ),
+                payload={"sl_roi_pct": str(sl_roi)},
+                strategy_name=self.name,
+            )
+
         for mover in movers:
             decision = await self._maybe_place(
                 ctx,
@@ -134,6 +162,11 @@ class TopMoversStrategy(Strategy):
                 margin_usdt=margin_usdt,
                 cooldown_after=cooldown_until_after,
                 trading_service=trading_service,
+                direction_mode=direction_mode,
+                range_threshold=range_threshold,
+                tp_roi=tp_roi,
+                sl_roi=sl_roi,
+                stop_type=settings.strategy_tpsl_stop_type,
             )
             if decision.get("placed"):
                 result.placed_orders.append(decision)
@@ -151,12 +184,23 @@ class TopMoversStrategy(Strategy):
         margin_usdt: Decimal,
         cooldown_after: datetime,
         trading_service: TradingService,
+        direction_mode: str,
+        range_threshold: Decimal,
+        tp_roi: Decimal,
+        sl_roi: Decimal,
+        stop_type: str,
     ) -> dict[str, Any]:
         """Egy szimbólumra a teljes döntéslánc + végrehajtás."""
         symbol = mover.symbol
-        out: dict[str, Any] = {"symbol": symbol, "change_pct": str(mover.change_pct)}
+        out: dict[str, Any] = {
+            "symbol": symbol,
+            "change_pct": str(mover.change_pct),
+            "range_position": (
+                str(mover.range_position) if mover.range_position is not None else None
+            ),
+        }
 
-        # cooldown
+        # 1) cooldown
         last = await self._last_order_at(ctx, symbol)
         if last and last > cooldown_after:
             out["placed"] = False
@@ -172,6 +216,7 @@ class TopMoversStrategy(Strategy):
             )
             return out
 
+        # 2) trading pair meta
         meta = pair_meta.get(symbol)
         if meta is None:
             out["placed"] = False
@@ -186,8 +231,27 @@ class TopMoversStrategy(Strategy):
             )
             return out
 
+        # 3) irány eldöntése (skip ha kétértelmű momentum_breakout módban)
+        side, reason = decide_direction(
+            mover, mode=direction_mode, range_threshold=range_threshold
+        )
+        out["direction_reason"] = reason
+        if side is None:
+            out["placed"] = False
+            out["reason"] = "direction_skip"
+            await audit.record(
+                ctx.session,
+                "strategy.top_movers.direction_skip",
+                level=AuditLevel.INFO,
+                message=f"{symbol} kihagyva: {reason}",
+                payload=out,
+                strategy_name=self.name,
+            )
+            return out
+
         leverage = max(1, int(meta.max_leverage))
 
+        # 4) max leverage beállítása a Bitunixon
         try:
             lev_response = await ctx.client.change_leverage(
                 symbol=symbol,
@@ -217,6 +281,7 @@ class TopMoversStrategy(Strategy):
             strategy_name=self.name,
         )
 
+        # 5) mennyiség
         qty = compute_quantity(
             margin_usdt=margin_usdt,
             leverage=leverage,
@@ -242,7 +307,31 @@ class TopMoversStrategy(Strategy):
             )
             return out
 
-        side = "BUY" if mover.change_pct >= 0 else "SELL"
+        # 6) TP / SL trigger árak ROI-ból
+        try:
+            tp_price, sl_price = compute_tp_sl_prices(
+                entry_price=mover.last_price,
+                side=side,
+                leverage=leverage,
+                tp_roi_pct=tp_roi,
+                sl_roi_pct=sl_roi,
+                price_precision=meta.price_precision,
+            )
+        except ValueError as exc:
+            out["placed"] = False
+            out["reason"] = "tpsl_computation_failed"
+            out["error"] = str(exc)
+            await audit.record(
+                ctx.session,
+                "strategy.top_movers.tpsl_error",
+                level=AuditLevel.ERROR,
+                message=f"{symbol} TP/SL ár hiba: {exc}",
+                payload=out,
+                strategy_name=self.name,
+            )
+            return out
+
+        # 7) belépés natív TP/SL-lel (atomi REST hívás a Bitunixhoz)
         request = OrderRequest.model_validate(
             {
                 "symbol": symbol,
@@ -250,6 +339,10 @@ class TopMoversStrategy(Strategy):
                 "orderType": "MARKET",
                 "quantity": qty,
                 "leverage": leverage,
+                "tpPrice": tp_price,
+                "slPrice": sl_price,
+                "tpStopType": stop_type,
+                "slStopType": stop_type,
             }
         )
 
@@ -259,8 +352,35 @@ class TopMoversStrategy(Strategy):
             side=side,
             leverage=leverage,
             quantity=str(qty),
+            entry_price=str(mover.last_price),
+            tp_price=str(tp_price),
+            sl_price=str(sl_price),
+            tp_roi_pct=str(tp_roi),
+            sl_roi_pct=str(sl_roi),
             client_order_id=order_resp.client_order_id,
             dry_run=order_resp.dry_run,
+        )
+        await audit.record(
+            ctx.session,
+            "strategy.top_movers.tpsl_set",
+            level=AuditLevel.INFO,
+            message=(
+                f"{symbol} {side} entry={mover.last_price} "
+                f"tp={tp_price} sl={sl_price} "
+                f"(lev={leverage}x, ROI {tp_roi}%/{sl_roi}%)"
+            ),
+            payload={
+                "symbol": symbol,
+                "side": side,
+                "entry_price": str(mover.last_price),
+                "tp_price": str(tp_price),
+                "sl_price": str(sl_price),
+                "leverage": leverage,
+                "tp_roi_pct": str(tp_roi),
+                "sl_roi_pct": str(sl_roi),
+                "stop_type": stop_type,
+            },
+            strategy_name=self.name,
         )
         return out
 
@@ -286,23 +406,91 @@ class TopMoversStrategy(Strategy):
 
 
 class _Mover:
-    __slots__ = ("symbol", "last_price", "change_pct")
+    __slots__ = ("symbol", "last_price", "change_pct", "high", "low")
 
-    def __init__(self, symbol: str, last_price: Decimal, change_pct: Decimal) -> None:
+    def __init__(
+        self,
+        symbol: str,
+        last_price: Decimal,
+        change_pct: Decimal,
+        high: Decimal | None,
+        low: Decimal | None,
+    ) -> None:
         self.symbol = symbol
         self.last_price = last_price
         self.change_pct = change_pct
+        self.high = high
+        self.low = low
+
+    @property
+    def range_position(self) -> Decimal | None:
+        """Az aktuális ár pozíciója a 24h tartományban (0=low, 1=high)."""
+        if self.high is None or self.low is None or self.high <= self.low:
+            return None
+        return (self.last_price - self.low) / (self.high - self.low)
 
 
 class _PairMeta:
-    __slots__ = ("symbol", "max_leverage", "base_precision")
+    __slots__ = ("symbol", "max_leverage", "base_precision", "price_precision")
 
     def __init__(
-        self, symbol: str, max_leverage: int, base_precision: int
+        self,
+        symbol: str,
+        max_leverage: int,
+        base_precision: int,
+        price_precision: int,
     ) -> None:
         self.symbol = symbol
         self.max_leverage = max_leverage
         self.base_precision = base_precision
+        self.price_precision = price_precision
+
+
+def decide_direction(
+    mover: _Mover,
+    *,
+    mode: str,
+    range_threshold: Decimal,
+) -> tuple[str | None, str]:
+    """Pozíció irányának eldöntése a beállított logikával.
+
+    Args:
+        mover: Egy top mover ticker.
+        mode: ``"trend"`` | ``"momentum_breakout"`` | ``"mean_revert"``.
+        range_threshold: A momentum_breakout szűrőhöz (alap: 0.66) –
+            a felső ``threshold`` és alsó ``1-threshold`` zónába kell esnie.
+
+    Returns:
+        ``(side, reason)`` – ahol side ``"BUY"`` / ``"SELL"`` vagy ``None``
+        (skip). A ``reason`` rövid magyarázat a döntésről.
+    """
+    change_positive = mover.change_pct > 0
+    change_negative = mover.change_pct < 0
+    pos = mover.range_position
+
+    if mode == "trend":
+        if change_positive:
+            return "BUY", "trend: 24h változás pozitív"
+        if change_negative:
+            return "SELL", "trend: 24h változás negatív"
+        return None, "trend: 0 változás"
+
+    if mode == "mean_revert":
+        if change_positive:
+            return "SELL", "mean_revert: pozitív mover -> short (fade)"
+        if change_negative:
+            return "BUY", "mean_revert: negatív mover -> long (fade)"
+        return None, "mean_revert: 0 változás"
+
+    # default: momentum_breakout
+    if pos is None:
+        return None, "no_range_data"
+    lower = Decimal(1) - range_threshold
+    if change_positive and pos >= range_threshold:
+        return "BUY", f"breakout: pos={pos:.2f} >= {range_threshold}"
+    if change_negative and pos <= lower:
+        return "SELL", f"breakdown: pos={pos:.2f} <= {lower}"
+    return None, f"momentum_mixed: change>0={change_positive}, pos={pos:.2f}"
 
 
 def _to_decimal(value: Any) -> Decimal | None:
@@ -325,7 +513,17 @@ def _rank_top_movers(raw: Any, *, top_n: int) -> list[_Mover]:
         if not symbol or last is None or open_p is None or open_p == 0:
             continue
         change_pct = ((last - open_p) / open_p) * Decimal(100)
-        movers.append(_Mover(symbol=symbol, last_price=last, change_pct=change_pct))
+        high = _to_decimal(item.get("high") or item.get("high24h"))
+        low = _to_decimal(item.get("low") or item.get("low24h"))
+        movers.append(
+            _Mover(
+                symbol=symbol,
+                last_price=last,
+                change_pct=change_pct,
+                high=high,
+                low=low,
+            )
+        )
     movers.sort(key=lambda m: abs(m.change_pct), reverse=True)
     return movers[:top_n]
 
@@ -352,10 +550,21 @@ def _index_trading_pairs(raw: Any) -> dict[str, _PairMeta]:
             base_precision = int(precision_raw)
         except (TypeError, ValueError):
             base_precision = 4
+        price_raw = (
+            item.get("pricePrecision")
+            or item.get("price_precision")
+            or item.get("quotePrecision")
+            or 4
+        )
+        try:
+            price_precision = int(price_raw)
+        except (TypeError, ValueError):
+            price_precision = 4
         out[symbol] = _PairMeta(
             symbol=symbol,
             max_leverage=max_leverage,
             base_precision=base_precision,
+            price_precision=price_precision,
         )
     return out
 

@@ -150,8 +150,16 @@ class BitunixClient:
         leverage: int = 1,
         reduce_only: bool = False,
         client_order_id: str | None = None,
+        tp_price: Decimal | str | None = None,
+        sl_price: Decimal | str | None = None,
+        tp_stop_type: str = "MARK_PRICE",
+        sl_stop_type: str = "MARK_PRICE",
     ) -> dict[str, Any]:
-        """Rendelés feladása.
+        """Rendelés feladása (opcionális natív TP/SL-lel).
+
+        A Bitunix ``/futures/trade/place_order`` egyetlen hívással elfogadja
+        a ``tpPrice`` / ``slPrice`` paramétereket, így az entry order és a
+        TP/SL triggerek atomi módon, együtt mennek ki.
 
         Ha ``live_trading=False``, a kliens NEM küld igazi rendelést,
         csak naplóz és visszaad egy "dry-run" választ.
@@ -168,6 +176,14 @@ class BitunixClient:
             body["price"] = str(price)
         if client_order_id:
             body["clientId"] = client_order_id
+        if tp_price is not None:
+            body["tpPrice"] = str(tp_price)
+            body["tpStopType"] = tp_stop_type
+            body["tpOrderType"] = "MARKET"
+        if sl_price is not None:
+            body["slPrice"] = str(sl_price)
+            body["slStopType"] = sl_stop_type
+            body["slOrderType"] = "MARKET"
 
         if not self._live_trading:
             return {
