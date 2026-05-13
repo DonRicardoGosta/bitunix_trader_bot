@@ -21,14 +21,18 @@ from app.db import audit
 from app.db.models import AuditLevel, Order, OrderSide, OrderStatus, OrderType
 from app.schemas.trading import OrderRequest, OrderResponse
 from app.services.order_enrichment import (
+    PositionMatch,
     TradeAugment,
     aggregate_trades_response,
     best_trade_augment,
     build_order_api_dict,
     build_trade_augment_indices,
     earliest_history_start_ms,
+    extract_history_position_rows,
+    extract_open_position_rows,
     index_history_orders_by_client_id,
     last_or_mark_price_from_ticker,
+    match_position_for_order,
     normalize_str_id,
     parse_open_symbols_from_positions,
     pick_trade_augment,
@@ -156,14 +160,34 @@ class TradingService:
             ]
 
         open_syms: set[str] = set()
+        open_pos_rows: list[dict[str, Any]] = []
         got_any_exchange = False
         sync_err: str | None = None
         try:
             pos_raw = await self._client.get_positions()
             open_syms = parse_open_symbols_from_positions(pos_raw)
+            open_pos_rows = extract_open_position_rows(pos_raw)
             got_any_exchange = True
         except (BitunixAPIError, BitunixSignatureError) as exc:
             sync_err = f"Pozíciók lekérése: {exc}"[:500]
+
+        # Lezárt pozíciók szimbólumonként – ez adja a valódi realized PnL-t
+        # a saját belépő rendeléseinkhez (a hist_orders ott mindig 0-t mutat).
+        history_pos_rows: list[dict[str, Any]] = []
+        symbols_for_history = {o.symbol for o in orders if o.symbol}
+        for sym in sorted(symbols_for_history):
+            start_ms = earliest_history_start_ms(orders, sym)
+            try:
+                raw_hp = await self._client.get_history_positions(
+                    symbol=sym, limit=100, start_time_ms=start_ms
+                )
+                history_pos_rows.extend(extract_history_position_rows(raw_hp))
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"History pozíciók ({sym}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; hist_pos {sym}: {exc}"[:500]
 
         hist_by_client: dict[str, dict[str, Any]] = {}
         trade_by_client: dict[str, TradeAugment] = {}
@@ -298,6 +322,8 @@ class TradingService:
             "trade_by_client_count": len(trade_by_client),
             "trade_by_order_count": len(trade_by_order),
             "trade_by_position_count": len(trade_by_position),
+            "open_pos_count": len(open_pos_rows),
+            "history_pos_count": len(history_pos_rows),
             "hist_client_id_prefix_sample": sorted(hist_by_client.keys())[:20],
         }
 
@@ -311,6 +337,8 @@ class TradingService:
                 trade_by_order=trade_by_order,
                 trade_by_position=trade_by_position,
                 mark_by_symbol=mark_by_symbol,
+                open_pos_rows=open_pos_rows,
+                history_pos_rows=history_pos_rows,
                 include_debug=debug_sync,
                 sync_index_meta=sync_index_meta,
             )
@@ -328,6 +356,8 @@ class TradingService:
         trade_by_order: dict[str, TradeAugment],
         trade_by_position: dict[tuple[str, str], TradeAugment],
         mark_by_symbol: dict[str, Decimal],
+        open_pos_rows: list[dict[str, Any]],
+        history_pos_rows: list[dict[str, Any]],
         include_debug: bool = False,
         sync_index_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -346,6 +376,11 @@ class TradingService:
             bitunix_order_id=o.bitunix_order_id,
         )
         aug = best_trade_augment(aug_pos, aug_pick)
+        pos_match: PositionMatch | None = match_position_for_order(
+            o,
+            open_position_rows=open_pos_rows,
+            history_position_rows=history_pos_rows,
+        )
         extras: dict[str, Any] | None = None
         if include_debug:
             extras = {
@@ -376,6 +411,7 @@ class TradingService:
             sync_error=global_sync_error,
             trade_augment=aug,
             mark_price=mark_by_symbol.get(o.symbol.upper()),
+            position_match=pos_match,
             include_debug=include_debug,
             debug_extras=extras,
         )
