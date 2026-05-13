@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from app.db.models import Order, OrderSide, OrderStatus, OrderType
 from app.services.order_enrichment import (
@@ -13,6 +13,7 @@ from app.services.order_enrichment import (
     build_order_api_dict,
     build_trade_augment_indices,
     earliest_history_start_ms,
+    index_closed_positions,
     index_history_orders_by_client_id,
     last_or_mark_price_from_ticker,
     margin_usdt_linear,
@@ -105,6 +106,69 @@ def test_build_order_closed_roi() -> None:
     out = build_order_api_dict(o, hist_row=hist, open_symbols=set())
     assert out["exchange"]["lifecycle"] == "closed"
     assert out["exchange"]["roi_pct"] == "250.00"  # 25 / (1*100/10) * 100
+
+
+def test_index_closed_positions_latest_mtime_wins() -> None:
+    resp = {
+        "code": 0,
+        "data": {
+            "positionList": [
+                {
+                    "positionId": "1",
+                    "symbol": "AAUSDT",
+                    "realizedPNL": "1",
+                    "mtime": 1,
+                },
+                {
+                    "positionId": "1",
+                    "symbol": "AAUSDT",
+                    "realizedPNL": "2",
+                    "mtime": 5,
+                },
+            ]
+        },
+    }
+    idx = index_closed_positions(resp)
+    assert idx[("AAUSDT", "1")]["realizedPNL"] == "2"
+
+
+def test_closed_position_row_overrides_hist_zero_realized() -> None:
+    """Lezárt pozíció history: teljes realizedPNL; a belépő order sor gyakran 0."""
+    o = _order(
+        client_order_id="bt-cp",
+        symbol="PHBUSDT",
+        quantity="100",
+        price=None,
+        leverage=50,
+    )
+    hist = {
+        "status": "FILLED",
+        "realizedPNL": "0",
+        "tradeQty": "100",
+        "price": "0",
+        "positionId": "2054",
+        "leverage": 50,
+        "mtime": 1,
+    }
+    closed = {
+        "positionId": "2054",
+        "symbol": "PHBUSDT",
+        "realizedPNL": "-0.48",
+        "entryPrice": "0.084",
+        "mtime": 2,
+    }
+    out = build_order_api_dict(
+        o,
+        hist_row=hist,
+        open_symbols=set(),
+        closed_position_row=closed,
+    )
+    assert out["exchange"]["realized_pnl_usdt"] == "-0.48"
+    margin = Decimal("100") * Decimal("0.084") / Decimal("50")
+    expected_roi = (-Decimal("0.48") / margin) * Decimal("100")
+    assert out["exchange"]["roi_pct"] == str(
+        expected_roi.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    )
 
 
 def test_roi_uses_trade_vwap_when_hist_price_zero() -> None:
