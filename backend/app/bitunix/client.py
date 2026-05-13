@@ -252,6 +252,44 @@ class BitunixClient:
             authenticated=True,
         )
 
+    async def get_history_positions(
+        self,
+        *,
+        symbol: str | None = None,
+        position_id: str | None = None,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Lezárt pozíciók (pozíció-szintű realizedPNL, entry/closePrice).
+
+        Bitunix: ``GET /api/v1/futures/position/get_history_positions``.
+
+        Ezt a végpontot a rendelés-enrichment használja arra, hogy a saját
+        belépő rendeléseinkhez (``reduceOnly=false``) megtalálja a hozzájuk
+        tartozó lezárt pozíciót és kiolvassa a tényleges realized PnL-t.
+        A ``get_history_orders`` ezt nem adja vissza belépő ordereken.
+        """
+        params: dict[str, Any] = {
+            "skip": max(0, int(skip)),
+            "limit": min(max(1, int(limit)), 100),
+        }
+        if symbol:
+            params["symbol"] = symbol
+        if position_id:
+            params["positionId"] = str(position_id)
+        if start_time_ms is not None:
+            params["startTime"] = int(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = int(end_time_ms)
+        return await self._request(
+            "GET",
+            "/api/v1/futures/position/get_history_positions",
+            params=params,
+            authenticated=True,
+        )
+
     async def place_order(
         self,
         *,
