@@ -18,14 +18,10 @@ Specifikáció:
       ``mean_revert``). Az alapérték a ``momentum_breakout`` – az ár 24h
       range-en belüli helyzetét is figyelembe veszi és kihagyja a kétértelmű
       eseteket. Lásd ``decide_direction``.
-    * **TP/SL kalibráció:** ha van per-szimbólum és globál ATR cél is,
-      **mindkét lábra a kisebb move %%** kerül (szűkebb TP / szűkebb SL).
-      ROI fallback (``STRATEGY_TP_ROI_PCT`` / ``STRATEGY_SL_ROI_PCT``) csak
-      kalibráció nélkül; lásd ``app/services/tpsl.py``.
-    * **Minimum move %%:** a végső TP/SL ár mindig legalább
-      ``STRATEGY_MIN_TP_MOVE_PCT`` / ``STRATEGY_MIN_SL_MOVE_PCT`` (ár-%%)
-      távolságra van a belépőtől — így a túl szűk kalibráció vagy nagy
-      tőkeáttétel melletti ROI fallback sem üt ki zajból azonnal.
+    * **TP/SL kalibráció:** a szimbólum **saját** kalibrált move %% (ATR×szorzó),
+      ha van a legutóbbi kalibrációban; különben a **globális TP/SL medián**.
+      Ha egyik sincs, ROI fallback (``STRATEGY_TP_ROI_PCT`` /
+      ``STRATEGY_SL_ROI_PCT``); lásd ``app/services/tpsl.py``.
     * Piaci rendelés a Bitunix ``/futures/trade/place_order``-en, beépített
       ``tpPrice`` és ``slPrice`` paraméterekkel.
     * Ha a tőzsde elutasítja a rendelést (pl. min. mennyiség), a stratégia
@@ -435,17 +431,18 @@ class TopMoversStrategy(Strategy):
             )
             return out
 
-        # 6) TP / SL trigger árak — kalibráció (effective = min(symbol, global)),
-        # ROI fallback ha nincs move %%; majd strategy minimum move %% padló.
-        floor_tp = Decimal(ctx.settings.strategy_min_tp_move_pct)
-        floor_sl = Decimal(ctx.settings.strategy_min_sl_move_pct)
+        # 6) TP / SL — kalibrált move: per-symbol, különben globál medián; ha
+        # nincs adat, ROI fallback (nincs padló/plafon).
         tp_source = "roi_fallback"
         try:
             if calibration is not None:
-                moves = calibration.effective_tp_sl_moves(symbol)
+                moves = calibration.lookup(symbol)
                 if moves is not None:
                     tp_move_pct, sl_move_pct = moves
-                    tp_source = "calibration_effective"
+                    if symbol in calibration.per_symbol:
+                        tp_source = "calibration_symbol"
+                    else:
+                        tp_source = "calibration_global"
                 else:
                     tp_move_pct, sl_move_pct = implied_price_move_pct_from_roi(
                         leverage=leverage,
@@ -458,8 +455,6 @@ class TopMoversStrategy(Strategy):
                     tp_roi_pct=tp_roi,
                     sl_roi_pct=sl_roi,
                 )
-            tp_move_pct = max(tp_move_pct, floor_tp)
-            sl_move_pct = max(sl_move_pct, floor_sl)
             tp_price, sl_price = compute_tp_sl_prices_from_move_pct(
                 entry_price=mover.last_price,
                 side=side,

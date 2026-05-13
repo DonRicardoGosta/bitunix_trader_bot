@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.services.calibration import (
+    CalibrationResult,
+    SymbolCalibration,
     compute_atr_pct,
     compute_calibration_for_symbol,
     parse_klines,
@@ -53,8 +56,8 @@ def test_compute_atr_pct_returns_none_for_too_few() -> None:
     assert compute_atr_pct([{"open": Decimal("1"), "high": Decimal("1"), "low": Decimal("1"), "close": Decimal("1"), "time": Decimal(0)}]) is None
 
 
-def test_compute_calibration_for_symbol_clamps_to_bounds() -> None:
-    """Extrém ATR → bekapja a felső plafont."""
+def test_compute_calibration_for_symbol_no_clamp_extreme_atr() -> None:
+    """Extrém ATR → nyers TP/SL (nincs plafon)."""
     raw = {
         "data": [
             {"open": 1, "high": 10, "low": 1, "close": 1, "time": 0},
@@ -67,20 +70,16 @@ def test_compute_calibration_for_symbol_clamps_to_bounds() -> None:
         tp_atr_mult=Decimal("3"),
         sl_atr_mult=Decimal("1.5"),
         abs_change_24h_pct=Decimal("5"),
-        min_tp_move_pct=Decimal("0.20"),
-        min_sl_move_pct=Decimal("0.10"),
-        max_tp_move_pct=Decimal("10"),
-        max_sl_move_pct=Decimal("5"),
     )
     assert cal is not None
-    assert cal.tp_move_pct == Decimal("10")  # plafonra szorítva
-    assert cal.sl_move_pct == Decimal("5")
+    assert cal.tp_move_pct == cal.atr_pct * Decimal("3")
+    assert cal.sl_move_pct == cal.atr_pct * Decimal("1.5")
+    assert cal.tp_move_pct > Decimal("10")
 
 
 def test_compute_calibration_for_symbol_typical_values() -> None:
     """Reális ATR ~ 0.3% → TP=0.9%, SL=0.45%."""
     klines_raw = {"data": []}
-    # 5 gyertya kis ingadozással
     prev_close = Decimal("100")
     for i, (h, low, c) in enumerate(
         [
@@ -101,13 +100,8 @@ def test_compute_calibration_for_symbol_typical_values() -> None:
         tp_atr_mult=Decimal("3"),
         sl_atr_mult=Decimal("1.5"),
         abs_change_24h_pct=Decimal("5"),
-        min_tp_move_pct=Decimal("0.05"),
-        min_sl_move_pct=Decimal("0.05"),
-        max_tp_move_pct=Decimal("10"),
-        max_sl_move_pct=Decimal("5"),
     )
     assert cal is not None
-    # ATR ~ kb. 0.6% (TR ~ 0.6), TP = 3x = 1.8%, SL = 1.5x = 0.9%
     assert cal.tp_move_pct > Decimal("0.5")
     assert cal.sl_move_pct > Decimal("0.2")
     assert cal.tp_move_pct == cal.atr_pct * Decimal("3")
@@ -151,11 +145,8 @@ def test_compute_tp_sl_prices_from_move_pct_long_and_short() -> None:
     assert sl_s == Decimal("100.50")
 
 
-def test_effective_tp_sl_moves_uses_min_per_leg() -> None:
-    from datetime import UTC, datetime
-
-    from app.services.calibration import CalibrationResult, SymbolCalibration
-
+def test_calibration_lookup_per_symbol_or_global_median() -> None:
+    """Per-symbol saját érték; ismeretlen szimbólum → globál medián."""
     r = CalibrationResult(started_at=datetime.now(UTC))
     r.global_tp_move_pct = Decimal("2")
     r.global_sl_move_pct = Decimal("1")
@@ -168,6 +159,5 @@ def test_effective_tp_sl_moves_uses_min_per_leg() -> None:
         last_close=Decimal("100"),
         abs_change_24h_pct=Decimal("5"),
     )
-    tp, sl = r.effective_tp_sl_moves("X")
-    assert tp == Decimal("2")
-    assert sl == Decimal("0.4")
+    assert r.lookup("X") == (Decimal("3"), Decimal("0.4"))
+    assert r.lookup("UNKNOWN") == (Decimal("2"), Decimal("1"))

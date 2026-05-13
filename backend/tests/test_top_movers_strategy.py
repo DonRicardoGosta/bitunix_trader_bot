@@ -61,31 +61,6 @@ async def _seed_fresh_calibration() -> None:
         await session.commit()
 
 
-async def _seed_tiny_move_calibration() -> None:
-    """Kalibráció szándékosan szűk move %% — a stratégia padlója feljebb húzza."""
-    async with AsyncSessionLocal() as session:
-        await session.execute(sa.delete(TpSlCalibration))
-        session.add(
-            TpSlCalibration(
-                status=CalibrationStatus.SUCCESS,
-                triggered_by="test_setup",
-                lookback_minutes=120,
-                top_n=20,
-                summary={
-                    "lookback_minutes": 120,
-                    "top_n": 20,
-                    "tp_atr_mult": "3.0",
-                    "sl_atr_mult": "1.5",
-                    "global": {"tp_move_pct": "0.1", "sl_move_pct": "0.08"},
-                    "per_symbol": {},
-                },
-                started_at=datetime.now(UTC),
-                finished_at=datetime.now(UTC),
-            )
-        )
-        await session.commit()
-
-
 class FakeBitunixClient:
     """Minimális, deterministic kliens-mock a stratégia teszteléséhez."""
 
@@ -239,16 +214,37 @@ async def test_top_movers_places_orders_for_top3_with_correct_direction() -> Non
     # -40% BBB SHORT entry=60 → tp=59.10, sl=60.45 (round_up 2dec)
     assert Decimal(placed["BBB"]["tp_price"]) == Decimal("59.10")
     assert Decimal(placed["BBB"]["sl_price"]) == Decimal("60.45")
-    assert placed["BBB"]["tp_source"] == "calibration_effective"
+    assert placed["BBB"]["tp_source"] == "calibration_global"
 
     assert result.details["margin_per_position_usdt"] == "10.00"
     assert result.details["calibration_used"] is True
 
 
 @pytest.mark.asyncio
-async def test_top_movers_applies_minimum_tp_sl_move_pct_floor() -> None:
-    """A kalibrált move %% alatti értékeket a STRATEGY_MIN_* padlóra emeli."""
-    await _seed_tiny_move_calibration()
+async def test_top_movers_uses_global_calibration_without_floor() -> None:
+    """Globál medián nyers értéke megy ki (nincs strategy minimum)."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(TpSlCalibration))
+        session.add(
+            TpSlCalibration(
+                status=CalibrationStatus.SUCCESS,
+                triggered_by="test_setup",
+                lookback_minutes=120,
+                top_n=20,
+                summary={
+                    "lookback_minutes": 120,
+                    "top_n": 20,
+                    "tp_atr_mult": "3.0",
+                    "sl_atr_mult": "1.5",
+                    "global": {"tp_move_pct": "0.1", "sl_move_pct": "0.08"},
+                    "per_symbol": {},
+                },
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
     async with AsyncSessionLocal() as session:
         await session.execute(sa.delete(Order))
         await session.commit()
@@ -297,12 +293,11 @@ async def test_top_movers_applies_minimum_tp_sl_move_pct_floor() -> None:
     assert len(result.placed_orders) == 1
     placed = result.placed_orders[0]
     assert placed["symbol"] == "FFF"
-    assert placed["tp_source"] == "calibration_effective"
-    assert placed["tp_move_pct"] == str(Decimal(settings.strategy_min_tp_move_pct))
-    assert placed["sl_move_pct"] == str(Decimal(settings.strategy_min_sl_move_pct))
-    # SHORT 60: TP 0.5%% le, SL 0.35%% fel — 2 tized ROUND_UP
-    assert Decimal(placed["tp_price"]) == Decimal("59.70")
-    assert Decimal(placed["sl_price"]) == Decimal("60.21")
+    assert placed["tp_source"] == "calibration_global"
+    assert Decimal(placed["tp_move_pct"]) == Decimal("0.1")
+    assert Decimal(placed["sl_move_pct"]) == Decimal("0.08")
+    assert Decimal(placed["tp_price"]) == Decimal("59.94")
+    assert Decimal(placed["sl_price"]) == Decimal("60.05")
 
 
 @pytest.mark.asyncio

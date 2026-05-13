@@ -138,10 +138,11 @@ akkor engedélyezett, ha létezik friss, sikeres kalibráció.
 3. Kiszámolja az **ATR**-t a closing ár százalékában (recent realized
    volatility).
 4. `tp_move% = ATR × 3.0` és `sl_move% = ATR × 1.5` → **R:R = 2:1**, ami
-   matematikailag pozitív várt érték már ~40% hit rate-nél is.
-5. Plafon / padló: `CALIBRATION_MIN_/MAX_TP_/SL_MOVE_PCT` korlátok között.
-6. Per-symbol és globális mediánt is tárol – ha a stratégia egy olyan
-   coint választ, ami nem volt a top 20-ban, a globális mediánt használja.
+   matematikailag pozitív várt érték már ~40% hit rate-nél is (nincs
+   külön padló/plafon: nyers ATR×szorzó).
+5. Per-symbol értékeket és **globális mediánt** tárol – a stratégia a coin
+   **saját** kalibrált move %%-ét használja; ha nincs ilyen rekord, a
+   **globális mediánt**; ha egyik sincs, ROI fallback.
 
 **Endpointok:**
 * `GET /api/calibration/latest` – aktuális állapot, `trading_enabled` flag

@@ -172,13 +172,14 @@ async def test_strategy_uses_per_symbol_calibration_when_available() -> None:
     assert len(result.placed_orders) == 1
     placed = result.placed_orders[0]
     assert placed["symbol"] == "BBB"
-    # Per-symbol 2%%/1%% vs globál 1%%/0.5%% → effective min = 1%%/0.5%%.
+    # Per-symbol 2%%/1%% — a stratégia a saját kalibrált értéket használja.
     # SHORT BBB entry=60: tp=59.40, sl=60.30 (round_up 2dec).
-    assert placed["tp_source"] == "calibration_effective"
-    assert placed["tp_move_pct"] == "1.0"
-    assert placed["sl_move_pct"] == "0.5"
-    assert Decimal(placed["tp_price"]) == Decimal("59.40")
-    assert Decimal(placed["sl_price"]) == Decimal("60.30")
+    assert placed["tp_source"] == "calibration_symbol"
+    assert placed["tp_move_pct"] == "2.0"
+    assert placed["sl_move_pct"] == "1.0"
+    # SHORT BBB entry=60, TP 2%%, SL 1%% (per-symbol), 2 dec ROUND_UP
+    assert Decimal(placed["tp_price"]) == Decimal("58.80")
+    assert Decimal(placed["sl_price"]) == Decimal("60.60")
     assert result.details["calibration_used"] is True
 
 

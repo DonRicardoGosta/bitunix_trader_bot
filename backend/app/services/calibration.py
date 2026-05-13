@@ -11,8 +11,9 @@ Algoritmus röviden:
    → R:R ~ 2:1 (matematikailag pozitív várt érték még 40%-os hit rate-nél is).
 5. Tároljuk per-symbol és számolunk globális mediánt (fallback olyan
    szimbólumokra, amiket a top_movers stratégia idő közben kiválaszt,
-   de nem volt a top20-ban a kalibrációkor). A stratégia a **per-symbol és
-   globál közül szűkebb TP/SL move %%**-et használja (``effective_tp_sl_moves``).
+   de nem volt a top-N-ben a kalibrációkor). A stratégia a **per-symbol
+   kiszámolt TP/SL move %%**-et használja; ha nincs ilyen rekord, a **globális
+   mediánt** (``CalibrationResult.lookup``).
 
 Megjegyzés: az output **price move %** (leverage-független). A stratégia
 ebből számol konkrét TP/SL árat: ``tp_price = entry × (1 + tp_pct/100)``
@@ -105,22 +106,6 @@ class CalibrationResult:
             return self.global_tp_move_pct, self.global_sl_move_pct
         return None
 
-    def effective_tp_sl_moves(self, symbol: str) -> tuple[Decimal, Decimal] | None:
-        """Kalibrált TP/SL move %%: szimbólum és globál közül a szűkebb (kisebb %%).
-
-        A stratégia így nem tesz lazább TP/SL-t a coinra, mint amit a globál
-        medián engedne; ha a coin saját ATR-je szűkebb, azt használja.
-        """
-        g_tp, g_sl = self.global_tp_move_pct, self.global_sl_move_pct
-        sym = self.per_symbol.get(symbol)
-        if sym is not None and g_tp is not None and g_sl is not None:
-            return (min(sym.tp_move_pct, g_tp), min(sym.sl_move_pct, g_sl))
-        if sym is not None:
-            return (sym.tp_move_pct, sym.sl_move_pct)
-        if g_tp is not None and g_sl is not None:
-            return (g_tp, g_sl)
-        return None
-
 
 # -- matematika -------------------------------------------------------------
 
@@ -190,24 +175,18 @@ def compute_calibration_for_symbol(
     tp_atr_mult: Decimal,
     sl_atr_mult: Decimal,
     abs_change_24h_pct: Decimal,
-    min_tp_move_pct: Decimal,
-    min_sl_move_pct: Decimal,
-    max_tp_move_pct: Decimal,
-    max_sl_move_pct: Decimal,
 ) -> SymbolCalibration | None:
     """Egy szimbólum kalibrációja a kapott kline-okból.
 
-    A targetek a ``min`` / ``max`` korlátok közé szorítva, hogy se nullszerű
-    se eszméletlenül széles TP/SL ne keletkezzen.
+    TP/SL move %% = ``ATR_pct ×`` szorzók, **padló/plafon nélkül** (nyers ATR
+    alapú cél).
     """
     klines = parse_klines(klines_raw)
     atr_pct = compute_atr_pct(klines)
     if atr_pct is None or atr_pct <= 0:
         return None
-    raw_tp = atr_pct * tp_atr_mult
-    raw_sl = atr_pct * sl_atr_mult
-    tp_pct = max(min(raw_tp, max_tp_move_pct), min_tp_move_pct)
-    sl_pct = max(min(raw_sl, max_sl_move_pct), min_sl_move_pct)
+    tp_pct = atr_pct * tp_atr_mult
+    sl_pct = atr_pct * sl_atr_mult
     return SymbolCalibration(
         symbol=symbol,
         tp_move_pct=tp_pct,
@@ -256,10 +235,6 @@ class CalibrationService:
         top_n: int = 20,
         tp_atr_mult: Decimal = Decimal("3.0"),
         sl_atr_mult: Decimal = Decimal("1.5"),
-        min_tp_move_pct: Decimal = Decimal("0.20"),
-        min_sl_move_pct: Decimal = Decimal("0.10"),
-        max_tp_move_pct: Decimal = Decimal("10.0"),
-        max_sl_move_pct: Decimal = Decimal("5.0"),
         kline_interval: str = "1m",
     ) -> None:
         self._client = client
@@ -267,10 +242,6 @@ class CalibrationService:
         self._top_n = top_n
         self._tp_atr_mult = tp_atr_mult
         self._sl_atr_mult = sl_atr_mult
-        self._min_tp = min_tp_move_pct
-        self._min_sl = min_sl_move_pct
-        self._max_tp = max_tp_move_pct
-        self._max_sl = max_sl_move_pct
         self._interval = kline_interval
 
     async def run(self) -> CalibrationResult:
@@ -313,10 +284,6 @@ class CalibrationService:
                 tp_atr_mult=self._tp_atr_mult,
                 sl_atr_mult=self._sl_atr_mult,
                 abs_change_24h_pct=abs_change,
-                min_tp_move_pct=self._min_tp,
-                min_sl_move_pct=self._min_sl,
-                max_tp_move_pct=self._max_tp,
-                max_sl_move_pct=self._max_sl,
             )
             if calibration is None:
                 result.failed_symbols.append(

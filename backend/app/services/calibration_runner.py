@@ -42,10 +42,6 @@ def _build_service(client: BitunixClient) -> CalibrationService:
         top_n=settings.calibration_top_n,
         tp_atr_mult=Decimal(settings.calibration_tp_atr_mult),
         sl_atr_mult=Decimal(settings.calibration_sl_atr_mult),
-        min_tp_move_pct=Decimal(settings.calibration_min_tp_move_pct),
-        min_sl_move_pct=Decimal(settings.calibration_min_sl_move_pct),
-        max_tp_move_pct=Decimal(settings.calibration_max_tp_move_pct),
-        max_sl_move_pct=Decimal(settings.calibration_max_sl_move_pct),
         kline_interval=settings.calibration_kline_interval,
     )
 
