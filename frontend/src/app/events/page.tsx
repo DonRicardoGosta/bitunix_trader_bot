@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Select } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { buildCsv, downloadCsvFile } from "@/lib/csvExport";
 import { api, type AuditEventRow } from "@/lib/api";
 
 export default function EventsPage() {
@@ -28,6 +29,33 @@ export default function EventsPage() {
     }
   }, [level, prefix, strategy]);
 
+  const exportCsv = useCallback(() => {
+    if (!rows?.length) return;
+    const headers = [
+      "id",
+      "created_at",
+      "level",
+      "event",
+      "strategy_name",
+      "message",
+      "payload_json",
+    ];
+    const dataRows = rows.map((e) => [
+      String(e.id),
+      e.created_at ?? "",
+      e.level ?? "",
+      e.event,
+      e.strategy_name ?? "",
+      e.message ?? "",
+      e.payload ? JSON.stringify(e.payload) : "",
+    ]);
+    const csv = buildCsv(headers, dataRows);
+    downloadCsvFile(
+      `audit-events-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`,
+      csv,
+    );
+  }, [rows]);
+
   useEffect(() => {
     void load();
     const id = setInterval(load, 5000);
@@ -36,11 +64,23 @@ export default function EventsPage() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Eseménynapló</CardTitle>
-        <span className="text-xs text-muted">
-          minden audit esemény DB-be mentve – nincs külön log fájl
-        </span>
+      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>Eseménynapló</CardTitle>
+          <span className="text-xs text-muted">
+            minden audit esemény DB-be mentve – nincs külön log fájl
+          </span>
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="shrink-0"
+          disabled={!rows?.length}
+          onClick={() => exportCsv()}
+        >
+          CSV export
+        </Button>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
@@ -98,6 +138,7 @@ export default function EventsPage() {
                   <th className="text-left py-2 pr-3">Esemény</th>
                   <th className="text-left py-2 pr-3">Stratégia</th>
                   <th className="text-left py-2 pr-3">Üzenet</th>
+                  <th className="text-left py-2 pr-3">Részlet</th>
                 </tr>
               </thead>
               <tbody>
@@ -115,7 +156,12 @@ export default function EventsPage() {
                     <td className="py-2 pr-3 text-muted">
                       {e.strategy_name ?? "—"}
                     </td>
-                    <td className="py-2 pr-3">{e.message ?? "—"}</td>
+                    <td className="py-2 pr-3 max-w-md whitespace-pre-wrap break-words">
+                      {e.message ?? "—"}
+                    </td>
+                    <td className="py-2 pr-3 max-w-lg">
+                      <EventPayloadDetail payload={e.payload} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -124,6 +170,27 @@ export default function EventsPage() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function EventPayloadDetail({
+  payload,
+}: {
+  payload: Record<string, unknown> | null;
+}) {
+  if (!payload || Object.keys(payload).length === 0) {
+    return <span className="text-muted text-xs">—</span>;
+  }
+  const pretty = JSON.stringify(payload, null, 2);
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-muted hover:text-fg">
+        Payload (kattints)
+      </summary>
+      <pre className="mt-2 max-h-56 overflow-auto rounded-md border border-border bg-bg-subtle p-2 font-mono text-[11px] leading-snug text-fg">
+        {pretty}
+      </pre>
+    </details>
   );
 }
 
