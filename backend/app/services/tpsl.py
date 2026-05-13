@@ -77,6 +77,31 @@ def compute_tp_sl_prices(
     return tp_rounded, sl_rounded
 
 
+def implied_price_move_pct_from_roi(
+    *, leverage: int, tp_roi_pct: Decimal, sl_roi_pct: Decimal
+) -> tuple[Decimal, Decimal]:
+    """ROI célokból származó **ár**-elmozdulás %% (tőkeáttétellel osztva).
+
+    Példa: ``tp_roi_pct=200``, ``leverage=20`` → ``tp_move_pct=10`` (10%% ár).
+
+    Args:
+        leverage: Tőkeáttétel (> 0).
+        tp_roi_pct: TP ROI a marginon (pl. 200 = +200%%).
+        sl_roi_pct: SL ROI a marginon (pl. 100 = -100%%).
+
+    Returns:
+        ``(tp_move_pct, sl_move_pct)`` mindkettő pozitív százalékban.
+    """
+    if leverage <= 0:
+        raise ValueError("leverage must be positive")
+    if tp_roi_pct <= 0 or sl_roi_pct <= 0:
+        raise ValueError("ROI targets must be positive")
+    lev = Decimal(leverage)
+    tp_move_pct = tp_roi_pct / lev
+    sl_move_pct = sl_roi_pct / lev
+    return tp_move_pct, sl_move_pct
+
+
 def compute_tp_sl_prices_from_move_pct(
     *,
     entry_price: Decimal,

@@ -6,7 +6,11 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.tpsl import compute_tp_sl_prices, is_risky_sl_roi
+from app.services.tpsl import (
+    compute_tp_sl_prices,
+    implied_price_move_pct_from_roi,
+    is_risky_sl_roi,
+)
 
 
 def test_compute_tp_sl_long_simple_round_numbers() -> None:
@@ -119,6 +123,36 @@ def test_compute_tp_sl_invalid_inputs() -> None:
             side="BUY",
             leverage=10,
             tp_roi_pct=Decimal("0"),
+            sl_roi_pct=Decimal("50"),
+        )
+
+
+def test_implied_price_move_pct_from_roi_matches_direct_formula() -> None:
+    """ROI / leverage → ugyanaz a %% mint a ``compute_tp_sl_prices`` belső aránya."""
+    tp_m, sl_m = implied_price_move_pct_from_roi(
+        leverage=20,
+        tp_roi_pct=Decimal("200"),
+        sl_roi_pct=Decimal("100"),
+    )
+    assert tp_m == Decimal("10")
+    assert sl_m == Decimal("5")
+    tp, sl = compute_tp_sl_prices(
+        entry_price=Decimal("100"),
+        side="BUY",
+        leverage=20,
+        tp_roi_pct=Decimal("200"),
+        sl_roi_pct=Decimal("100"),
+        price_precision=4,
+    )
+    assert tp == Decimal("110.0000")
+    assert sl == Decimal("95.0000")
+
+
+def test_implied_price_move_pct_from_roi_invalid() -> None:
+    with pytest.raises(ValueError):
+        implied_price_move_pct_from_roi(
+            leverage=0,
+            tp_roi_pct=Decimal("100"),
             sl_roi_pct=Decimal("50"),
         )
 

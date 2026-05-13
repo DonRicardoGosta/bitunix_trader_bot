@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Csak fallback-ként használjuk, ha nincs friss kalibráció.
     strategy_tp_roi_pct: str = "200"
     strategy_sl_roi_pct: str = "100"
+    # Minimum ár-elmozdulás %% (belépőtől): a kalibráció / ROI-ból jövő szűk
+    # sávot feljebb húzza, hogy zajban ne üssön ki azonnal az SL.
+    strategy_min_tp_move_pct: str = "0.50"
+    strategy_min_sl_move_pct: str = "0.35"
     strategy_tpsl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = "MARK_PRICE"
 
     # -- TP/SL automatikus belövő / calibration --

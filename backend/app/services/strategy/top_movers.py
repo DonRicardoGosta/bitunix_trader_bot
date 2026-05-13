@@ -22,6 +22,10 @@ Specifikáció:
       **mindkét lábra a kisebb move %%** kerül (szűkebb TP / szűkebb SL).
       ROI fallback (``STRATEGY_TP_ROI_PCT`` / ``STRATEGY_SL_ROI_PCT``) csak
       kalibráció nélkül; lásd ``app/services/tpsl.py``.
+    * **Minimum move %%:** a végső TP/SL ár mindig legalább
+      ``STRATEGY_MIN_TP_MOVE_PCT`` / ``STRATEGY_MIN_SL_MOVE_PCT`` (ár-%%)
+      távolságra van a belépőtől — így a túl szűk kalibráció vagy nagy
+      tőkeáttétel melletti ROI fallback sem üt ki zajból azonnal.
     * Piaci rendelés a Bitunix ``/futures/trade/place_order``-en, beépített
       ``tpPrice`` és ``slPrice`` paraméterekkel.
     * Ha a tőzsde elutasítja a rendelést (pl. min. mennyiség), a stratégia
@@ -49,8 +53,8 @@ from app.services.calibration_runner import get_active_calibration_result
 from app.services.risk import compute_margin, compute_quantity
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.tpsl import (
-    compute_tp_sl_prices,
     compute_tp_sl_prices_from_move_pct,
+    implied_price_move_pct_from_roi,
     is_risky_sl_roi,
 )
 from app.services.trading import TradingService
@@ -431,41 +435,40 @@ class TopMoversStrategy(Strategy):
             )
             return out
 
-        # 6) TP / SL trigger árak — kalibráció (effective = min(symbol, global)), ROI fallback
+        # 6) TP / SL trigger árak — kalibráció (effective = min(symbol, global)),
+        # ROI fallback ha nincs move %%; majd strategy minimum move %% padló.
+        floor_tp = Decimal(ctx.settings.strategy_min_tp_move_pct)
+        floor_sl = Decimal(ctx.settings.strategy_min_sl_move_pct)
         tp_source = "roi_fallback"
         try:
             if calibration is not None:
                 moves = calibration.effective_tp_sl_moves(symbol)
                 if moves is not None:
                     tp_move_pct, sl_move_pct = moves
-                    tp_price, sl_price = compute_tp_sl_prices_from_move_pct(
-                        entry_price=mover.last_price,
-                        side=side,
-                        tp_move_pct=tp_move_pct,
-                        sl_move_pct=sl_move_pct,
-                        price_precision=meta.price_precision,
-                    )
                     tp_source = "calibration_effective"
-                    out["tp_move_pct"] = str(tp_move_pct)
-                    out["sl_move_pct"] = str(sl_move_pct)
                 else:
-                    tp_price, sl_price = compute_tp_sl_prices(
-                        entry_price=mover.last_price,
-                        side=side,
+                    tp_move_pct, sl_move_pct = implied_price_move_pct_from_roi(
                         leverage=leverage,
                         tp_roi_pct=tp_roi,
                         sl_roi_pct=sl_roi,
-                        price_precision=meta.price_precision,
                     )
             else:
-                tp_price, sl_price = compute_tp_sl_prices(
-                    entry_price=mover.last_price,
-                    side=side,
+                tp_move_pct, sl_move_pct = implied_price_move_pct_from_roi(
                     leverage=leverage,
                     tp_roi_pct=tp_roi,
                     sl_roi_pct=sl_roi,
-                    price_precision=meta.price_precision,
                 )
+            tp_move_pct = max(tp_move_pct, floor_tp)
+            sl_move_pct = max(sl_move_pct, floor_sl)
+            tp_price, sl_price = compute_tp_sl_prices_from_move_pct(
+                entry_price=mover.last_price,
+                side=side,
+                tp_move_pct=tp_move_pct,
+                sl_move_pct=sl_move_pct,
+                price_precision=meta.price_precision,
+            )
+            out["tp_move_pct"] = str(tp_move_pct)
+            out["sl_move_pct"] = str(sl_move_pct)
         except ValueError as exc:
             out["placed"] = False
             out["reason"] = "tpsl_computation_failed"

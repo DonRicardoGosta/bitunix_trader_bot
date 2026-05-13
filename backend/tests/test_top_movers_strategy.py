@@ -18,6 +18,7 @@ from decimal import Decimal
 import pytest
 import sqlalchemy as sa
 
+from app.bitunix.exceptions import BitunixAPIError
 from app.config import get_settings
 from app.db.base import Base
 from app.db.models import (
@@ -31,7 +32,6 @@ from app.db.models import (
     TpSlCalibration,
 )
 from app.db.session import AsyncSessionLocal, engine
-from app.bitunix.exceptions import BitunixAPIError
 from app.services.strategy.base import StrategyContext
 from app.services.strategy.top_movers import TopMoversStrategy
 
@@ -52,6 +52,31 @@ async def _seed_fresh_calibration() -> None:
                     "tp_atr_mult": "3.0",
                     "sl_atr_mult": "1.5",
                     "global": {"tp_move_pct": "1.5", "sl_move_pct": "0.75"},
+                    "per_symbol": {},
+                },
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
+async def _seed_tiny_move_calibration() -> None:
+    """Kalibráció szándékosan szűk move %% — a stratégia padlója feljebb húzza."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(TpSlCalibration))
+        session.add(
+            TpSlCalibration(
+                status=CalibrationStatus.SUCCESS,
+                triggered_by="test_setup",
+                lookback_minutes=120,
+                top_n=20,
+                summary={
+                    "lookback_minutes": 120,
+                    "top_n": 20,
+                    "tp_atr_mult": "3.0",
+                    "sl_atr_mult": "1.5",
+                    "global": {"tp_move_pct": "0.1", "sl_move_pct": "0.08"},
                     "per_symbol": {},
                 },
                 started_at=datetime.now(UTC),
@@ -218,6 +243,66 @@ async def test_top_movers_places_orders_for_top3_with_correct_direction() -> Non
 
     assert result.details["margin_per_position_usdt"] == "10.00"
     assert result.details["calibration_used"] is True
+
+
+@pytest.mark.asyncio
+async def test_top_movers_applies_minimum_tp_sl_move_pct_floor() -> None:
+    """A kalibrált move %% alatti értékeket a STRATEGY_MIN_* padlóra emeli."""
+    await _seed_tiny_move_calibration()
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.commit()
+
+    tickers = {
+        "data": [
+            {
+                "symbol": "FFF",
+                "lastPrice": "60",
+                "open": "100",
+                "high": "100",
+                "low": "60",
+            },
+        ]
+    }
+    pairs = {
+        "data": [
+            {
+                "symbol": "FFF",
+                "maxLeverage": "10",
+                "basePrecision": "2",
+                "pricePrecision": "2",
+            },
+        ]
+    }
+    fake = FakeBitunixClient(
+        tickers=tickers,
+        trading_pairs=pairs,
+        account={"data": {"available": "1000"}},
+    )
+    base = get_settings()
+    settings = base.model_copy(
+        update={
+            "strategy_top_movers_count": 1,
+            "strategy_top_movers_scan_limit": 5,
+        }
+    )
+    strategy = TopMoversStrategy()
+    async with AsyncSessionLocal() as session:
+        ctx = StrategyContext(
+            session=session, client=fake, settings=settings, triggered_by="test"
+        )
+        result = await strategy.run(ctx)
+        await session.commit()
+
+    assert len(result.placed_orders) == 1
+    placed = result.placed_orders[0]
+    assert placed["symbol"] == "FFF"
+    assert placed["tp_source"] == "calibration_effective"
+    assert placed["tp_move_pct"] == str(Decimal(settings.strategy_min_tp_move_pct))
+    assert placed["sl_move_pct"] == str(Decimal(settings.strategy_min_sl_move_pct))
+    # SHORT 60: TP 0.5%% le, SL 0.35%% fel — 2 tized ROUND_UP
+    assert Decimal(placed["tp_price"]) == Decimal("59.70")
+    assert Decimal(placed["sl_price"]) == Decimal("60.21")
 
 
 @pytest.mark.asyncio
