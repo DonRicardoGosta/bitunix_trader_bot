@@ -1,12 +1,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { OrderForm } from "@/components/OrderForm";
 import { OrdersTable } from "@/components/OrdersTable";
-import { OrdersTotalOpenPnl } from "@/components/OrdersTotalOpenPnl";
+import { OrdersTotalDbPnl } from "@/components/OrdersTotalDbPnl";
 
 export default function OrdersPage() {
   return (
     <div className="space-y-6">
-      <OrdersTotalOpenPnl />
+      <OrdersTotalDbPnl />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">

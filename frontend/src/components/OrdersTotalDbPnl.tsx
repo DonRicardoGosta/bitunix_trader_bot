@@ -12,30 +12,35 @@ function parseNum(s: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export function OrdersTotalOpenPnl() {
+export function OrdersTotalDbPnl() {
   const { intervalSec } = useRefreshInterval();
   const [error, setError] = useState<string | null>(null);
   const [totalPnl, setTotalPnl] = useState<number | null>(null);
   const [unrealized, setUnrealized] = useState<number | null>(null);
   const [realized, setRealized] = useState<number | null>(null);
-  const [count, setCount] = useState<number | null>(null);
+  const [orderCount, setOrderCount] = useState<number | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const r = await api.positionsNormalized();
+        const r = await api.ordersPnlTotals();
         if (cancelled) return;
-        const u = parseNum(r.totals.unrealized_pnl_usdt) ?? 0;
-        const re = parseNum(r.totals.realized_pnl_usdt) ?? 0;
+        const u = parseNum(r.unrealized_pnl_usdt) ?? 0;
+        const re = parseNum(r.realized_pnl_usdt) ?? 0;
+        const t = parseNum(r.total_pnl_usdt);
         setUnrealized(u);
         setRealized(re);
-        setTotalPnl(u + re);
-        setCount(r.totals.count);
+        setTotalPnl(t ?? re + u);
+        setOrderCount(r.order_count);
+        setSyncError(r.sync_error);
         setError(null);
       } catch (err) {
         if (!cancelled)
-          setError(err instanceof Error ? err.message : "Pozíciók lekérése sikertelen");
+          setError(
+            err instanceof Error ? err.message : "PnL összesítés lekérése sikertelen",
+          );
       }
     }
     void load();
@@ -58,13 +63,19 @@ export function OrdersTotalOpenPnl() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Összesített PnL (nyitott pozíciók)</CardTitle>
+        <CardTitle>Összesített PnL (saját rendelésnapló)</CardTitle>
         <span className="text-xs text-muted">
-          Minden coin együtt: nem realizált + pozíción belüli realizált (Bitunix /normalized) ·
-          frissül {intervalSec} mp-ként
+          A Postgres <code className="text-[11px]">orders</code> tábla összes sora: soronkénti
+          realizált + nem realizált (Bitunix szinkron, mint a táblázatnál) — nyitott és lezárt
+          együtt · frissül {intervalSec} mp-ként
         </span>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
+        {syncError ? (
+          <p className="text-xs text-amber-400 border border-amber-500/30 rounded-md px-3 py-2 bg-amber-500/5">
+            Bitunix szinkron: {syncError}
+          </p>
+        ) : null}
         {error ? (
           <p className="text-loss text-sm">{error}</p>
         ) : totalPnl == null ? (
@@ -76,20 +87,20 @@ export function OrdersTotalOpenPnl() {
             </div>
             <div className="text-sm text-muted flex flex-wrap gap-x-4 gap-y-1">
               <span>
-                Nem realizált:{" "}
-                <span className="num text-slate-200">
-                  {formatNumber(unrealized ?? 0, { decimals: 4, sign: true })}
-                </span>
-              </span>
-              <span>
-                Realizált (nyitott pozíción):{" "}
+                Realizált (össz. sorok):{" "}
                 <span className="num text-slate-200">
                   {formatNumber(realized ?? 0, { decimals: 4, sign: true })}
                 </span>
               </span>
-              {count != null ? (
+              <span>
+                Nem realizált (össz. sorok):{" "}
+                <span className="num text-slate-200">
+                  {formatNumber(unrealized ?? 0, { decimals: 4, sign: true })}
+                </span>
+              </span>
+              {orderCount != null ? (
                 <span>
-                  Pozíciók: <span className="num text-slate-200">{count}</span>
+                  Rendeléssorok: <span className="num text-slate-200">{orderCount}</span>
                 </span>
               ) : null}
             </div>

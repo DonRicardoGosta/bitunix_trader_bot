@@ -47,6 +47,15 @@ export interface OrderRow {
   exchange: OrderExchangeInfo;
 }
 
+/** GET /api/orders/pnl-totals — összes saját DB rendelés PnL összesítője */
+export interface OrdersPnlTotals {
+  order_count: number;
+  realized_pnl_usdt: string;
+  unrealized_pnl_usdt: string;
+  total_pnl_usdt: string;
+  sync_error: string | null;
+}
+
 export interface PlaceOrderInput {
   symbol: string;
   side: "BUY" | "SELL";
@@ -258,6 +267,7 @@ export const api = {
     const qs = usp.toString();
     return request<OrderRow[]>(`/api/orders${qs ? `?${qs}` : ""}`);
   },
+  ordersPnlTotals: () => request<OrdersPnlTotals>("/api/orders/pnl-totals"),
   placeOrder: (input: PlaceOrderInput) =>
     request<PlaceOrderResult>("/api/orders", {
       method: "POST",

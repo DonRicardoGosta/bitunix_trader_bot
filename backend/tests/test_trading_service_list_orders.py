@@ -268,3 +268,80 @@ async def test_list_orders_handles_position_history_api_error() -> None:
     # Hiba esetén nem dőlünk el; a sync_error mező mutatja a problémát.
     assert len(rows) == 1
     assert rows[0]["exchange"]["sync_error"] is None or "history" in rows[0]["exchange"]["sync_error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_orders_pnl_totals_matches_sum_of_list_orders_rows() -> None:
+    """``orders_pnl_totals`` ugyanazt az enrichmentet futtatja, mint a lista (összes DB sor)."""
+    when = datetime.fromtimestamp(1778681838.0, tz=UTC)
+    await _seed_orders(
+        [
+            {
+                "client_order_id": "bt-pnl-open",
+                "symbol": "MLNUSDT",
+                "side": OrderSide.SELL,
+                "quantity": Decimal("5.81"),
+                "price": None,
+                "leverage": 50,
+                "status": OrderStatus.NEW,
+                "created_at": when,
+            },
+            {
+                "client_order_id": "bt-pnl-closed",
+                "symbol": "SAGAUSDT",
+                "side": OrderSide.SELL,
+                "quantity": Decimal("468.6"),
+                "price": None,
+                "leverage": 50,
+                "status": OrderStatus.NEW,
+                "created_at": when,
+            },
+        ],
+    )
+    fake = _FakeClient(
+        positions=[
+            {
+                "positionId": "p-open-pnl",
+                "symbol": "MLNUSDT",
+                "side": "SELL",
+                "qty": "5.81",
+                "leverage": 50,
+                "ctime": "1778681838000",
+                "realizedPNL": "-0.007679658",
+                "unrealizedPNL": "0.05229",
+                "margin": "0.263668258",
+                "avgOpenPrice": "2.203",
+            }
+        ],
+        history_positions={
+            "SAGAUSDT": [
+                {
+                    "positionId": "p-closed-pnl",
+                    "symbol": "SAGAUSDT",
+                    "side": "SELL",
+                    "maxQty": "468.6",
+                    "leverage": "50",
+                    "ctime": "1778681838000",
+                    "mtime": "1778681865000",
+                    "entryPrice": "0.02811",
+                    "closePrice": "0.02804",
+                    "realizedPNL": "0.017014866",
+                }
+            ]
+        },
+    )
+    async with AsyncSessionLocal() as session:
+        svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
+        totals = await svc.orders_pnl_totals()
+        rows = await svc.list_orders(limit=100)
+    assert len(rows) == 2
+    sum_r = sum(
+        Decimal(str(r["exchange"].get("realized_pnl_usdt") or "0")) for r in rows
+    )
+    sum_u = sum(
+        Decimal(str(r["exchange"].get("unrealized_pnl_usdt") or "0")) for r in rows
+    )
+    assert totals["order_count"] == 2
+    assert Decimal(totals["realized_pnl_usdt"]) == sum_r
+    assert Decimal(totals["unrealized_pnl_usdt"]) == sum_u
+    assert Decimal(totals["total_pnl_usdt"]) == sum_r + sum_u

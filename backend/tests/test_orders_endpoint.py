@@ -103,3 +103,19 @@ def test_list_orders_supports_pagination_and_symbol_filter() -> None:
         # Túl nagy limit visszautasítva
         r_bad = client.get("/api/orders?limit=99999")
         assert r_bad.status_code == 422
+
+
+def test_orders_pnl_totals_endpoint_shape() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/orders/pnl-totals")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.keys() >= {
+            "order_count",
+            "realized_pnl_usdt",
+            "unrealized_pnl_usdt",
+            "total_pnl_usdt",
+            "sync_error",
+        }
+        assert isinstance(body["order_count"], int)

@@ -18,6 +18,19 @@ from app.services.trading import TradingService
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
+@router.get("/pnl-totals")
+async def orders_pnl_totals(
+    service: TradingService = Depends(get_trading_service),
+) -> dict[str, Any]:
+    """Összesített PnL (USDT) a saját ``orders`` tábla összes sorára.
+
+    A soronkénti enrichment megegyezik a ``GET /api/orders`` listával
+    (Bitunix history + nyitott pozíció); az összeg a realized + unrealized
+    mezők összege minden naplózott rendelésre.
+    """
+    return await service.orders_pnl_totals()
+
+
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def place_order(
     payload: OrderRequest,

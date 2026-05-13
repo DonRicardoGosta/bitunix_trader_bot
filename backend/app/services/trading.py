@@ -161,6 +161,48 @@ class TradingService:
         stmt = stmt.offset(offset).limit(limit)
         result = await self._session.execute(stmt)
         orders = list(result.scalars().all())
+        return await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
+
+    async def orders_pnl_totals(self) -> dict[str, Any]:
+        """Összesített PnL (USDT) a saját ``orders`` tábla összes sorára.
+
+        Ugyanaz a Bitunix szinkron és enrichment, mint a rendeléslistánál;
+        az összeg a soronkénti ``realized_pnl_usdt`` + ``unrealized_pnl_usdt``
+        összege (ahol a mező ki van töltve) — nyitott és lezárt trade-ek
+        együtt, a naplózott saját rendelések alapján.
+        """
+        stmt = select(Order).order_by(Order.created_at.desc())
+        result = await self._session.execute(stmt)
+        orders = list(result.scalars().all())
+        rows = await self._enriched_order_api_rows(orders, debug_sync=False)
+        total_r = Decimal(0)
+        total_u = Decimal(0)
+        for row in rows:
+            ex = row.get("exchange") or {}
+            raw_r = ex.get("realized_pnl_usdt")
+            raw_u = ex.get("unrealized_pnl_usdt")
+            if raw_r is not None:
+                total_r += Decimal(str(raw_r))
+            if raw_u is not None:
+                total_u += Decimal(str(raw_u))
+        sync_error = None
+        if rows:
+            ex0 = rows[0].get("exchange") or {}
+            sync_error = ex0.get("sync_error")
+        return {
+            "order_count": len(rows),
+            "realized_pnl_usdt": str(total_r),
+            "unrealized_pnl_usdt": str(total_u),
+            "total_pnl_usdt": str(total_r + total_u),
+            "sync_error": sync_error,
+        }
+
+    async def _enriched_order_api_rows(
+        self,
+        orders: list[Order],
+        *,
+        debug_sync: bool,
+    ) -> list[dict[str, Any]]:
         settings = get_settings()
 
         if not (settings.bitunix_api_key and settings.bitunix_api_secret):
