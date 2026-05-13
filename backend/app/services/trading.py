@@ -21,9 +21,13 @@ from app.db import audit
 from app.db.models import AuditLevel, Order, OrderSide, OrderStatus, OrderType
 from app.schemas.trading import OrderRequest, OrderResponse
 from app.services.order_enrichment import (
+    TradeAugment,
     build_order_api_dict,
+    build_trade_augment_indices,
     index_history_orders_by_client_id,
+    last_or_mark_price_from_ticker,
     parse_open_symbols_from_positions,
+    pick_trade_augment,
 )
 
 
@@ -156,6 +160,9 @@ class TradingService:
             sync_err = f"Pozíciók lekérése: {exc}"[:500]
 
         hist_by_client: dict[str, dict[str, Any]] = {}
+        trade_by_client: dict[str, TradeAugment] = {}
+        trade_by_order: dict[str, TradeAugment] = {}
+        mark_by_symbol: dict[str, Decimal] = {}
         symbols = {o.symbol for o in orders if o.symbol}
         for sym in sorted(symbols):
             try:
@@ -168,6 +175,32 @@ class TradingService:
                 elif len(sync_err) < 450:
                     sync_err = f"{sync_err}; {sym}: {exc}"[:500]
 
+        for sym in sorted(symbols):
+            try:
+                raw_t = await self._client.get_history_trades(symbol=sym, limit=100)
+                bc, bo = build_trade_augment_indices(raw_t)
+                trade_by_client.update(bc)
+                trade_by_order.update(bo)
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"Trades ({sym}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; trades {sym}: {exc}"[:500]
+
+        for sym in sorted(symbols):
+            try:
+                raw_m = await self._client.get_ticker(sym)
+                mp = last_or_mark_price_from_ticker(raw_m)
+                if mp is not None:
+                    mark_by_symbol[sym.upper()] = mp
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"Ticker ({sym}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; ticker {sym}: {exc}"[:500]
+
         if not got_any_exchange and sync_err is None:
             sync_err = "Bitunix szinkron sikertelen."
 
@@ -179,6 +212,13 @@ class TradingService:
                 hist_row=hist_by_client.get(o.client_order_id),
                 open_symbols=open_syms,
                 sync_error=global_sync_error,
+                trade_augment=pick_trade_augment(
+                    trade_by_client,
+                    trade_by_order,
+                    client_order_id=o.client_order_id,
+                    bitunix_order_id=o.bitunix_order_id,
+                ),
+                mark_price=mark_by_symbol.get(o.symbol.upper()),
             )
             for o in orders
         ]

@@ -7,10 +7,14 @@ from decimal import Decimal
 
 from app.db.models import Order, OrderSide, OrderStatus, OrderType
 from app.services.order_enrichment import (
+    TradeAugment,
     build_order_api_dict,
+    build_trade_augment_indices,
     index_history_orders_by_client_id,
+    last_or_mark_price_from_ticker,
     margin_usdt_linear,
     parse_open_symbols_from_positions,
+    pick_trade_augment,
 )
 
 
@@ -98,6 +102,92 @@ def test_build_order_closed_roi() -> None:
     out = build_order_api_dict(o, hist_row=hist, open_symbols=set())
     assert out["exchange"]["lifecycle"] == "closed"
     assert out["exchange"]["roi_pct"] == "250.00"  # 25 / (1*100/10) * 100
+
+
+def test_roi_uses_trade_vwap_when_hist_price_zero() -> None:
+    """MARKET history sor price=0 esetén a trade-history VWAP számít marginhoz."""
+    o = _order(
+        client_order_id="bt-z",
+        symbol="XUSDT",
+        quantity="1",
+        price=None,
+        leverage=10,
+    )
+    hist = {
+        "status": "FILLED",
+        "realizedPNL": "10",
+        "tradeQty": "1",
+        "price": "0",
+        "leverage": 10,
+        "mtime": 1,
+    }
+    aug = TradeAugment(realized_sum=Decimal("10"), avg_price=Decimal("100"))
+    out = build_order_api_dict(o, hist_row=hist, open_symbols=set(), trade_augment=aug)
+    assert out["exchange"]["roi_pct"] == "100.00"
+
+
+def test_roi_zero_with_mark_price_only() -> None:
+    o = _order(
+        client_order_id="bt-m",
+        symbol="YUSDT",
+        quantity="2",
+        price=None,
+        leverage=5,
+    )
+    hist = {
+        "status": "FILLED",
+        "realizedPNL": "0",
+        "tradeQty": "2",
+        "price": "0",
+        "leverage": 5,
+        "mtime": 1,
+    }
+    out = build_order_api_dict(
+        o,
+        hist_row=hist,
+        open_symbols=set(),
+        trade_augment=None,
+        mark_price=Decimal("50"),
+    )
+    assert out["exchange"]["roi_pct"] == "0.00"
+
+
+def test_build_trade_augment_indices_vwap() -> None:
+    resp = {
+        "data": {
+            "tradeList": [
+                {
+                    "clientId": "c1",
+                    "orderId": "99",
+                    "qty": "1",
+                    "price": "100",
+                    "realizedPNL": "0",
+                },
+                {
+                    "clientId": "c1",
+                    "orderId": "99",
+                    "qty": "1",
+                    "price": "200",
+                    "realizedPNL": "5",
+                },
+            ]
+        }
+    }
+    by_c, by_o = build_trade_augment_indices(resp)
+    assert by_c["c1"].avg_price == Decimal("150")
+    assert by_c["c1"].realized_sum == Decimal("5")
+    assert by_o["99"].avg_price == Decimal("150")
+
+
+def test_last_or_mark_price_from_ticker() -> None:
+    raw = {"data": [{"markPrice": "1.5", "lastPrice": "2"}]}
+    assert last_or_mark_price_from_ticker(raw) == Decimal("1.5")
+
+
+def test_pick_trade_augment_prefers_client_with_price() -> None:
+    by_c = {"a": TradeAugment(Decimal(0), Decimal("10"))}
+    by_o = {"b": TradeAugment(Decimal(0), Decimal("20"))}
+    assert pick_trade_augment(by_c, by_o, client_order_id="a", bitunix_order_id="b") == by_c["a"]
 
 
 def test_build_order_open_overrides_filled_row() -> None:

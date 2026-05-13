@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from app.db.models import Order
+
+
+@dataclass(frozen=True)
+class TradeAugment:
+    """Összesítés a ``get_history_trades`` sorokból (clientId / orderId szerint)."""
+
+    realized_sum: Decimal
+    avg_price: Decimal  # VWAP kitöltési ár; 0 ha nincs adat
 
 
 def _extract_order_list(resp: dict[str, Any]) -> list[dict[str, Any]]:
@@ -95,6 +104,104 @@ def _dec(val: object | None) -> Decimal | None:
         return None
 
 
+def _extract_trade_list(resp: dict[str, Any]) -> list[dict[str, Any]]:
+    data = resp.get("data") if isinstance(resp, dict) else None
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("tradeList") or data.get("list") or []
+    return raw if isinstance(raw, list) else []
+
+
+def build_trade_augment_indices(
+    resp: dict[str, Any],
+) -> tuple[dict[str, TradeAugment], dict[str, TradeAugment]]:
+    """``(by_client_id, by_order_id)`` → VWAP ár + összesített realized PnL."""
+    cr: dict[str, Decimal] = {}
+    cn: dict[str, Decimal] = {}
+    cd: dict[str, Decimal] = {}
+    or_: dict[str, Decimal] = {}
+    on: dict[str, Decimal] = {}
+    od: dict[str, Decimal] = {}
+
+    for row in _extract_trade_list(resp):
+        r = _dec(row.get("realizedPNL"))
+        r_val = r if r is not None else Decimal(0)
+        q = _dec(row.get("qty"))
+        p = _dec(row.get("price"))
+        cid = row.get("clientId") or row.get("client_id")
+        oid = row.get("orderId") or row.get("order_id")
+        if cid and isinstance(cid, str):
+            cr[cid] = cr.get(cid, Decimal(0)) + r_val
+            if q is not None and p is not None and q > 0 and p > 0:
+                cn[cid] = cn.get(cid, Decimal(0)) + q * p
+                cd[cid] = cd.get(cid, Decimal(0)) + q
+        if oid not in (None, ""):
+            os = str(oid)
+            or_[os] = or_.get(os, Decimal(0)) + r_val
+            if q is not None and p is not None and q > 0 and p > 0:
+                on[os] = on.get(os, Decimal(0)) + q * p
+                od[os] = od.get(os, Decimal(0)) + q
+
+    def _finalize(
+        rs: dict[str, Decimal], ns: dict[str, Decimal], ds: dict[str, Decimal]
+    ) -> dict[str, TradeAugment]:
+        out: dict[str, TradeAugment] = {}
+        keys = set(rs) | set(ns) | set(ds)
+        for k in keys:
+            ap = (ns[k] / ds[k]) if ds.get(k, Decimal(0)) > 0 else Decimal(0)
+            out[k] = TradeAugment(realized_sum=rs.get(k, Decimal(0)), avg_price=ap)
+        return out
+
+    return _finalize(cr, cn, cd), _finalize(or_, on, od)
+
+
+def last_or_mark_price_from_ticker(raw: dict[str, Any]) -> Decimal | None:
+    """Tickers válaszból utolsó vagy mark ár (margin becsléshez)."""
+    data = raw.get("data") if isinstance(raw, dict) else None
+    item: dict[str, Any] = {}
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        item = data[0]
+    elif isinstance(data, dict):
+        item = data
+    p = _dec(item.get("markPrice") or item.get("lastPrice") or item.get("last"))
+    return p if p is not None and p > 0 else None
+
+
+def _price_from_hist_row(hist_row: dict[str, Any] | None) -> Decimal | None:
+    if not hist_row:
+        return None
+    for key in (
+        "avgPrice",
+        "avg_price",
+        "tradePrice",
+        "dealPrice",
+        "fillPrice",
+        "avgFillPrice",
+        "price",
+        "orderPrice",
+    ):
+        p = _dec(hist_row.get(key))
+        if p is not None and p > 0:
+            return p
+    return None
+
+
+def pick_trade_augment(
+    by_client: dict[str, TradeAugment],
+    by_order: dict[str, TradeAugment],
+    *,
+    client_order_id: str,
+    bitunix_order_id: str | None,
+) -> TradeAugment | None:
+    c = by_client.get(client_order_id)
+    o = by_order.get(str(bitunix_order_id)) if bitunix_order_id else None
+    if c and c.avg_price > 0:
+        return c
+    if o and o.avg_price > 0:
+        return o
+    return c or o
+
+
 def margin_usdt_linear(
     *, qty: Decimal, price: Decimal, leverage: int
 ) -> Decimal | None:
@@ -109,6 +216,8 @@ def build_order_api_dict(
     hist_row: dict[str, Any] | None,
     open_symbols: set[str],
     sync_error: str | None = None,
+    trade_augment: TradeAugment | None = None,
+    mark_price: Decimal | None = None,
 ) -> dict[str, Any]:
     """Egy Order ORM → API listaelem (HU mezők a frontendnek)."""
     sym_u = o.symbol.upper()
@@ -116,7 +225,12 @@ def build_order_api_dict(
     if hist_row is not None:
         exchange_status = hist_row.get("status")
 
-    realized = _dec(hist_row.get("realizedPNL") if hist_row else None)
+    realized_hist = _dec(hist_row.get("realizedPNL") if hist_row else None)
+    realized: Decimal | None = realized_hist
+    if trade_augment is not None and (
+        trade_augment.realized_sum != 0 or realized_hist is None
+    ):
+        realized = trade_augment.realized_sum
 
     qty_hist = _dec(
         (hist_row.get("tradeQty") if hist_row else None)
@@ -124,8 +238,16 @@ def build_order_api_dict(
     )
     qty = qty_hist if qty_hist is not None and qty_hist > 0 else o.quantity
 
-    price_hist = _dec(hist_row.get("price") if hist_row else None)
-    price = price_hist if price_hist is not None and price_hist > 0 else o.price
+    price_hist = _price_from_hist_row(hist_row)
+    ta_price = (
+        trade_augment.avg_price
+        if trade_augment is not None and trade_augment.avg_price > 0
+        else None
+    )
+    db_dec = _dec(o.price) if o.price is not None else None
+    db_price = db_dec if db_dec is not None and db_dec > 0 else None
+    mp = mark_price if mark_price is not None and mark_price > 0 else None
+    price = price_hist or db_price or ta_price or mp
 
     lev = o.leverage
     if hist_row and hist_row.get("leverage") is not None:

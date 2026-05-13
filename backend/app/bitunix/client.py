@@ -216,6 +216,42 @@ class BitunixClient:
             authenticated=True,
         )
 
+    async def get_history_trades(
+        self,
+        *,
+        symbol: str | None = None,
+        order_id: str | None = None,
+        position_id: str | None = None,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Korábbi trade-ek (kitöltési ár, trade-enkénti realized PnL).
+
+        Bitunix: ``GET /api/v1/futures/trade/get_history_trades``
+        """
+        params: dict[str, Any] = {
+            "skip": max(0, int(skip)),
+            "limit": min(max(1, int(limit)), 100),
+        }
+        if symbol:
+            params["symbol"] = symbol
+        if order_id:
+            params["orderId"] = str(order_id)
+        if position_id:
+            params["positionId"] = str(position_id)
+        if start_time_ms is not None:
+            params["startTime"] = int(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = int(end_time_ms)
+        return await self._request(
+            "GET",
+            "/api/v1/futures/trade/get_history_trades",
+            params=params,
+            authenticated=True,
+        )
+
     async def place_order(
         self,
         *,
