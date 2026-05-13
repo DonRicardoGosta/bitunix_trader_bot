@@ -45,7 +45,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "C4", "SIM", "ASYNC"]
-ignore = ["E501"]  # uvicorn import lines
+# B008  - FastAPI idióma: Depends() default argumentumként standard
+# UP042 - StrEnum migrációt nem erőltetjük, kompatibilitási okból
+ignore = ["E501", "B008", "UP042"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

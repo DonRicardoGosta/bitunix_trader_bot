@@ -13,12 +13,14 @@ from enum import Enum
 
 from sqlalchemy import (
     DateTime,
-    Enum as SQLEnum,
     Index,
     Numeric,
     String,
     Text,
     func,
+)
+from sqlalchemy import (
+    Enum as SQLEnum,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
