@@ -63,7 +63,12 @@ async def place_order(
 
 @router.get("")
 async def list_orders(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500, description="Maximum sorok száma (1–500)"),
+    offset: int = Query(0, ge=0, description="Kihagyott sorok száma (lapozás)"),
+    symbol: str | None = Query(
+        None,
+        description="Szimbólum szűrő (pl. BTCUSDT) — case-insensitive",
+    ),
     debug_sync: bool = Query(
         False,
         description=(
@@ -74,4 +79,9 @@ async def list_orders(
     service: TradingService = Depends(get_trading_service),
 ) -> list[dict[str, Any]]:
     """Legutóbbi rendelések (saját DB + Bitunix history / nyitott pozíció)."""
-    return await service.list_orders(limit=limit, debug_sync=debug_sync)
+    return await service.list_orders(
+        limit=limit,
+        offset=offset,
+        symbol=symbol,
+        debug_sync=debug_sync,
+    )

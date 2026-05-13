@@ -19,6 +19,7 @@ from app import __version__
 from app.api.routes import (
     account,
     calibration,
+    dashboard,
     events,
     health,
     market,
@@ -119,6 +120,7 @@ def create_app() -> FastAPI:
     app.include_router(strategies.router, prefix="/api")
     app.include_router(events.router, prefix="/api")
     app.include_router(calibration.router, prefix="/api")
+    app.include_router(dashboard.router, prefix="/api")
 
     return app
 
