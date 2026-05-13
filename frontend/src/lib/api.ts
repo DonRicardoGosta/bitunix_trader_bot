@@ -15,6 +15,17 @@ export interface TickerInfo {
   volume_24h?: string | null;
 }
 
+export interface OrderExchangeInfo {
+  synced: boolean;
+  sync_error: string | null;
+  order_status: string | null;
+  lifecycle: string;
+  lifecycle_label: string;
+  realized_pnl_usdt: string | null;
+  roi_pct: string | null;
+  margin_usdt_estimate: string | null;
+}
+
 export interface OrderRow {
   id: number;
   client_order_id: string;
@@ -27,6 +38,7 @@ export interface OrderRow {
   leverage: number;
   status: string;
   created_at: string;
+  exchange: OrderExchangeInfo;
 }
 
 export interface PlaceOrderInput {

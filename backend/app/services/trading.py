@@ -9,14 +9,22 @@ from __future__ import annotations
 import json
 import uuid
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bitunix.client import BitunixClient
+from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
+from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel, Order, OrderSide, OrderStatus, OrderType
 from app.schemas.trading import OrderRequest, OrderResponse
+from app.services.order_enrichment import (
+    build_order_api_dict,
+    index_history_orders_by_client_id,
+    parse_open_symbols_from_positions,
+)
 
 
 def _new_client_order_id() -> str:
@@ -119,11 +127,61 @@ class TradingService:
             raw=response,
         )
 
-    async def list_orders(self, limit: int = 50) -> list[Order]:
-        """Legutóbbi rendelések a saját DB-ből."""
+    async def list_orders(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Legutóbbi rendelések DB-ből, Bitunix history + nyitott pozíció szinkronnal."""
         stmt = select(Order).order_by(Order.created_at.desc()).limit(limit)
         result = await self._session.execute(stmt)
-        return list(result.scalars().all())
+        orders = list(result.scalars().all())
+        settings = get_settings()
+
+        if not (settings.bitunix_api_key and settings.bitunix_api_secret):
+            return [
+                build_order_api_dict(
+                    o,
+                    hist_row=None,
+                    open_symbols=set(),
+                    sync_error="Bitunix API kulcs nincs beállítva – nincs tőzsdei szinkron.",
+                )
+                for o in orders
+            ]
+
+        open_syms: set[str] = set()
+        got_any_exchange = False
+        sync_err: str | None = None
+        try:
+            pos_raw = await self._client.get_positions()
+            open_syms = parse_open_symbols_from_positions(pos_raw)
+            got_any_exchange = True
+        except (BitunixAPIError, BitunixSignatureError) as exc:
+            sync_err = f"Pozíciók lekérése: {exc}"[:500]
+
+        hist_by_client: dict[str, dict[str, Any]] = {}
+        symbols = {o.symbol for o in orders if o.symbol}
+        for sym in sorted(symbols):
+            try:
+                raw = await self._client.get_history_orders(symbol=sym, limit=100)
+                hist_by_client.update(index_history_orders_by_client_id(raw))
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"History ({sym}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; {sym}: {exc}"[:500]
+
+        if not got_any_exchange and sync_err is None:
+            sync_err = "Bitunix szinkron sikertelen."
+
+        global_sync_error = None if got_any_exchange else sync_err
+
+        return [
+            build_order_api_dict(
+                o,
+                hist_row=hist_by_client.get(o.client_order_id),
+                open_symbols=open_syms,
+                sync_error=global_sync_error,
+            )
+            for o in orders
+        ]
 
 
 async def estimate_notional(

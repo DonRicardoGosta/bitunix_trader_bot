@@ -74,3 +74,6 @@ def test_place_order_dry_run_via_http() -> None:
         assert first["symbol"] == "BTCUSDT"
         assert first["side"] == "BUY"
         assert first["leverage"] == 5
+        assert "exchange" in first
+        assert "lifecycle" in first["exchange"]
+        assert "lifecycle_label" in first["exchange"]

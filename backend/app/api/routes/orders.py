@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,22 +65,6 @@ async def place_order(
 async def list_orders(
     limit: int = 50,
     service: TradingService = Depends(get_trading_service),
-) -> list[dict]:
-    """Legutóbbi rendelések (saját DB)."""
-    orders = await service.list_orders(limit=limit)
-    return [
-        {
-            "id": o.id,
-            "client_order_id": o.client_order_id,
-            "bitunix_order_id": o.bitunix_order_id,
-            "symbol": o.symbol,
-            "side": o.side.value,
-            "type": o.type.value,
-            "quantity": str(o.quantity),
-            "price": str(o.price) if o.price else None,
-            "leverage": o.leverage,
-            "status": o.status.value,
-            "created_at": o.created_at.isoformat(),
-        }
-        for o in orders
-    ]
+) -> list[dict[str, Any]]:
+    """Legutóbbi rendelések (saját DB + Bitunix history / nyitott pozíció)."""
+    return await service.list_orders(limit=limit)

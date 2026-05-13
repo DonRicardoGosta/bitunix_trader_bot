@@ -7,7 +7,7 @@ export default function OrdersPage() {
       <CardHeader>
         <CardTitle>Rendelés napló</CardTitle>
         <span className="text-xs text-muted">
-          forrás: a backend saját Postgres audit táblája
+          forrás: saját Postgres napló + Bitunix history / nyitott pozíció (5 mp-enként frissül)
         </span>
       </CardHeader>
       <CardContent>
