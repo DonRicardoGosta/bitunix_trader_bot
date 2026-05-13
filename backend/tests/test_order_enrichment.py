@@ -8,8 +8,11 @@ from decimal import Decimal
 from app.db.models import Order, OrderSide, OrderStatus, OrderType
 from app.services.order_enrichment import (
     TradeAugment,
+    aggregate_trades_response,
+    best_trade_augment,
     build_order_api_dict,
     build_trade_augment_indices,
+    earliest_history_start_ms,
     index_history_orders_by_client_id,
     last_or_mark_price_from_ticker,
     margin_usdt_linear,
@@ -182,6 +185,49 @@ def test_build_trade_augment_indices_vwap() -> None:
 def test_last_or_mark_price_from_ticker() -> None:
     raw = {"data": [{"markPrice": "1.5", "lastPrice": "2"}]}
     assert last_or_mark_price_from_ticker(raw) == Decimal("1.5")
+
+
+def test_extract_order_list_accepts_data_as_list() -> None:
+    resp = {
+        "code": 0,
+        "data": [
+            {
+                "clientId": "bt-test",
+                "orderId": "99",
+                "status": "FILLED",
+                "mtime": 1,
+                "realizedPNL": "3",
+            }
+        ],
+    }
+    idx = index_history_orders_by_client_id(resp)
+    assert idx["bt-test"]["status"] == "FILLED"
+
+
+def test_aggregate_trades_response() -> None:
+    resp = {
+        "data": {
+            "tradeList": [
+                {"qty": "1", "price": "100", "realizedPNL": "1"},
+                {"qty": "1", "price": "200", "realizedPNL": "2"},
+            ]
+        }
+    }
+    agg = aggregate_trades_response(resp)
+    assert agg.realized_sum == Decimal("3")
+    assert agg.avg_price == Decimal("150")
+
+
+def test_best_trade_augment_prefers_larger_abs_pnl() -> None:
+    a = TradeAugment(Decimal("1"), Decimal("100"))
+    b = TradeAugment(Decimal("-50"), Decimal("0"))
+    assert best_trade_augment(a, b) == b
+
+
+def test_earliest_history_start_ms() -> None:
+    o = _order(client_order_id="a", symbol="S", quantity="1", price="1")
+    ms = earliest_history_start_ms([o], "S")
+    assert ms is not None
 
 
 def test_pick_trade_augment_prefers_client_with_price() -> None:

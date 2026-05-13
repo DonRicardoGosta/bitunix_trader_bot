@@ -22,10 +22,14 @@ from app.db.models import AuditLevel, Order, OrderSide, OrderStatus, OrderType
 from app.schemas.trading import OrderRequest, OrderResponse
 from app.services.order_enrichment import (
     TradeAugment,
+    aggregate_trades_response,
+    best_trade_augment,
     build_order_api_dict,
     build_trade_augment_indices,
+    earliest_history_start_ms,
     index_history_orders_by_client_id,
     last_or_mark_price_from_ticker,
+    normalize_str_id,
     parse_open_symbols_from_positions,
     pick_trade_augment,
 )
@@ -165,8 +169,11 @@ class TradingService:
         mark_by_symbol: dict[str, Decimal] = {}
         symbols = {o.symbol for o in orders if o.symbol}
         for sym in sorted(symbols):
+            start_ms = earliest_history_start_ms(orders, sym)
             try:
-                raw = await self._client.get_history_orders(symbol=sym, limit=100)
+                raw = await self._client.get_history_orders(
+                    symbol=sym, limit=100, start_time_ms=start_ms
+                )
                 hist_by_client.update(index_history_orders_by_client_id(raw))
                 got_any_exchange = True
             except (BitunixAPIError, BitunixSignatureError) as exc:
@@ -176,8 +183,11 @@ class TradingService:
                     sync_err = f"{sync_err}; {sym}: {exc}"[:500]
 
         for sym in sorted(symbols):
+            start_ms = earliest_history_start_ms(orders, sym)
             try:
-                raw_t = await self._client.get_history_trades(symbol=sym, limit=100)
+                raw_t = await self._client.get_history_trades(
+                    symbol=sym, limit=100, start_time_ms=start_ms
+                )
                 bc, bo = build_trade_augment_indices(raw_t)
                 trade_by_client.update(bc)
                 trade_by_order.update(bo)
@@ -187,6 +197,81 @@ class TradingService:
                     sync_err = f"Trades ({sym}): {exc}"[:500]
                 elif len(sync_err) < 450:
                     sync_err = f"{sync_err}; trades {sym}: {exc}"[:500]
+
+        # Célzott lekérések: a top-100-as lista gyakran nem tartalmazza a saját clientId-t.
+        seen_hist_pair: set[tuple[str, str]] = set()
+        for o in orders:
+            cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
+            key = (o.symbol, cid_key)
+            if cid_key in hist_by_client or key in seen_hist_pair:
+                continue
+            seen_hist_pair.add(key)
+            start_ms = earliest_history_start_ms(orders, o.symbol)
+            try:
+                raw = await self._client.get_history_orders(
+                    symbol=o.symbol,
+                    client_id=o.client_order_id,
+                    limit=100,
+                    start_time_ms=start_ms,
+                )
+                hist_by_client.update(index_history_orders_by_client_id(raw))
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"History direct ({o.symbol}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; hist {o.symbol}: {exc}"[:500]
+
+        seen_trade_oid: set[tuple[str, str]] = set()
+        for o in orders:
+            if not o.bitunix_order_id:
+                continue
+            oid = str(o.bitunix_order_id)
+            key = (o.symbol, oid)
+            if key in seen_trade_oid:
+                continue
+            seen_trade_oid.add(key)
+            start_ms = earliest_history_start_ms(orders, o.symbol)
+            try:
+                raw_t = await self._client.get_history_trades(
+                    symbol=o.symbol, order_id=oid, limit=100, start_time_ms=start_ms
+                )
+                bc, bo = build_trade_augment_indices(raw_t)
+                trade_by_client.update(bc)
+                trade_by_order.update(bo)
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"Trades orderId ({o.symbol}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; trades oid {o.symbol}: {exc}"[:500]
+
+        trade_by_position: dict[tuple[str, str], TradeAugment] = {}
+        seen_pos: set[tuple[str, str]] = set()
+        for o in orders:
+            cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
+            hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
+            if not hr:
+                continue
+            pid = hr.get("positionId") or hr.get("position_id")
+            if not pid:
+                continue
+            pkey = (o.symbol.upper(), str(pid))
+            if pkey in seen_pos:
+                continue
+            seen_pos.add(pkey)
+            start_ms = earliest_history_start_ms(orders, o.symbol)
+            try:
+                raw_p = await self._client.get_history_trades(
+                    symbol=o.symbol,
+                    position_id=str(pid),
+                    limit=100,
+                    start_time_ms=start_ms,
+                )
+                trade_by_position[pkey] = aggregate_trades_response(raw_p)
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError):
+                pass
 
         for sym in sorted(symbols):
             try:
@@ -207,21 +292,54 @@ class TradingService:
         global_sync_error = None if got_any_exchange else sync_err
 
         return [
-            build_order_api_dict(
+            self._order_api_row(
                 o,
-                hist_row=hist_by_client.get(o.client_order_id),
-                open_symbols=open_syms,
-                sync_error=global_sync_error,
-                trade_augment=pick_trade_augment(
-                    trade_by_client,
-                    trade_by_order,
-                    client_order_id=o.client_order_id,
-                    bitunix_order_id=o.bitunix_order_id,
-                ),
-                mark_price=mark_by_symbol.get(o.symbol.upper()),
+                hist_by_client=hist_by_client,
+                open_syms=open_syms,
+                global_sync_error=global_sync_error,
+                trade_by_client=trade_by_client,
+                trade_by_order=trade_by_order,
+                trade_by_position=trade_by_position,
+                mark_by_symbol=mark_by_symbol,
             )
             for o in orders
         ]
+
+    def _order_api_row(
+        self,
+        o: Order,
+        *,
+        hist_by_client: dict[str, dict[str, Any]],
+        open_syms: set[str],
+        global_sync_error: str | None,
+        trade_by_client: dict[str, TradeAugment],
+        trade_by_order: dict[str, TradeAugment],
+        trade_by_position: dict[tuple[str, str], TradeAugment],
+        mark_by_symbol: dict[str, Decimal],
+    ) -> dict[str, Any]:
+        cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
+        hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
+        pid = (hr or {}).get("positionId") or (hr or {}).get("position_id")
+        aug_pos = (
+            trade_by_position.get((o.symbol.upper(), str(pid)))
+            if pid
+            else None
+        )
+        aug_pick = pick_trade_augment(
+            trade_by_client,
+            trade_by_order,
+            client_order_id=o.client_order_id,
+            bitunix_order_id=o.bitunix_order_id,
+        )
+        aug = best_trade_augment(aug_pos, aug_pick)
+        return build_order_api_dict(
+            o,
+            hist_row=hr,
+            open_symbols=open_syms,
+            sync_error=global_sync_error,
+            trade_augment=aug,
+            mark_price=mark_by_symbol.get(o.symbol.upper()),
+        )
 
 
 async def estimate_notional(
