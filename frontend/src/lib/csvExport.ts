@@ -1,5 +1,8 @@
 /** CSV escape + letöltés böngészőben (audit / stratégia futások export). */
 
+/** UTF-8 BOM: Excel (Windows) így felismeri az UTF-8-at a „Data” nélkül. */
+export const CSV_UTF8_BOM = "\uFEFF";
+
 function csvCell(value: string | number | null | undefined): string {
   const s = value === null || value === undefined ? "" : String(value);
   if (/[",\n\r]/.test(s)) {
@@ -17,7 +20,9 @@ export function buildCsv(headers: string[], rows: string[][]): string {
 }
 
 export function downloadCsvFile(filename: string, csv: string): void {
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const blob = new Blob([CSV_UTF8_BOM + csv], {
+    type: "text/csv;charset=utf-8",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
