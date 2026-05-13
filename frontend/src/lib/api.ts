@@ -37,6 +37,8 @@ export interface PlaceOrderInput {
   price?: string;
   leverage?: number;
   reduceOnly?: boolean;
+  tradeSide?: "OPEN" | "CLOSE";
+  positionId?: string;
   tpPrice?: string;
   slPrice?: string;
   tpStopType?: "MARK_PRICE" | "LAST_PRICE";

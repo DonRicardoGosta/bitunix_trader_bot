@@ -28,6 +28,8 @@ async def test_place_order_dry_run_does_not_send_http() -> None:
     assert result["dryRun"] is True
     assert result["echo"]["symbol"] == "BTCUSDT"
     assert result["echo"]["side"] == "BUY"
+    assert result["echo"]["tradeSide"] == "OPEN"
+    assert "leverage" not in result["echo"]
 
 
 @pytest.mark.asyncio

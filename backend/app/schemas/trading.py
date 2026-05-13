@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class OrderRequest(BaseModel):
@@ -19,6 +19,13 @@ class OrderRequest(BaseModel):
 
     symbol: str = Field(..., examples=["BTCUSDT"])
     side: Literal["BUY", "SELL"]
+    # Bitunix kötelező mező hedge módban is: új pozíció = OPEN, zárás = CLOSE (+ positionId).
+    trade_side: Literal["OPEN", "CLOSE"] = Field(default="OPEN", alias="tradeSide")
+    position_id: str | None = Field(
+        default=None,
+        alias="positionId",
+        description="Kötelező tradeSide=CLOSE esetén a Bitunix API szerint.",
+    )
     order_type: Literal["MARKET", "LIMIT"] = Field(..., alias="orderType")
     quantity: Decimal = Field(..., gt=0)
     price: Decimal | None = Field(default=None, gt=0)
@@ -33,6 +40,12 @@ class OrderRequest(BaseModel):
     sl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = Field(
         default="MARK_PRICE", alias="slStopType"
     )
+
+    @model_validator(mode="after")
+    def _close_requires_position_id(self) -> OrderRequest:
+        if self.trade_side == "CLOSE" and not self.position_id:
+            raise ValueError("positionId kötelező, ha tradeSide=CLOSE (Bitunix API).")
+        return self
 
 
 class OrderResponse(BaseModel):

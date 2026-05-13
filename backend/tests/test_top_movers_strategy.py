@@ -189,6 +189,7 @@ async def test_top_movers_places_orders_for_top3_with_correct_direction() -> Non
         assert by_symbol[sym]["sl_price"] is not None
         assert by_symbol[sym]["tp_stop_type"] == "MARK_PRICE"
         assert by_symbol[sym]["sl_stop_type"] == "MARK_PRICE"
+        assert by_symbol[sym]["trade_side"] == "OPEN"
 
     # Kalibráció globális fallback: tp_move=1.5%, sl_move=0.75%
     # +25% CCC LONG  entry=125 → tp=126.87(5), sl=124.06(25), 2 dec round_down

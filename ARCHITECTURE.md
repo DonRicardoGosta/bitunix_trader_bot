@@ -192,7 +192,9 @@ GET /futures/account?marginCoin=USDT ┘
 
 A Bitunix `place_order` endpoint támogatja `tpPrice` és `slPrice` paramétereket
 (`POST /api/v1/futures/trade/place_order`), így **egyetlen REST hívásban** megy
-a entry order és a TP/SL trigger. Ezzel:
+a entry order és a TP/SL trigger. A Bitunix dokumentáció szerint a **`tradeSide`**
+(`OPEN` / `CLOSE`) kötelező; a tőkeáttétel **nem** a place_order törzsében megy,
+hanem előtte a `change_leverage` végponton. Ezzel:
 - Nem fordulhat elő, hogy a entry order beteljesül, de a TP/SL beállítása
   hálózati hiba miatt elmarad.
 - Nem kell külön a `positionId`-t lekérdezni, ami egy második körkérés lenne.

@@ -185,9 +185,10 @@ class BitunixClient:
         order_type: str,
         quantity: Decimal | str,
         price: Decimal | str | None = None,
-        leverage: int = 1,
         reduce_only: bool = False,
         client_order_id: str | None = None,
+        trade_side: str = "OPEN",
+        position_id: str | None = None,
         tp_price: Decimal | str | None = None,
         sl_price: Decimal | str | None = None,
         tp_stop_type: str = "MARK_PRICE",
@@ -199,17 +200,27 @@ class BitunixClient:
         a ``tpPrice`` / ``slPrice`` paramétereket, így az entry order és a
         TP/SL triggerek atomi módon, együtt mennek ki.
 
+        Megjegyzés: a Bitunix dokumentáció szerint a ``tradeSide`` (OPEN/CLOSE)
+        kötelező; a tőkeáttétel külön ``change_leverage`` hívással áll, nem a
+        place_order törzsében megy.
+
         Ha ``live_trading=False``, a kliens NEM küld igazi rendelést,
         csak naplóz és visszaad egy "dry-run" választ.
         """
+        ts = trade_side.strip().upper()
+        if ts not in ("OPEN", "CLOSE"):
+            raise ValueError(f"trade_side must be OPEN or CLOSE, got {trade_side!r}")
+
         body: dict[str, Any] = {
             "symbol": symbol,
             "side": side.upper(),
+            "tradeSide": ts,
             "orderType": order_type.upper(),
             "qty": str(quantity),
-            "leverage": leverage,
             "reduceOnly": reduce_only,
         }
+        if ts == "CLOSE" and position_id:
+            body["positionId"] = str(position_id)
         if price is not None:
             body["price"] = str(price)
         if client_order_id:
