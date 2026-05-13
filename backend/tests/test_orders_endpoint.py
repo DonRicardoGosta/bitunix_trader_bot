@@ -83,3 +83,23 @@ def test_place_order_dry_run_via_http() -> None:
         dbg_row = next(r for r in dbg_list.json() if r["client_order_id"] == body["client_order_id"])
         assert "debug" in dbg_row["exchange"]
         assert dbg_row["exchange"]["debug"]["history_row_found"] is False
+
+
+def test_list_orders_supports_pagination_and_symbol_filter() -> None:
+    """``limit`` / ``offset`` / ``symbol`` paraméterek alapszintű ellenőrzése."""
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/orders?limit=1&offset=0")
+        assert r.status_code == 200
+        rows = r.json()
+        assert isinstance(rows, list)
+        assert len(rows) <= 1
+
+        r = client.get("/api/orders?symbol=BTCUSDT&limit=10")
+        assert r.status_code == 200
+        rows = r.json()
+        assert all(row["symbol"] == "BTCUSDT" for row in rows)
+
+        # Túl nagy limit visszautasítva
+        r_bad = client.get("/api/orders?limit=99999")
+        assert r_bad.status_code == 422

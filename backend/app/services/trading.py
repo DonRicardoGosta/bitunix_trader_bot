@@ -139,9 +139,26 @@ class TradingService:
             raw=response,
         )
 
-    async def list_orders(self, limit: int = 50, *, debug_sync: bool = False) -> list[dict[str, Any]]:
-        """Legutóbbi rendelések DB-ből, Bitunix history + nyitott pozíció szinkronnal."""
-        stmt = select(Order).order_by(Order.created_at.desc()).limit(limit)
+    async def list_orders(
+        self,
+        limit: int = 50,
+        *,
+        offset: int = 0,
+        symbol: str | None = None,
+        debug_sync: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Legutóbbi rendelések DB-ből, Bitunix history + nyitott pozíció szinkronnal.
+
+        Args:
+            limit: Maximális visszaadott sorok száma.
+            offset: Kihagyott sorok száma (paginálás).
+            symbol: Opcionális szimbólum szűrő (case-insensitive).
+            debug_sync: Ha true, hibakereső metaadat is jön.
+        """
+        stmt = select(Order).order_by(Order.created_at.desc())
+        if symbol:
+            stmt = stmt.where(Order.symbol == symbol.upper())
+        stmt = stmt.offset(offset).limit(limit)
         result = await self._session.execute(stmt)
         orders = list(result.scalars().all())
         settings = get_settings()
