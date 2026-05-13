@@ -54,6 +54,8 @@ Elérhetőség:
 | `BITUNIX_LIVE_TRADING`                     | `false`             | Ha `false`, semmilyen rendelés nem megy a Bitunixhoz.            |
 | `STRATEGY_RUNNER_ENABLED`                  | `false`             | A háttér scheduler kapcsolója.                                   |
 | `STRATEGY_INTERVAL_SECONDS`                | `300`               | Két lefutás közti idő.                                           |
+| `STRATEGY_TOP_MOVERS_COUNT`                | `3`                 | Hány párhuzamos slot (nyitott pozíció cél a Bitunix szerint).     |
+| `STRATEGY_TOP_MOVERS_SCAN_LIMIT`           | `60`                | Rangsorolt coinok max. száma slot-feltöltéshez (TP/SL után pótlás). |
 | `STRATEGY_TOP_MOVERS_COOLDOWN_MINUTES`     | `240`               | Per-szimbólum cooldown a `top_movers` stratégiához.              |
 | `STRATEGY_TOP_MOVERS_DIRECTION_MODE`       | `momentum_breakout` | `trend` \| `momentum_breakout` \| `mean_revert`                  |
 | `STRATEGY_TOP_MOVERS_RANGE_THRESHOLD`      | `0.66`              | Momentum_breakout küszöb a 24h tartomány felső/alsó zónájához.   |

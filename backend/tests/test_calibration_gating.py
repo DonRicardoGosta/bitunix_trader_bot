@@ -60,6 +60,9 @@ class FakeBitunixClient:
     async def get_account(self, margin_coin: str = "USDT") -> dict:
         return {"data": {"available": "1000"}}
 
+    async def get_positions(self, symbol: str | None = None) -> dict:
+        return {"data": []}
+
     async def change_leverage(self, **kwargs) -> dict:
         self.change_leverage_calls.append(kwargs)
         return {"dryRun": True}
@@ -169,13 +172,13 @@ async def test_strategy_uses_per_symbol_calibration_when_available() -> None:
     assert len(result.placed_orders) == 1
     placed = result.placed_orders[0]
     assert placed["symbol"] == "BBB"
-    # Per-symbol kalibráció: tp_move 2%, sl_move 1%.
-    # SHORT BBB entry=60: tp=58.80, sl=60.60 (round_up 2dec).
-    assert placed["tp_source"] == "calibration_per_symbol"
-    assert placed["tp_move_pct"] == "2.0"
-    assert placed["sl_move_pct"] == "1.0"
-    assert Decimal(placed["tp_price"]) == Decimal("58.80")
-    assert Decimal(placed["sl_price"]) == Decimal("60.60")
+    # Per-symbol 2%%/1%% vs globál 1%%/0.5%% → effective min = 1%%/0.5%%.
+    # SHORT BBB entry=60: tp=59.40, sl=60.30 (round_up 2dec).
+    assert placed["tp_source"] == "calibration_effective"
+    assert placed["tp_move_pct"] == "1.0"
+    assert placed["sl_move_pct"] == "0.5"
+    assert Decimal(placed["tp_price"]) == Decimal("59.40")
+    assert Decimal(placed["sl_price"]) == Decimal("60.30")
     assert result.details["calibration_used"] is True
 
 

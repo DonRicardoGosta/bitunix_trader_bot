@@ -4,7 +4,10 @@ Specifikáció:
 
 * Kérdezzük le a Bitunix futures piac **összes szimbólumát** 24h tickerekkel.
 * Rangsoroljuk őket az **abszolút** 24h % változás szerint csökkenő sorrendben.
-* Vegyük a **top 3-at**.
+* Vegyük a **top N** abszolút mozgást (N = ``STRATEGY_TOP_MOVERS_SCAN_LIMIT``),
+  és a Bitunix **nyitott pozíciók** alapján töltjük fel a
+  ``STRATEGY_TOP_MOVERS_COUNT`` (alap 3) „slotot”: ha egy pozíció TP/SL-lel
+  lezárult, a következő futáskor a rangsor következő szimbóluma kerül szóba.
 * Minden szimbólumra:
     * **Cooldown:** ha 4 órán belül már nyitottunk ugyanennek a stratégiának
       ezzel a szimbólummal, kihagyjuk.
@@ -15,10 +18,10 @@ Specifikáció:
       ``mean_revert``). Az alapérték a ``momentum_breakout`` – az ár 24h
       range-en belüli helyzetét is figyelembe veszi és kihagyja a kétértelmű
       eseteket. Lásd ``decide_direction``.
-    * **TP/SL:** natív, az entry order-rel egy atomi hívásban – ROI célok:
-      ``STRATEGY_TP_ROI_PCT=200`` (+200% profit) és
-      ``STRATEGY_SL_ROI_PCT=100`` (-100% veszteség). Lásd ``app/services/tpsl.py``
-      a képletekért és a kockázati javaslatért (≤75% SL ROI biztonságosabb).
+    * **TP/SL kalibráció:** ha van per-szimbólum és globál ATR cél is,
+      **mindkét lábra a kisebb move %%** kerül (szűkebb TP / szűkebb SL).
+      ROI fallback (``STRATEGY_TP_ROI_PCT`` / ``STRATEGY_SL_ROI_PCT``) csak
+      kalibráció nélkül; lásd ``app/services/tpsl.py``.
     * Piaci rendelés a Bitunix ``/futures/trade/place_order``-en, beépített
       ``tpPrice`` és ``slPrice`` paraméterekkel.
     * Ha a tőzsde elutasítja a rendelést (pl. min. mennyiség), a stratégia
@@ -89,7 +92,11 @@ class TopMoversStrategy(Strategy):
             result.details["reason"] = "calibration_missing"
             return result
 
-        top_n = max(1, int(settings.strategy_top_movers_count))
+        target_slots = max(1, int(settings.strategy_top_movers_count))
+        scan_limit = max(
+            target_slots,
+            min(int(settings.strategy_top_movers_scan_limit), 200),
+        )
         cooldown_minutes = int(settings.strategy_top_movers_cooldown_minutes)
         pct_of_balance = Decimal(settings.strategy_margin_pct_of_balance)
         min_margin = Decimal(settings.strategy_min_margin_usdt)
@@ -98,19 +105,53 @@ class TopMoversStrategy(Strategy):
         tickers_raw = await ctx.client.get_all_tickers()
         pairs_raw = await ctx.client.get_trading_pairs()
 
-        movers = _rank_top_movers(tickers_raw, top_n=top_n)
+        movers = _rank_top_movers(tickers_raw, top_n=scan_limit)
         pair_meta = _index_trading_pairs(pairs_raw)
+
+        try:
+            pos_raw = await ctx.client.get_positions()
+            open_syms = _parse_open_position_symbols(pos_raw)
+        except (BitunixAPIError, BitunixSignatureError) as exc:
+            await audit.record(
+                ctx.session,
+                "strategy.top_movers.positions_error",
+                level=AuditLevel.WARNING,
+                message=f"Pozíciók lekérése sikertelen (slot számolás üres halmazzal): {exc}",
+                payload={"error": str(exc)},
+                strategy_name=self.name,
+            )
+            open_syms = set()
+        except Exception as exc:  # noqa: BLE001
+            await audit.record(
+                ctx.session,
+                "strategy.top_movers.positions_error",
+                level=AuditLevel.WARNING,
+                message=f"Pozíciók parse/hálózat hiba: {exc}",
+                payload={"error": str(exc)},
+                strategy_name=self.name,
+            )
+            open_syms = set()
+
+        total_open = len(open_syms)
+        need = max(0, target_slots - total_open)
 
         await audit.record(
             ctx.session,
             "strategy.top_movers.ranked",
             level=AuditLevel.INFO,
-            message=f"Top {len(movers)} mover kiválasztva.",
+            message=(
+                f"Top {len(movers)} / scan={scan_limit}, "
+                f"nyitott szimbólumok: {total_open}, kitöltendő slot: {need}."
+            ),
             payload={
-                "top_n": top_n,
+                "target_slots": target_slots,
+                "scan_limit": scan_limit,
+                "open_symbols_sample": sorted(open_syms)[:40],
+                "total_open_positions": total_open,
+                "slots_to_fill": need,
                 "candidates": [
                     {"symbol": m.symbol, "change_pct": str(m.change_pct), "last": str(m.last_price)}
-                    for m in movers
+                    for m in movers[:25]
                 ],
             },
             strategy_name=self.name,
@@ -195,25 +236,65 @@ class TopMoversStrategy(Strategy):
                 strategy_name=self.name,
             )
 
-        for mover in movers:
-            decision = await self._maybe_place(
-                ctx,
-                mover=mover,
-                pair_meta=pair_meta,
-                margin_usdt=margin_usdt,
-                cooldown_after=cooldown_until_after,
-                trading_service=trading_service,
-                direction_mode=direction_mode,
-                range_threshold=range_threshold,
-                tp_roi=tp_roi,
-                sl_roi=sl_roi,
-                stop_type=settings.strategy_tpsl_stop_type,
-                calibration=calibration,
+        result.details["position_slots"] = {
+            "target": target_slots,
+            "scan_limit": scan_limit,
+            "total_open_positions": total_open,
+            "slots_to_fill": need,
+        }
+
+        placed_run = 0
+        if need > 0:
+            for mover in movers:
+                if placed_run >= need:
+                    break
+                if mover.symbol in open_syms:
+                    result.skipped.append(
+                        {
+                            "symbol": mover.symbol,
+                            "placed": False,
+                            "reason": "position_already_open",
+                            "change_pct": str(mover.change_pct),
+                        }
+                    )
+                    continue
+                decision = await self._maybe_place(
+                    ctx,
+                    mover=mover,
+                    pair_meta=pair_meta,
+                    margin_usdt=margin_usdt,
+                    cooldown_after=cooldown_until_after,
+                    trading_service=trading_service,
+                    direction_mode=direction_mode,
+                    range_threshold=range_threshold,
+                    tp_roi=tp_roi,
+                    sl_roi=sl_roi,
+                    stop_type=settings.strategy_tpsl_stop_type,
+                    calibration=calibration,
+                )
+                if decision.get("placed"):
+                    placed_run += 1
+                    open_syms.add(mover.symbol)
+                    result.placed_orders.append(decision)
+                else:
+                    result.skipped.append(decision)
+        else:
+            await audit.record(
+                ctx.session,
+                "strategy.top_movers.slots_full",
+                level=AuditLevel.INFO,
+                message=(
+                    f"Nincs új belépés: {total_open} nyitott pozíció ≥ "
+                    f"{target_slots} slot cél."
+                ),
+                payload={
+                    "target_slots": target_slots,
+                    "total_open_positions": total_open,
+                },
+                strategy_name=self.name,
             )
-            if decision.get("placed"):
-                result.placed_orders.append(decision)
-            else:
-                result.skipped.append(decision)
+
+        result.details["position_slots"]["placed_this_run"] = placed_run
 
         return result
 
@@ -350,13 +431,13 @@ class TopMoversStrategy(Strategy):
             )
             return out
 
-        # 6) TP / SL trigger árak — kalibráció elsődleges, ROI fallback
+        # 6) TP / SL trigger árak — kalibráció (effective = min(symbol, global)), ROI fallback
         tp_source = "roi_fallback"
         try:
             if calibration is not None:
-                lookup = calibration.lookup(symbol)
-                if lookup is not None:
-                    tp_move_pct, sl_move_pct = lookup
+                moves = calibration.effective_tp_sl_moves(symbol)
+                if moves is not None:
+                    tp_move_pct, sl_move_pct = moves
                     tp_price, sl_price = compute_tp_sl_prices_from_move_pct(
                         entry_price=mover.last_price,
                         side=side,
@@ -364,11 +445,7 @@ class TopMoversStrategy(Strategy):
                         sl_move_pct=sl_move_pct,
                         price_precision=meta.price_precision,
                     )
-                    tp_source = (
-                        "calibration_per_symbol"
-                        if symbol in calibration.per_symbol
-                        else "calibration_global"
-                    )
+                    tp_source = "calibration_effective"
                     out["tp_move_pct"] = str(tp_move_pct)
                     out["sl_move_pct"] = str(sl_move_pct)
                 else:
@@ -602,6 +679,35 @@ def _to_decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except Exception:
         return None
+
+
+def _parse_open_position_symbols(raw: Any) -> set[str]:
+    """Bitunix ``get_pending_positions`` / hasonló válaszból: nem nulla méretű pozíciók."""
+    out: set[str] = set()
+    for row in _extract_list(raw):
+        sym = row.get("symbol") or row.get("symbolName")
+        if not sym:
+            continue
+        for key in (
+            "positionAmt",
+            "qty",
+            "positionQty",
+            "holdVol",
+            "size",
+            "volume",
+            "positionSize",
+        ):
+            val = row.get(key)
+            if val is None:
+                continue
+            try:
+                amt = Decimal(str(val))
+            except Exception:
+                continue
+            if amt != 0:
+                out.add(str(sym).upper())
+                break
+    return out
 
 
 def _rank_top_movers(raw: Any, *, top_n: int) -> list[_Mover]:

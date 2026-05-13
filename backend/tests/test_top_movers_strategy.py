@@ -73,6 +73,7 @@ class FakeBitunixClient:
         change_leverage_response: dict | None = None,
         place_order_response: dict | None = None,
         fail_place_order_symbols: frozenset[str] | None = None,
+        positions_raw: dict | None = None,
     ) -> None:
         self._tickers = tickers
         self._trading_pairs = trading_pairs
@@ -83,6 +84,7 @@ class FakeBitunixClient:
             "echo": {},
         }
         self._fail_place_order_symbols = fail_place_order_symbols or frozenset()
+        self._positions_raw = positions_raw or {"data": []}
         self.change_leverage_calls: list[dict] = []
         self.place_order_calls: list[dict] = []
 
@@ -94,6 +96,9 @@ class FakeBitunixClient:
 
     async def get_account(self, margin_coin: str = "USDT") -> dict:
         return self._account
+
+    async def get_positions(self, symbol: str | None = None) -> dict:
+        return self._positions_raw
 
     async def change_leverage(
         self, *, symbol: str, leverage: int, margin_coin: str = "USDT"
@@ -209,7 +214,7 @@ async def test_top_movers_places_orders_for_top3_with_correct_direction() -> Non
     # -40% BBB SHORT entry=60 → tp=59.10, sl=60.45 (round_up 2dec)
     assert Decimal(placed["BBB"]["tp_price"]) == Decimal("59.10")
     assert Decimal(placed["BBB"]["sl_price"]) == Decimal("60.45")
-    assert placed["BBB"]["tp_source"] == "calibration_global"
+    assert placed["BBB"]["tp_source"] == "calibration_effective"
 
     assert result.details["margin_per_position_usdt"] == "10.00"
     assert result.details["calibration_used"] is True
@@ -239,15 +244,15 @@ async def test_top_movers_skips_symbol_when_place_order_rejected() -> None:
         result = await strategy.run(ctx)
         await session.commit()
 
-    assert len(result.placed_orders) == 2
-    assert {o["symbol"] for o in result.placed_orders} == {"CCC", "DDD"}
+    assert len(result.placed_orders) == 3
+    assert {o["symbol"] for o in result.placed_orders} == {"AAA", "CCC", "DDD"}
     bbb_skip = next(s for s in result.skipped if s.get("symbol") == "BBB")
     assert bbb_skip.get("reason") == "place_order_rejected"
     assert bbb_skip.get("bitunix_code") == "30016"
 
     async with AsyncSessionLocal() as session:
         orders = (await session.scalars(sa.select(Order))).all()
-    assert len(orders) == 2
+    assert len(orders) == 3
 
     async with AsyncSessionLocal() as session:
         n_failed = await session.scalar(
@@ -256,6 +261,79 @@ async def test_top_movers_skips_symbol_when_place_order_rejected() -> None:
             )
         )
     assert n_failed == 1
+
+
+@pytest.mark.asyncio
+async def test_top_movers_fills_only_missing_slots_when_one_position_open() -> None:
+    """1 nyitott pozíció (BBB) → még 2 új belépés a rangsor szerint."""
+    await _seed_fresh_calibration()
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.commit()
+    fake = FakeBitunixClient(
+        tickers=_make_tickers(),
+        trading_pairs=_make_pairs(),
+        account={"data": {"available": "1000"}},
+        positions_raw={"data": [{"symbol": "BBB", "positionAmt": "1"}]},
+    )
+    strategy = TopMoversStrategy()
+    async with AsyncSessionLocal() as session:
+        ctx = StrategyContext(
+            session=session,
+            client=fake,
+            settings=get_settings(),
+            triggered_by="test",
+        )
+        result = await strategy.run(ctx)
+        await session.commit()
+
+    assert len(result.placed_orders) == 2
+    assert {o["symbol"] for o in result.placed_orders} == {"CCC", "DDD"}
+    assert any(
+        s.get("symbol") == "BBB" and s.get("reason") == "position_already_open"
+        for s in result.skipped
+    )
+
+
+@pytest.mark.asyncio
+async def test_top_movers_no_new_orders_when_slot_cap_reached() -> None:
+    """3 nyitott pozíció → slots_full, nincs új place_order."""
+    await _seed_fresh_calibration()
+    fake = FakeBitunixClient(
+        tickers=_make_tickers(),
+        trading_pairs=_make_pairs(),
+        account={"data": {"available": "1000"}},
+        positions_raw={
+            "data": [
+                {"symbol": "BBB", "positionAmt": "1"},
+                {"symbol": "CCC", "positionAmt": "1"},
+                {"symbol": "DDD", "positionAmt": "1"},
+            ]
+        },
+    )
+    strategy = TopMoversStrategy()
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.commit()
+        ctx = StrategyContext(
+            session=session,
+            client=fake,
+            settings=get_settings(),
+            triggered_by="test",
+        )
+        result = await strategy.run(ctx)
+        await session.commit()
+
+    assert result.placed_orders == []
+    assert fake.place_order_calls == []
+
+    async with AsyncSessionLocal() as session:
+        ev = await session.scalar(
+            sa.select(AuditEvent.event).where(
+                AuditEvent.event == "strategy.top_movers.slots_full"
+            )
+        )
+    assert ev == "strategy.top_movers.slots_full"
 
 
 @pytest.mark.asyncio

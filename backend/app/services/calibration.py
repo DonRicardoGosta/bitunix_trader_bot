@@ -11,7 +11,8 @@ Algoritmus röviden:
    → R:R ~ 2:1 (matematikailag pozitív várt érték még 40%-os hit rate-nél is).
 5. Tároljuk per-symbol és számolunk globális mediánt (fallback olyan
    szimbólumokra, amiket a top_movers stratégia idő közben kiválaszt,
-   de nem volt a top20-ban a kalibrációkor).
+   de nem volt a top20-ban a kalibrációkor). A stratégia a **per-symbol és
+   globál közül szűkebb TP/SL move %%**-et használja (``effective_tp_sl_moves``).
 
 Megjegyzés: az output **price move %** (leverage-független). A stratégia
 ebből számol konkrét TP/SL árat: ``tp_price = entry × (1 + tp_pct/100)``
@@ -102,6 +103,22 @@ class CalibrationResult:
             and self.global_sl_move_pct is not None
         ):
             return self.global_tp_move_pct, self.global_sl_move_pct
+        return None
+
+    def effective_tp_sl_moves(self, symbol: str) -> tuple[Decimal, Decimal] | None:
+        """Kalibrált TP/SL move %%: szimbólum és globál közül a szűkebb (kisebb %%).
+
+        A stratégia így nem tesz lazább TP/SL-t a coinra, mint amit a globál
+        medián engedne; ha a coin saját ATR-je szűkebb, azt használja.
+        """
+        g_tp, g_sl = self.global_tp_move_pct, self.global_sl_move_pct
+        sym = self.per_symbol.get(symbol)
+        if sym is not None and g_tp is not None and g_sl is not None:
+            return (min(sym.tp_move_pct, g_tp), min(sym.sl_move_pct, g_sl))
+        if sym is not None:
+            return (sym.tp_move_pct, sym.sl_move_pct)
+        if g_tp is not None and g_sl is not None:
+            return (g_tp, g_sl)
         return None
 
 

@@ -13,6 +13,7 @@ from app.services.strategy.top_movers import (
     _extract_available_usdt,
     _index_trading_pairs,
     _Mover,
+    _parse_open_position_symbols,
     _rank_top_movers,
     decide_direction,
 )
@@ -163,3 +164,13 @@ def test_decide_direction_no_range_data() -> None:
     )
     assert side is None
     assert reason == "no_range_data"
+
+
+def test_parse_open_position_symbols_filters_zero_size() -> None:
+    raw = {
+        "data": [
+            {"symbol": "AAA", "positionAmt": "0"},
+            {"symbol": "BBB", "qty": "1.5"},
+        ]
+    }
+    assert _parse_open_position_symbols(raw) == {"BBB"}

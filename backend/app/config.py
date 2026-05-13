@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     strategy_interval_seconds: int = 300
     strategy_top_movers_enabled: bool = True
     strategy_top_movers_count: int = 3
+    strategy_top_movers_scan_limit: int = 60
     strategy_top_movers_cooldown_minutes: int = 240
     strategy_top_movers_direction_mode: Literal[
         "trend", "momentum_breakout", "mean_revert"

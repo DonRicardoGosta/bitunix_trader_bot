@@ -149,3 +149,25 @@ def test_compute_tp_sl_prices_from_move_pct_long_and_short() -> None:
     )
     assert tp_s == Decimal("99.00")
     assert sl_s == Decimal("100.50")
+
+
+def test_effective_tp_sl_moves_uses_min_per_leg() -> None:
+    from datetime import UTC, datetime
+
+    from app.services.calibration import CalibrationResult, SymbolCalibration
+
+    r = CalibrationResult(started_at=datetime.now(UTC))
+    r.global_tp_move_pct = Decimal("2")
+    r.global_sl_move_pct = Decimal("1")
+    r.per_symbol["X"] = SymbolCalibration(
+        symbol="X",
+        tp_move_pct=Decimal("3"),
+        sl_move_pct=Decimal("0.4"),
+        atr_pct=Decimal("1"),
+        samples=10,
+        last_close=Decimal("100"),
+        abs_change_24h_pct=Decimal("5"),
+    )
+    tp, sl = r.effective_tp_sl_moves("X")
+    assert tp == Decimal("2")
+    assert sl == Decimal("0.4")
