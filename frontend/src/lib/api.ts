@@ -145,11 +145,119 @@ export interface AuditEventRow {
   created_at: string | null;
 }
 
+export interface NormalizedPosition {
+  symbol: string | null;
+  side: "BUY" | "SELL" | null;
+  qty: string | null;
+  entry_price: string | null;
+  mark_price: string | null;
+  leverage: number | null;
+  margin: string | null;
+  realized_pnl: string | null;
+  unrealized_pnl: string | null;
+  roi_pct: string | null;
+  liq_price: string | null;
+  position_id: string | null;
+  margin_mode: string | null;
+  position_mode: string | null;
+  opened_at: string | null;
+  updated_at: string | null;
+}
+
+export interface NormalizedPositionsResponse {
+  positions: NormalizedPosition[];
+  totals: {
+    count: number;
+    unrealized_pnl_usdt: string;
+    realized_pnl_usdt: string;
+    margin_usdt: string;
+  };
+}
+
+export interface DashboardSummary {
+  generated_at: string;
+  lookback_days: number;
+  orders: {
+    total: number;
+    last_24h: number;
+    by_status: Record<string, number>;
+    top_symbols_30d: { symbol: string; count: number }[];
+    by_strategy_30d: { strategy: string; count: number }[];
+  };
+  events: {
+    total_24h: number;
+    by_level_24h: Record<string, number>;
+    recent: {
+      id: number;
+      created_at: string | null;
+      level: string | null;
+      event: string;
+      message: string | null;
+      strategy_name: string | null;
+    }[];
+    last_error_at: string | null;
+  };
+  strategy: {
+    by_status_24h: Record<string, number>;
+    last_success: { started_at: string | null; strategy_name: string } | null;
+    last_failure: {
+      started_at: string | null;
+      strategy_name: string;
+      error: string | null;
+    } | null;
+    last_calibration: {
+      status: string | null;
+      started_at: string | null;
+      finished_at: string | null;
+    } | null;
+  };
+  exchange: {
+    sync_error: string | null;
+    account: {
+      margin_coin: string | null;
+      available: string | null;
+      margin: string | null;
+      frozen: string | null;
+      transfer: string | null;
+      cross_unrealized_pnl: string | null;
+      isolation_unrealized_pnl: string | null;
+      bonus: string | null;
+      position_mode: string | null;
+    } | null;
+    open_positions: {
+      count: number;
+      total_unrealized_pnl_usdt: string;
+      total_margin_usdt: string;
+      items: NormalizedPosition[];
+    };
+    closed_positions: {
+      lookback_days: number;
+      count: number;
+      realized_pnl_usdt: string;
+      win_rate_pct: string | null;
+      wins: number;
+      losses: number;
+      avg_win_usdt: string | null;
+      avg_loss_usdt: string | null;
+      top_winners: NormalizedPosition[];
+      top_losers: NormalizedPosition[];
+      per_symbol: { symbol: string; realized_pnl_usdt: string }[];
+    };
+  };
+}
+
 export const api = {
   health: () => request<{ status: string }>("/api/health"),
   ticker: (symbol: string) =>
     request<TickerInfo>(`/api/market/ticker/${encodeURIComponent(symbol)}`),
-  orders: () => request<OrderRow[]>("/api/orders"),
+  orders: (params?: { limit?: number; offset?: number; symbol?: string }) => {
+    const usp = new URLSearchParams();
+    if (params?.limit != null) usp.set("limit", String(params.limit));
+    if (params?.offset != null) usp.set("offset", String(params.offset));
+    if (params?.symbol) usp.set("symbol", params.symbol);
+    const qs = usp.toString();
+    return request<OrderRow[]>(`/api/orders${qs ? `?${qs}` : ""}`);
+  },
   placeOrder: (input: PlaceOrderInput) =>
     request<PlaceOrderResult>("/api/orders", {
       method: "POST",
@@ -158,6 +266,14 @@ export const api = {
   positions: (symbol?: string) =>
     request<unknown>(
       `/api/positions${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`,
+    ),
+  positionsNormalized: (symbol?: string) =>
+    request<NormalizedPositionsResponse>(
+      `/api/positions/normalized${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`,
+    ),
+  dashboardSummary: (lookbackDays = 7) =>
+    request<DashboardSummary>(
+      `/api/dashboard/summary?lookback_days=${lookbackDays}`,
     ),
   account: () => request<unknown>("/api/account"),
   strategies: () => request<StrategyInfo[]>("/api/strategies"),
