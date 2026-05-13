@@ -22,8 +22,12 @@ export interface OrderExchangeInfo {
   lifecycle: string;
   lifecycle_label: string;
   realized_pnl_usdt: string | null;
+  /** Csak nyitott pozíción jön vissza (mark-to-market). */
+  unrealized_pnl_usdt: string | null;
   roi_pct: string | null;
   margin_usdt_estimate: string | null;
+  /** Bitunix pozíció ID, ha sikerült párosítani a rendeléshez. */
+  position_id: string | null;
   /** Csak GET /api/orders?debug_sync=1 esetén – hibakereséshez */
   debug?: Record<string, unknown>;
 }

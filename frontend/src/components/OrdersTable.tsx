@@ -3,6 +3,27 @@
 import { useEffect, useState } from "react";
 import { api, type OrderRow } from "@/lib/api";
 
+function parseDecimal(value: string | null | undefined): number | null {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatPnl(value: string | null | undefined): string {
+  const n = parseDecimal(value);
+  if (n == null) return "—";
+  // Vékony non-breaking space tagolóhoz, max 6 jegyű (apró pip-ek miatt).
+  return `${n.toFixed(6).replace(/\.?0+$/, "")} USDT`;
+}
+
+function pnlClass(value: string | null | undefined): string {
+  const n = parseDecimal(value);
+  if (n == null) return "";
+  if (n > 0) return "text-profit";
+  if (n < 0) return "text-loss";
+  return "";
+}
+
 export function OrdersTable() {
   const [rows, setRows] = useState<OrderRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,19 +77,22 @@ export function OrdersTable() {
               <th className="text-left py-2 pr-3">Pozíció</th>
               <th className="text-left py-2 pr-3">Tőzsde rendelés</th>
               <th className="text-right py-2 pr-3">Realizált PnL</th>
+              <th className="text-right py-2 pr-3">Nyitott PnL</th>
               <th className="text-right py-2 pr-3">ROI %</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
               const ex = r.exchange;
-              const roi = ex?.roi_pct ? Number(ex.roi_pct) : null;
+              const roiNum = parseDecimal(ex?.roi_pct ?? null);
               const roiClass =
-                roi == null || Number.isNaN(roi)
+                roiNum == null
                   ? ""
-                  : roi >= 0
+                  : roiNum > 0
                     ? "text-profit"
-                    : "text-loss";
+                    : roiNum < 0
+                      ? "text-loss"
+                      : "";
               return (
                 <tr key={r.id} className="border-b border-border/50">
                   <td className="py-2 pr-3 text-muted num">
@@ -87,8 +111,11 @@ export function OrdersTable() {
                   <td className="py-2 pr-3 text-muted">{r.status}</td>
                   <td className="py-2 pr-3 max-w-[10rem]">{ex?.lifecycle_label ?? "—"}</td>
                   <td className="py-2 pr-3 text-muted">{ex?.order_status ?? "—"}</td>
-                  <td className="py-2 pr-3 text-right num">
-                    {ex?.realized_pnl_usdt != null ? `${ex.realized_pnl_usdt} USDT` : "—"}
+                  <td className={`py-2 pr-3 text-right num ${pnlClass(ex?.realized_pnl_usdt)}`}>
+                    {formatPnl(ex?.realized_pnl_usdt)}
+                  </td>
+                  <td className={`py-2 pr-3 text-right num ${pnlClass(ex?.unrealized_pnl_usdt)}`}>
+                    {formatPnl(ex?.unrealized_pnl_usdt)}
                   </td>
                   <td className={`py-2 pr-3 text-right num font-medium ${roiClass}`}>
                     {ex?.roi_pct != null ? `${ex.roi_pct} %` : "—"}
