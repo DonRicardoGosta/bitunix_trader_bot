@@ -3,6 +3,11 @@
 # =============================================================================
 # Három szolgáltatás: PostgreSQL, FastAPI backend, Next.js frontend.
 # Three services: PostgreSQL, FastAPI backend, Next.js frontend.
+#
+# Erőforráskorlátok: minden szolgáltatás kapott CPU + memória plafont és
+# soft reservation-t. A `deploy.resources.limits` szekciót a modern
+# Docker Compose v2+ önállóan is alkalmazza (Swarm nélkül). A `mem_limit`
+# / `cpus` mezők régebbi engine-kkel is működnek (legacy fallback).
 # =============================================================================
 
 services:
@@ -23,6 +28,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "${DB_CPU_LIMIT:-1.0}"
+          memory: ${DB_MEM_LIMIT:-512M}
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    cpus: ${DB_CPU_LIMIT:-1.0}
+    mem_limit: ${DB_MEM_LIMIT:-512M}
+    mem_reservation: 128M
 
   backend:
     build:
@@ -51,8 +67,13 @@ services:
       STRATEGY_TOP_MOVERS_ENABLED: ${STRATEGY_TOP_MOVERS_ENABLED:-true}
       STRATEGY_TOP_MOVERS_COUNT: ${STRATEGY_TOP_MOVERS_COUNT:-3}
       STRATEGY_TOP_MOVERS_COOLDOWN_MINUTES: ${STRATEGY_TOP_MOVERS_COOLDOWN_MINUTES:-240}
+      STRATEGY_TOP_MOVERS_DIRECTION_MODE: ${STRATEGY_TOP_MOVERS_DIRECTION_MODE:-momentum_breakout}
+      STRATEGY_TOP_MOVERS_RANGE_THRESHOLD: ${STRATEGY_TOP_MOVERS_RANGE_THRESHOLD:-0.66}
       STRATEGY_MARGIN_PCT_OF_BALANCE: ${STRATEGY_MARGIN_PCT_OF_BALANCE:-0.01}
       STRATEGY_MIN_MARGIN_USDT: ${STRATEGY_MIN_MARGIN_USDT:-0.25}
+      STRATEGY_TP_ROI_PCT: ${STRATEGY_TP_ROI_PCT:-200}
+      STRATEGY_SL_ROI_PCT: ${STRATEGY_SL_ROI_PCT:-100}
+      STRATEGY_TPSL_STOP_TYPE: ${STRATEGY_TPSL_STOP_TYPE:-MARK_PRICE}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -60,6 +81,17 @@ services:
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    deploy:
+      resources:
+        limits:
+          cpus: "${BACKEND_CPU_LIMIT:-1.0}"
+          memory: ${BACKEND_MEM_LIMIT:-512M}
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    cpus: ${BACKEND_CPU_LIMIT:-1.0}
+    mem_limit: ${BACKEND_MEM_LIMIT:-512M}
+    mem_reservation: 128M
 
   frontend:
     build:
@@ -80,6 +112,17 @@ services:
       - /app/node_modules
       - /app/.next
     command: sh -c "npm install && npm run dev"
+    deploy:
+      resources:
+        limits:
+          cpus: "${FRONTEND_CPU_LIMIT:-1.0}"
+          memory: ${FRONTEND_MEM_LIMIT:-1G}
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    cpus: ${FRONTEND_CPU_LIMIT:-1.0}
+    mem_limit: ${FRONTEND_MEM_LIMIT:-1G}
+    mem_reservation: 256M
 
 volumes:
   postgres-data:
