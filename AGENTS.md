@@ -1,0 +1,58 @@
+# AGENTS.md
+
+Útmutató AI ügynököknek (Cursor, Claude Code, Codex stb.) a **Bitunix Trader** projekthez.
+
+> Tipp: ez a fájl a `.cursor/rules/` szabályrendszer kiegészítője, és minden agent automatikusan olvassa.
+
+## A projekt egy mondatban
+Egy Bitunix Futures piacon kereskedő webalkalmazás: FastAPI backend + Next.js frontend + PostgreSQL, mind Dockerben.
+
+## Gyors hivatkozások
+| Mit keresel?            | Hol van                                       |
+| ----------------------- | --------------------------------------------- |
+| API routerek            | `backend/app/api/routes/`                     |
+| Bitunix REST/WS kliens  | `backend/app/bitunix/`                        |
+| DB modellek             | `backend/app/db/models.py`                    |
+| Alembic migrációk       | `backend/alembic/versions/`                   |
+| Üzleti logika           | `backend/app/services/`                       |
+| UI komponensek          | `frontend/src/components/`                    |
+| Next.js oldalak         | `frontend/src/app/`                           |
+| Környezeti változók     | `.env.example`                                |
+| Docker stack            | `docker-compose.yml`                          |
+
+## Indítás (zero-to-running)
+```bash
+cp .env.example .env       # töltsd ki a BITUNIX_API_* mezőket
+make build                 # image-ek build
+make up                    # stack indítása
+make migrate               # DB migrációk
+# UI:  http://localhost:3000
+# API: http://localhost:8000/docs
+```
+
+## Tesztelés
+- `make test` – minden teszt (backend pytest + frontend Vitest)
+- `make test-backend` / `make test-frontend` – részhalmaz
+- Új feature → új teszt. Aláírási logikához mindig hivatalos dokumentum-példára épülő unit teszt.
+
+## Fontos szabályok ügynököknek
+1. **Soha** ne kommitold az `.env` fájlt vagy bármilyen API kulcsot.
+2. **Soha** ne küldj élő rendelést Bitunixra teszt során – ehhez `BITUNIX_LIVE_TRADING=true` kell és kézi jóváhagyás.
+3. DB séma változás → Alembic revision (`make makemigration msg="..."`).
+4. Új környezeti változó → frissítsd a `.env.example`-t **és** a `docker-compose.yml`-t.
+5. A felhasználó kommunikáció nyelve magyar, a kódé angol.
+6. Commit konvenció: `type(scope): leírás`.
+
+## Tipikus feladatok recept-szerűen
+### Új API endpoint
+1. Hozz létre routert `backend/app/api/routes/<terület>.py` alatt.
+2. Pydantic kérés/válasz sémák `backend/app/schemas/<terület>.py`.
+3. Üzleti logika `backend/app/services/`.
+4. Regisztráld a routert `backend/app/main.py`-ban.
+5. Írj tesztet `backend/tests/test_<terület>.py`.
+
+### Új UI oldal
+1. `frontend/src/app/<útvonal>/page.tsx`.
+2. Komponens(ek) `frontend/src/components/`.
+3. API hívás `frontend/src/lib/api.ts`-ben definiált függvénnyel.
+4. Vitest teszt mellé.

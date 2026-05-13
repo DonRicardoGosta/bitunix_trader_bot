@@ -1,0 +1,33 @@
+---
+description: Backend (FastAPI) szabályok
+globs: backend/**/*.py
+---
+
+# Backend szabályok
+
+## Stack
+- Python 3.11+, FastAPI, SQLAlchemy 2 async, Alembic, asyncpg
+- Pydantic v2 a séma definíciókra
+- httpx async kliens a Bitunix REST hívásokhoz
+- websockets a WS kapcsolathoz
+- pytest + pytest-asyncio + httpx tesztekhez
+
+## Kódstílus
+- `ruff` formázás (88 oszlop), import sorrend `ruff` szerint
+- Típusannotációk MINDEN public függvényhez
+- Docstring formátum: Google-style, kötelező a `services/` és `bitunix/` modulokban
+
+## Bitunix integráció
+- Az aláírás (`sign`) algoritmus a `app/bitunix/auth.py`-ban van, dupla SHA256 + secret konkatenáció.
+- Soha ne dobd ki a `BITUNIX_API_SECRET`-et hibaüzenetben vagy logban.
+- A `BitunixClient.place_order` mindig ellenőrizze a `settings.bitunix_live_trading` flaget. Ha false → csak naplóz és visszaad mock választ.
+
+## Hibakezelés
+- HTTP hibák: dobj `BitunixAPIError`-t (`app/bitunix/exceptions.py`)
+- FastAPI handler fordítsa át megfelelő HTTP státuszkódra (4xx/5xx)
+- Strukturált logolás (JSON-ben éles módban)
+
+## Tesztek
+- `tests/` a `backend/` alatt
+- Mockold a Bitunix HTTP-t `respx`-szel
+- A signature függvényre minden esetben legyen unit teszt (hivatalos dokumentum-példa)

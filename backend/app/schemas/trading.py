@@ -1,0 +1,51 @@
+"""Trading API sémák."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class OrderRequest(BaseModel):
+    """Új rendelés feladás bemenet."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str = Field(..., examples=["BTCUSDT"])
+    side: Literal["BUY", "SELL"]
+    order_type: Literal["MARKET", "LIMIT"] = Field(..., alias="orderType")
+    quantity: Decimal = Field(..., gt=0)
+    price: Decimal | None = Field(default=None, gt=0)
+    leverage: int = Field(default=1, ge=1, le=125)
+    reduce_only: bool = Field(default=False, alias="reduceOnly")
+    client_order_id: str | None = Field(default=None, alias="clientOrderId")
+
+
+class OrderResponse(BaseModel):
+    """Rendelés válasz a kliensnek."""
+
+    client_order_id: str
+    bitunix_order_id: str | None = None
+    status: str
+    dry_run: bool = False
+    raw: dict | None = None
+
+
+class PositionInfo(BaseModel):
+    symbol: str
+    side: Literal["BUY", "SELL"]
+    quantity: Decimal
+    entry_price: Decimal
+    mark_price: Decimal
+    unrealized_pnl: Decimal
+    leverage: int
+
+
+class TickerInfo(BaseModel):
+    symbol: str
+    last_price: Decimal
+    high_24h: Decimal | None = None
+    low_24h: Decimal | None = None
+    volume_24h: Decimal | None = None

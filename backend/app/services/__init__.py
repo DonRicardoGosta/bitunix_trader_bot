@@ -1,0 +1,1 @@
+"""Üzleti logika réteg."""

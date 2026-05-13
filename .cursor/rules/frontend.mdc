@@ -1,0 +1,28 @@
+---
+description: Frontend (Next.js) szabályok
+globs: frontend/**/*.{ts,tsx,js,jsx,css}
+---
+
+# Frontend szabályok
+
+## Stack
+- Next.js 14 App Router, React 18, TypeScript (strict)
+- TailwindCSS 3, shadcn-stílusú UI primitívek a `src/components/ui/` alatt
+- TanStack Query az API state-hez
+- Vitest + React Testing Library
+
+## Konvenciók
+- Komponens = PascalCase fájlnév és export név
+- Hooks: `useXxx` névadás, `src/hooks/`-ban
+- API kliens: `src/lib/api.ts`, mindig az `NEXT_PUBLIC_API_BASE_URL`-t használja
+- Soha ne küldj Bitunix API kulcsot a frontendről közvetlenül – mindig a backend proxyzza
+
+## UI elvek
+- Sötét téma elsődleges (trading dashboard)
+- Pénzügyi értékeket monospace fonttal, megfelelő tizedessel
+- Veszteség = piros, nyereség = zöld, semleges = neutral szürke
+- Mobil-first reszponzív elrendezés, de desktop a fő célplatform
+
+## Tesztek
+- Vitest, jsdom env
+- Komponens tesztek a fájl mellett `.test.tsx` szuffixummal vagy `tests/` mappában

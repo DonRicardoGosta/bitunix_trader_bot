@@ -1,0 +1,34 @@
+---
+description: Globális projekt szabályok - Bitunix Trader
+alwaysApply: true
+---
+
+# Bitunix Trader - projekt szabályok
+
+Ez egy futures trading alkalmazás a Bitunix tőzsdéhez. A felhasználói nyelv: **magyar**, válaszok magyarul, de a kódban a változó- és függvénynevek angolul.
+
+## Architektúra
+- **backend/** – Python 3.11 + FastAPI + SQLAlchemy 2 (async) + Alembic
+- **frontend/** – Next.js 14 (App Router) + TypeScript + TailwindCSS + shadcn-stílusú komponensek
+- **db** – PostgreSQL 16
+- Minden szolgáltatás Dockerben fut, `docker compose up`-tal indítható
+
+## Általános elvek
+1. **Biztonság elsőre** – soha ne logold ki az API kulcsot/secretet. A `BITUNIX_LIVE_TRADING=false` esetén a backend dry-run módban fut.
+2. **Tesztek kötelezőek** – minden új feature-höz pytest (backend) vagy Vitest (frontend) teszt kell.
+3. **Type safety** – Python oldalon Pydantic v2 modellek és típusannotációk, TS oldalon szigorú mód.
+4. **Async előny** – a backend I/O műveletek (HTTP, DB, WS) `async/await`-tel.
+5. **Migráció kötelező** – minden DB sémaváltozáshoz Alembic revision.
+6. **12-factor** – konfiguráció környezeti változókból, sosem hardcode-olva.
+
+## Fájlszervezés
+- Üzleti logika: `backend/app/services/`
+- Bitunix integráció: `backend/app/bitunix/`
+- API routerek: `backend/app/api/routes/`
+- DB modellek: `backend/app/db/models.py`
+- Frontend oldalak: `frontend/src/app/`
+- Megosztott UI primitívek: `frontend/src/components/ui/`
+
+## Kommitok
+- Konvenció: `type(scope): leírás` (pl. `feat(backend): add position close endpoint`)
+- Egy commit = egy logikai változás.

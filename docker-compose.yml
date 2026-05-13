@@ -1,0 +1,78 @@
+# =============================================================================
+# Bitunix Trader - Docker Compose
+# =============================================================================
+# Három szolgáltatás: PostgreSQL, FastAPI backend, Next.js frontend.
+# Three services: PostgreSQL, FastAPI backend, Next.js frontend.
+# =============================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: bitunix-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trader}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+      POSTGRES_DB: ${POSTGRES_DB:-bitunix_trader}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trader} -d ${POSTGRES_DB:-bitunix_trader}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bitunix-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://trader:change_me_in_production@db:5432/bitunix_trader}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
+      BITUNIX_API_KEY: ${BITUNIX_API_KEY:-}
+      BITUNIX_API_SECRET: ${BITUNIX_API_SECRET:-}
+      BITUNIX_REST_BASE_URL: ${BITUNIX_REST_BASE_URL:-https://fapi.bitunix.com}
+      BITUNIX_WS_PUBLIC_URL: ${BITUNIX_WS_PUBLIC_URL:-wss://fapi.bitunix.com/public/}
+      BITUNIX_WS_PRIVATE_URL: ${BITUNIX_WS_PRIVATE_URL:-wss://fapi.bitunix.com/private/}
+      BITUNIX_LIVE_TRADING: ${BITUNIX_LIVE_TRADING:-false}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bitunix-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NODE_ENV: ${APP_ENV:-development}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Bitunix Trader}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: sh -c "npm install && npm run dev"
+
+volumes:
+  postgres-data:
+    driver: local
