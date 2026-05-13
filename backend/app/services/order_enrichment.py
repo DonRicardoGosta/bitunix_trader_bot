@@ -119,6 +119,28 @@ def normalize_str_id(val: object | None) -> str | None:
     return s or None
 
 
+def _extract_closed_position_list(resp: dict[str, Any]) -> list[dict[str, Any]]:
+    return _bitunix_rows(
+        resp,
+        list_keys=("positionList", "positions", "position_list", "list", "rows", "items"),
+    )
+
+
+def index_closed_positions(resp: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    """``(symbol_upper, position_id)`` → legfrissebb lezárt pozíció sor."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in _extract_closed_position_list(resp):
+        pid = normalize_str_id(row.get("positionId") or row.get("position_id"))
+        sym = normalize_str_id(row.get("symbol") or row.get("symbolName"))
+        if not pid or not sym:
+            continue
+        key = (sym.upper(), pid)
+        prev = out.get(key)
+        if prev is None or _mtime_ms(row) >= _mtime_ms(prev):
+            out[key] = row
+    return out
+
+
 def index_history_orders_by_client_id(resp: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Ugyanazon clientId többször előfordulhat — a legfrissebb mtime marad."""
     idx: dict[str, dict[str, Any]] = {}
@@ -341,6 +363,7 @@ def build_order_api_dict(
     sync_error: str | None = None,
     trade_augment: TradeAugment | None = None,
     mark_price: Decimal | None = None,
+    closed_position_row: dict[str, Any] | None = None,
     include_debug: bool = False,
     debug_extras: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -350,12 +373,18 @@ def build_order_api_dict(
     if hist_row is not None:
         exchange_status = hist_row.get("status")
 
+    closed_realized = (
+        _realized_from_row(closed_position_row) if closed_position_row else None
+    )
     realized_hist = _realized_from_row(hist_row) if hist_row else None
     realized: Decimal | None = realized_hist
     if trade_augment is not None and (
         trade_augment.realized_sum != 0 or realized_hist is None
     ):
         realized = trade_augment.realized_sum
+
+    if closed_realized is not None:
+        realized = closed_realized
 
     qty_hist = _dec(
         (hist_row.get("tradeQty") if hist_row else None)
@@ -371,8 +400,11 @@ def build_order_api_dict(
     )
     db_dec = _dec(o.price) if o.price is not None else None
     db_price = db_dec if db_dec is not None and db_dec > 0 else None
+    closed_entry = (
+        _dec(closed_position_row.get("entryPrice")) if closed_position_row else None
+    )
     mp = mark_price if mark_price is not None and mark_price > 0 else None
-    price = price_hist or db_price or ta_price or mp
+    price = price_hist or db_price or ta_price or closed_entry or mp
 
     lev = o.leverage
     if hist_row and hist_row.get("leverage") is not None:
@@ -445,6 +477,13 @@ def build_order_api_dict(
             or (hist_row.get("position_id") if hist_row else None),
             "history_status_raw": exchange_status,
             "history_realized_raw": hist_row.get("realizedPNL") if hist_row else None,
+            "closed_position_matched": closed_position_row is not None,
+            "closed_position_realized_raw": (
+                closed_position_row.get("realizedPNL") if closed_position_row else None
+            ),
+            "closed_position_entryPrice_raw": (
+                closed_position_row.get("entryPrice") if closed_position_row else None
+            ),
             "realized_hist_parsed": str(realized_hist)
             if realized_hist is not None
             else None,
@@ -460,6 +499,7 @@ def build_order_api_dict(
             "price_hist": str(price_hist) if price_hist else None,
             "price_db": str(db_price) if db_price else None,
             "price_trade_vwap": str(ta_price) if ta_price else None,
+            "price_closed_entry": str(closed_entry) if closed_entry else None,
             "price_ticker_fallback": str(mp) if mp else None,
             "price_chosen_for_margin": str(price) if price and price > 0 else None,
             "margin_usdt": str(margin) if margin else None,

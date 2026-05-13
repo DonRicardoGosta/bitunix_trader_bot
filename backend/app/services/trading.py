@@ -27,6 +27,7 @@ from app.services.order_enrichment import (
     build_order_api_dict,
     build_trade_augment_indices,
     earliest_history_start_ms,
+    index_closed_positions,
     index_history_orders_by_client_id,
     last_or_mark_price_from_ticker,
     normalize_str_id,
@@ -288,6 +289,48 @@ class TradingService:
                 elif len(sync_err) < 450:
                     sync_err = f"{sync_err}; ticker {sym}: {exc}"[:500]
 
+        closed_by_sym_pid: dict[tuple[str, str], dict[str, Any]] = {}
+        for sym in sorted(symbols):
+            start_ms = earliest_history_start_ms(orders, sym)
+            try:
+                rph = await self._client.get_history_positions(
+                    symbol=sym, limit=100, start_time_ms=start_ms
+                )
+                closed_by_sym_pid.update(index_closed_positions(rph))
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"Lezárt pozíciók ({sym}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; hist_pos {sym}: {exc}"[:500]
+
+        for o in orders:
+            cid_key2 = normalize_str_id(o.client_order_id) or o.client_order_id
+            hr2 = hist_by_client.get(cid_key2) or hist_by_client.get(o.client_order_id)
+            if not hr2:
+                continue
+            pid2 = hr2.get("positionId") or hr2.get("position_id")
+            if not pid2:
+                continue
+            pkey2 = (o.symbol.upper(), str(pid2))
+            if pkey2 in closed_by_sym_pid:
+                continue
+            start_ms = earliest_history_start_ms(orders, o.symbol)
+            try:
+                rph = await self._client.get_history_positions(
+                    symbol=o.symbol,
+                    position_id=str(pid2),
+                    limit=100,
+                    start_time_ms=start_ms,
+                )
+                closed_by_sym_pid.update(index_closed_positions(rph))
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"Lezárt pozíció (pid={pid2}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; hist_pos pid: {exc}"[:500]
+
         if not got_any_exchange and sync_err is None:
             sync_err = "Bitunix szinkron sikertelen."
 
@@ -298,6 +341,7 @@ class TradingService:
             "trade_by_client_count": len(trade_by_client),
             "trade_by_order_count": len(trade_by_order),
             "trade_by_position_count": len(trade_by_position),
+            "closed_positions_indexed": len(closed_by_sym_pid),
             "hist_client_id_prefix_sample": sorted(hist_by_client.keys())[:20],
         }
 
@@ -310,6 +354,7 @@ class TradingService:
                 trade_by_client=trade_by_client,
                 trade_by_order=trade_by_order,
                 trade_by_position=trade_by_position,
+                closed_by_sym_pid=closed_by_sym_pid,
                 mark_by_symbol=mark_by_symbol,
                 include_debug=debug_sync,
                 sync_index_meta=sync_index_meta,
@@ -327,6 +372,7 @@ class TradingService:
         trade_by_client: dict[str, TradeAugment],
         trade_by_order: dict[str, TradeAugment],
         trade_by_position: dict[tuple[str, str], TradeAugment],
+        closed_by_sym_pid: dict[tuple[str, str], dict[str, Any]],
         mark_by_symbol: dict[str, Decimal],
         include_debug: bool = False,
         sync_index_meta: dict[str, Any] | None = None,
@@ -334,6 +380,9 @@ class TradingService:
         cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
         hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
         pid = (hr or {}).get("positionId") or (hr or {}).get("position_id")
+        closed_row = (
+            closed_by_sym_pid.get((o.symbol.upper(), str(pid))) if pid else None
+        )
         aug_pos = (
             trade_by_position.get((o.symbol.upper(), str(pid)))
             if pid
@@ -350,6 +399,13 @@ class TradingService:
         if include_debug:
             extras = {
                 "sync_index_meta": sync_index_meta,
+                "closed_position_row": {
+                    "realizedPNL": closed_row.get("realizedPNL"),
+                    "entryPrice": closed_row.get("entryPrice"),
+                    "positionId": closed_row.get("positionId"),
+                }
+                if closed_row
+                else None,
                 "aug_position": {
                     "realized_sum": str(aug_pos.realized_sum),
                     "avg_price": str(aug_pos.avg_price),
@@ -376,6 +432,7 @@ class TradingService:
             sync_error=global_sync_error,
             trade_augment=aug,
             mark_price=mark_by_symbol.get(o.symbol.upper()),
+            closed_position_row=closed_row,
             include_debug=include_debug,
             debug_extras=extras,
         )
