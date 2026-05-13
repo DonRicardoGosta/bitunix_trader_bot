@@ -6,6 +6,7 @@ a projekt gyökerében lévő ``.env.example``-ben dokumentált.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from typing import Literal
 
@@ -31,9 +32,10 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://trader:trader@localhost:5432/bitunix_trader"
     )
 
-    backend_cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
-    )
+    # Tárolás stringként: a pydantic-settings a list[str] mezőket JSON-ként próbálná
+    # dekódolni a környezetből (Alembic / Docker), ami vesszős listánál hibát okoz.
+    # Elfogadunk CSV-t, JSON tömböt (stringként), vagy Python listát (tesztek).
+    backend_cors_origins: str = Field(default="http://localhost:3000")
 
     bitunix_api_key: str = ""
     bitunix_api_secret: str = ""
@@ -83,11 +85,28 @@ class Settings(BaseSettings):
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod
-    def _split_cors(cls, value: object) -> object:
-        """Vesszővel elválasztott CORS lista konvertálása listává."""
+    def _normalize_cors_csv(cls, value: object) -> str:
+        """CORS originek egyetlen CSV stringgé (vesszővel), alapértelmezéssel."""
+        if value is None:
+            return "http://localhost:3000"
+        if isinstance(value, list):
+            parts = [str(x).strip() for x in value if str(x).strip()]
+            return ",".join(parts) if parts else "http://localhost:3000"
         if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+            s = value.strip()
+            if not s:
+                return "http://localhost:3000"
+            if s.startswith("["):
+                try:
+                    parsed = json.loads(s)
+                except json.JSONDecodeError:
+                    return s
+                if isinstance(parsed, list):
+                    parts = [str(x).strip() for x in parsed if str(x).strip()]
+                    return ",".join(parts) if parts else "http://localhost:3000"
+            parts = [p.strip() for p in s.split(",") if p.strip()]
+            return ",".join(parts) if parts else "http://localhost:3000"
+        return "http://localhost:3000"
 
     @property
     def is_production(self) -> bool:
