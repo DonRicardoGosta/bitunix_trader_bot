@@ -21,6 +21,9 @@ Specifikáció:
       a képletekért és a kockázati javaslatért (≤75% SL ROI biztonságosabb).
     * Piaci rendelés a Bitunix ``/futures/trade/place_order``-en, beépített
       ``tpPrice`` és ``slPrice`` paraméterekkel.
+    * Ha a tőzsde elutasítja a rendelést (pl. min. mennyiség), a stratégia
+      **nem áll le**: naplózza, kihagyja az adott szimbólumot, és megy tovább
+      a következő top moverre.
 
 Megjegyzés: a Bitunix dokumentáció ``lastPrice``, ``open``, ``high``, ``low``
 mezőket ad a 24h tickerben → a változás % így számolt:
@@ -416,7 +419,35 @@ class TopMoversStrategy(Strategy):
             }
         )
 
-        order_resp = await trading_service.place_order(request, strategy_name=self.name)
+        try:
+            order_resp = await trading_service.place_order(
+                request, strategy_name=self.name
+            )
+        except (BitunixAPIError, BitunixSignatureError) as exc:
+            out["placed"] = False
+            out["reason"] = "place_order_rejected"
+            out["error"] = str(exc)
+            if isinstance(exc, BitunixAPIError):
+                if exc.code is not None:
+                    out["bitunix_code"] = exc.code
+                if exc.response_body is not None:
+                    out["bitunix_response"] = exc.response_body
+            await audit.record(
+                ctx.session,
+                "strategy.top_movers.place_order_failed",
+                level=AuditLevel.WARNING,
+                message=f"{symbol} rendelés elutasítva: {exc}",
+                payload={
+                    **out,
+                    "quantity": str(qty),
+                    "tp_price": str(tp_price),
+                    "sl_price": str(sl_price),
+                    "leverage": leverage,
+                },
+                strategy_name=self.name,
+            )
+            return out
+
         out.update(
             placed=True,
             side=side,

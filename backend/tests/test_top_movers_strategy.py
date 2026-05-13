@@ -31,6 +31,7 @@ from app.db.models import (
     TpSlCalibration,
 )
 from app.db.session import AsyncSessionLocal, engine
+from app.bitunix.exceptions import BitunixAPIError
 from app.services.strategy.base import StrategyContext
 from app.services.strategy.top_movers import TopMoversStrategy
 
@@ -71,6 +72,7 @@ class FakeBitunixClient:
         account: dict,
         change_leverage_response: dict | None = None,
         place_order_response: dict | None = None,
+        fail_place_order_symbols: frozenset[str] | None = None,
     ) -> None:
         self._tickers = tickers
         self._trading_pairs = trading_pairs
@@ -80,6 +82,7 @@ class FakeBitunixClient:
             "dryRun": True,
             "echo": {},
         }
+        self._fail_place_order_symbols = fail_place_order_symbols or frozenset()
         self.change_leverage_calls: list[dict] = []
         self.place_order_calls: list[dict] = []
 
@@ -102,6 +105,14 @@ class FakeBitunixClient:
 
     async def place_order(self, **kwargs) -> dict:
         self.place_order_calls.append(kwargs)
+        sym = str(kwargs.get("symbol", ""))
+        if sym in self._fail_place_order_symbols:
+            raise BitunixAPIError(
+                "The amount should be larger than 700 TRUTH [Bitunix code=30016] | {\"data\": null}",
+                code="30016",
+                path="/api/v1/futures/trade/place_order",
+                response_body={"code": 30016, "data": None, "msg": "The amount should be larger than 700 TRUTH"},
+            )
         return self._place_order_response
 
 
@@ -202,6 +213,49 @@ async def test_top_movers_places_orders_for_top3_with_correct_direction() -> Non
 
     assert result.details["margin_per_position_usdt"] == "10.00"
     assert result.details["calibration_used"] is True
+
+
+@pytest.mark.asyncio
+async def test_top_movers_skips_symbol_when_place_order_rejected() -> None:
+    """Bitunix elutasítás (pl. min. mennyiség) egy coinon → a többi tovább megy."""
+    await _seed_fresh_calibration()
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.commit()
+    fake = FakeBitunixClient(
+        tickers=_make_tickers(),
+        trading_pairs=_make_pairs(),
+        account={"data": {"available": "1000"}},
+        fail_place_order_symbols=frozenset({"BBB"}),
+    )
+    strategy = TopMoversStrategy()
+    async with AsyncSessionLocal() as session:
+        ctx = StrategyContext(
+            session=session,
+            client=fake,
+            settings=get_settings(),
+            triggered_by="test",
+        )
+        result = await strategy.run(ctx)
+        await session.commit()
+
+    assert len(result.placed_orders) == 2
+    assert {o["symbol"] for o in result.placed_orders} == {"CCC", "DDD"}
+    bbb_skip = next(s for s in result.skipped if s.get("symbol") == "BBB")
+    assert bbb_skip.get("reason") == "place_order_rejected"
+    assert bbb_skip.get("bitunix_code") == "30016"
+
+    async with AsyncSessionLocal() as session:
+        orders = (await session.scalars(sa.select(Order))).all()
+    assert len(orders) == 2
+
+    async with AsyncSessionLocal() as session:
+        n_failed = await session.scalar(
+            sa.select(sa.func.count(AuditEvent.id)).where(
+                AuditEvent.event == "strategy.top_movers.place_order_failed"
+            )
+        )
+    assert n_failed == 1
 
 
 @pytest.mark.asyncio

@@ -56,32 +56,32 @@ class TradingService:
             reduce_only=payload.reduce_only,
             strategy_name=strategy_name,
         )
-        self._session.add(order)
-        await self._session.flush()
+        async with self._session.begin_nested():
+            self._session.add(order)
+            await self._session.flush()
+            response = await self._client.place_order(
+                symbol=payload.symbol,
+                side=payload.side,
+                order_type=payload.order_type,
+                quantity=payload.quantity,
+                price=payload.price,
+                reduce_only=payload.reduce_only,
+                client_order_id=client_order_id,
+                trade_side=payload.trade_side,
+                position_id=payload.position_id,
+                tp_price=payload.tp_price,
+                sl_price=payload.sl_price,
+                tp_stop_type=payload.tp_stop_type,
+                sl_stop_type=payload.sl_stop_type,
+            )
 
-        response = await self._client.place_order(
-            symbol=payload.symbol,
-            side=payload.side,
-            order_type=payload.order_type,
-            quantity=payload.quantity,
-            price=payload.price,
-            reduce_only=payload.reduce_only,
-            client_order_id=client_order_id,
-            trade_side=payload.trade_side,
-            position_id=payload.position_id,
-            tp_price=payload.tp_price,
-            sl_price=payload.sl_price,
-            tp_stop_type=payload.tp_stop_type,
-            sl_stop_type=payload.sl_stop_type,
-        )
-
-        dry_run = bool(response.get("dryRun"))
-        order.raw_response = json.dumps(response, default=str)
-        if not dry_run:
-            data = response.get("data") or {}
-            bitunix_id = data.get("orderId") or response.get("orderId")
-            if bitunix_id:
-                order.bitunix_order_id = str(bitunix_id)
+            dry_run = bool(response.get("dryRun"))
+            order.raw_response = json.dumps(response, default=str)
+            if not dry_run:
+                data = response.get("data") or {}
+                bitunix_id = data.get("orderId") or response.get("orderId")
+                if bitunix_id:
+                    order.bitunix_order_id = str(bitunix_id)
 
         await audit.record(
             self._session,
