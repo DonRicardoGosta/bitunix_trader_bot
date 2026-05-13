@@ -9,6 +9,12 @@ from typing import Any
 
 from app.db.models import Order
 
+# Belépő rendelés ``created_at`` és a Bitunix oldali pozíció ``ctime`` közti
+# megengedett eltérés ms-ben. A saját DB rögzítési idő és a Bitunix fill idő
+# között gyakran van 1-3 mp delay; ezzel a tolerancával biztos meglesz a
+# párosítás, miközben két szomszédos belépőt nem keverünk össze.
+POSITION_MATCH_TOLERANCE_MS = 30_000
+
 
 @dataclass(frozen=True)
 class TradeAugment:
@@ -16,6 +22,40 @@ class TradeAugment:
 
     realized_sum: Decimal
     avg_price: Decimal  # VWAP kitöltési ár; 0 ha nincs adat
+
+
+@dataclass(frozen=True)
+class PositionMatch:
+    """Egy DB rendeléshez tartozó Bitunix pozíció PnL adatai.
+
+    A Bitunix ``get_history_orders`` válaszában a belépő rendelésen mindig
+    ``realizedPNL=0`` szerepel – a tényleges realized PnL pozíció-szinten
+    érhető el (``get_pending_positions`` nyitottra, ``get_history_positions``
+    lezártra). Ez a struktúra mindkettőből egységes formára hozza az adatot.
+
+    Attributes:
+        position_id: Bitunix pozíció azonosító.
+        side: ``BUY`` (long) vagy ``SELL`` (short).
+        is_open: True ha a pozíció még nyitott (van unrealized PnL).
+        realized_pnl: Eddig realizált PnL USDT-ben (zárás vagy részleges).
+        unrealized_pnl: Mark-to-market nyereség nyitott pozíción (0 ha zárt).
+        margin: Foglalt fedezet USDT-ben; ``None`` ha a Bitunix nem adta vissza.
+        entry_price: Pozíció átlagos belépő ára (VWAP).
+        close_price: Lezárás VWAP-ja (None nyitottra).
+        qty: Pozíció max. méret (kontraktusban / coin-ban).
+        leverage: Tőkeáttétel.
+    """
+
+    position_id: str | None
+    side: str
+    is_open: bool
+    realized_pnl: Decimal
+    unrealized_pnl: Decimal
+    margin: Decimal | None
+    entry_price: Decimal | None
+    close_price: Decimal | None
+    qty: Decimal | None
+    leverage: int | None
 
 
 def _bitunix_rows(
@@ -98,6 +138,163 @@ def parse_open_symbols_from_positions(raw: dict[str, Any] | None) -> set[str]:
                 out.add(str(sym).upper())
                 break
     return out
+
+
+def extract_open_position_rows(raw: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Nyers ``get_pending_positions`` válaszból a pozíciók sorai."""
+    if raw is None:
+        return []
+    return _extract_position_rows(raw)
+
+
+def extract_history_position_rows(
+    raw: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Nyers ``get_history_positions`` válaszból a pozíciók sorai."""
+    if raw is None:
+        return []
+    return _bitunix_rows(
+        raw,
+        list_keys=("positionList", "list", "positions", "rows", "items", "data"),
+    )
+
+
+def _position_ctime_ms(row: dict[str, Any]) -> int | None:
+    for k in ("ctime", "createTime", "openTime", "open_time", "createdAt"):
+        v = row.get(k)
+        if v is None:
+            continue
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _pos_decimal(row: dict[str, Any], keys: tuple[str, ...]) -> Decimal | None:
+    for k in keys:
+        v = _dec(row.get(k))
+        if v is not None:
+            return v
+    return None
+
+
+def _pos_int(row: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    for k in keys:
+        v = row.get(k)
+        if v is None:
+            continue
+        try:
+            return int(str(v))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def position_match_from_row(
+    row: dict[str, Any], *, is_open: bool
+) -> PositionMatch:
+    """Bitunix nyers pozíció sorból ``PositionMatch``-ot épít.
+
+    A nyitott és lezárt pozíció sorok mezőnévben kissé eltérnek
+    (``avgOpenPrice`` vs ``entryPrice``, ``unrealizedPNL`` csak nyitottra),
+    ez a konverzió mindkettőre működik.
+    """
+    realized = _pos_decimal(
+        row, ("realizedPNL", "realizedPnl", "realizedProfit", "profit", "pnl")
+    ) or Decimal(0)
+    unrealized = (
+        _pos_decimal(row, ("unrealizedPNL", "unrealizedPnl", "unRealizedPNL"))
+        if is_open
+        else None
+    ) or Decimal(0)
+    margin = _pos_decimal(row, ("margin", "positionMargin", "marginUsdt"))
+    entry = _pos_decimal(row, ("avgOpenPrice", "entryPrice", "openPrice"))
+    close = _pos_decimal(row, ("closePrice", "avgClosePrice"))
+    qty = _pos_decimal(row, ("maxQty", "qty", "positionQty", "size"))
+    leverage = _pos_int(row, ("leverage",))
+    side_raw = row.get("side") or row.get("positionSide") or ""
+    side = str(side_raw).upper() or "BUY"
+    pid = row.get("positionId") or row.get("position_id")
+    return PositionMatch(
+        position_id=str(pid) if pid is not None else None,
+        side=side,
+        is_open=is_open,
+        realized_pnl=realized,
+        unrealized_pnl=unrealized,
+        margin=margin,
+        entry_price=entry,
+        close_price=close,
+        qty=qty,
+        leverage=leverage,
+    )
+
+
+def _order_created_at_ms(order: Order) -> int | None:
+    ts = order.created_at
+    if ts is None:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return int(ts.timestamp() * 1000)
+
+
+def match_position_for_order(
+    order: Order,
+    *,
+    open_position_rows: list[dict[str, Any]],
+    history_position_rows: list[dict[str, Any]],
+    tolerance_ms: int = POSITION_MATCH_TOLERANCE_MS,
+) -> PositionMatch | None:
+    """DB rendelés ↔ Bitunix pozíció párosítás.
+
+    Stratégia: a belépő rendelés (``reduceOnly=false``) ``created_at``-je
+    nagyon közel van a Bitunix oldali pozíció ``ctime``-jához (a pozíciót a
+    Bitunix az entry fill-kor hozza létre). Párosítás kulcsai:
+
+    * **symbol** (egyezőség kötelező, case-insensitive)
+    * **side** (``BUY``/``SELL``, HEDGE módban két párhuzamos pozíció lehet)
+    * **ctime ≈ order.created_at** (lásd ``POSITION_MATCH_TOLERANCE_MS``)
+
+    Záró rendeléseket (``reduceOnly=true``) jelenleg nem párosítjuk pozícióhoz:
+    azoknál egyébként sem hiányzik a ``realizedPNL`` a ``get_history_orders``-ból,
+    úgyhogy a meglévő enrichment ott helyesen működik.
+    """
+    if order.reduce_only:
+        return None
+    order_ts = _order_created_at_ms(order)
+    if order_ts is None:
+        return None
+    sym_u = order.symbol.upper()
+    side_u = order.side.value.upper() if hasattr(order.side, "value") else str(order.side).upper()
+
+    best: tuple[dict[str, Any], bool, int] | None = None  # (row, is_open, diff_ms)
+
+    def _consider(row: dict[str, Any], is_open: bool) -> None:
+        nonlocal best
+        if str(row.get("symbol", "")).upper() != sym_u:
+            return
+        row_side = str(row.get("side", "")).upper()
+        if row_side and row_side != side_u:
+            return
+        ct = _position_ctime_ms(row)
+        if ct is None:
+            return
+        diff = abs(ct - order_ts)
+        if diff > tolerance_ms:
+            return
+        if best is None or diff < best[2]:
+            best = (row, is_open, diff)
+
+    for row in open_position_rows:
+        _consider(row, True)
+    for row in history_position_rows:
+        _consider(row, False)
+
+    if best is None:
+        return None
+    row, is_open, _ = best
+    return position_match_from_row(row, is_open=is_open)
 
 
 def _mtime_ms(row: dict[str, Any]) -> int:
@@ -341,10 +538,19 @@ def build_order_api_dict(
     sync_error: str | None = None,
     trade_augment: TradeAugment | None = None,
     mark_price: Decimal | None = None,
+    position_match: PositionMatch | None = None,
     include_debug: bool = False,
     debug_extras: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Egy Order ORM → API listaelem (HU mezők a frontendnek)."""
+    """Egy Order ORM → API listaelem (HU mezők a frontendnek).
+
+    Args:
+        position_match: Ha megvan a pozíció (akár nyitott, akár lezárt), akkor
+            **ez** az elsődleges forrás a realized PnL / margin / ROI értékekhez,
+            mert a Bitunix ``get_history_orders`` válaszában a belépő rendelés
+            ``realizedPNL``-je definíció szerint ``0``. A trade / hist row csak
+            fallback ha a pozíció nem található (pl. canceled order).
+    """
     sym_u = o.symbol.upper()
     exchange_status = None
     if hist_row is not None:
@@ -357,11 +563,20 @@ def build_order_api_dict(
     ):
         realized = trade_augment.realized_sum
 
+    # A pozíció-szintű PnL a legpontosabb forrás (lásd docstring).
+    unrealized: Decimal | None = None
+    if position_match is not None:
+        realized = position_match.realized_pnl
+        if position_match.is_open:
+            unrealized = position_match.unrealized_pnl
+
     qty_hist = _dec(
         (hist_row.get("tradeQty") if hist_row else None)
         or (hist_row.get("qty") if hist_row else None)
     )
     qty = qty_hist if qty_hist is not None and qty_hist > 0 else o.quantity
+    if position_match is not None and position_match.qty is not None and position_match.qty > 0:
+        qty = position_match.qty
 
     price_hist = _price_from_hist_row(hist_row)
     ta_price = (
@@ -372,22 +587,49 @@ def build_order_api_dict(
     db_dec = _dec(o.price) if o.price is not None else None
     db_price = db_dec if db_dec is not None and db_dec > 0 else None
     mp = mark_price if mark_price is not None and mark_price > 0 else None
-    price = price_hist or db_price or ta_price or mp
+    pos_entry = (
+        position_match.entry_price
+        if position_match is not None
+        and position_match.entry_price is not None
+        and position_match.entry_price > 0
+        else None
+    )
+    price = pos_entry or price_hist or db_price or ta_price or mp
 
     lev = o.leverage
-    if hist_row and hist_row.get("leverage") is not None:
+    if position_match is not None and position_match.leverage:
+        lev = position_match.leverage
+    elif hist_row and hist_row.get("leverage") is not None:
         try:
             lev = int(hist_row.get("leverage"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             lev = o.leverage
 
-    margin = margin_usdt_linear(qty=qty, price=price or Decimal(0), leverage=lev)
+    margin = (
+        position_match.margin
+        if position_match is not None
+        and position_match.margin is not None
+        and position_match.margin > 0
+        else margin_usdt_linear(qty=qty, price=price or Decimal(0), leverage=lev)
+    )
 
+    # ROI az aktuális Bitunix UI logikát követi:
+    #  * nyitott pozíció  → (realized + unrealized) / margin
+    #  * lezárt pozíció   → realized / margin
+    roi_basis: Decimal | None = None
+    if realized is not None:
+        roi_basis = realized + (unrealized if unrealized is not None else Decimal(0))
     roi_pct: Decimal | None = None
-    if margin is not None and margin > 0 and realized is not None:
-        roi_pct = (realized / margin) * Decimal(100)
+    if margin is not None and margin > 0 and roi_basis is not None:
+        roi_pct = (roi_basis / margin) * Decimal(100)
 
-    if sym_u in open_symbols:
+    if position_match is not None and position_match.is_open:
+        lifecycle = "open"
+        lifecycle_label = "Nyitott pozíció"
+    elif position_match is not None and not position_match.is_open:
+        lifecycle = "closed"
+        lifecycle_label = "Lezárva"
+    elif sym_u in open_symbols:
         lifecycle = "open"
         lifecycle_label = "Nyitott pozíció"
     elif hist_row is None:
@@ -420,6 +662,9 @@ def build_order_api_dict(
         "lifecycle": lifecycle,
         "lifecycle_label": lifecycle_label,
         "realized_pnl_usdt": str(realized) if realized is not None else None,
+        "unrealized_pnl_usdt": (
+            str(unrealized) if unrealized is not None else None
+        ),
         "roi_pct": (
             str(roi_pct.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
             if roi_pct is not None
@@ -428,6 +673,7 @@ def build_order_api_dict(
         "margin_usdt_estimate": (
             str(margin.quantize(Decimal("0.0001"))) if margin is not None else None
         ),
+        "position_id": position_match.position_id if position_match else None,
     }
 
     if include_debug:
@@ -454,6 +700,28 @@ def build_order_api_dict(
                 "avg_price": str(trade_augment.avg_price),
             }
             if trade_augment
+            else None,
+            "position_match": {
+                "position_id": position_match.position_id,
+                "is_open": position_match.is_open,
+                "side": position_match.side,
+                "realized_pnl": str(position_match.realized_pnl),
+                "unrealized_pnl": str(position_match.unrealized_pnl),
+                "margin": str(position_match.margin)
+                if position_match.margin is not None
+                else None,
+                "entry_price": str(position_match.entry_price)
+                if position_match.entry_price is not None
+                else None,
+                "close_price": str(position_match.close_price)
+                if position_match.close_price is not None
+                else None,
+                "qty": str(position_match.qty)
+                if position_match.qty is not None
+                else None,
+                "leverage": position_match.leverage,
+            }
+            if position_match
             else None,
             "qty_for_margin": str(qty),
             "leverage_used": lev,
