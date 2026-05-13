@@ -24,6 +24,16 @@ export default function HomePage() {
           description="Adj fel piaci vagy limit rendelést szimbólumra."
         />
         <ShortcutCard
+          href="/strategies"
+          title="Stratégiák"
+          description="Automatizált logikák kezelése (pl. top movers, 4h cooldown, max leverage)."
+        />
+        <ShortcutCard
+          href="/events"
+          title="Eseménynapló"
+          description="Minden esemény DB-ben tárolva, szűrhetően."
+        />
+        <ShortcutCard
           href="/positions"
           title="Pozíciók"
           description="Megnyitott pozíciók és PnL áttekintés."

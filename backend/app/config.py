@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     bitunix_ws_public_url: str = "wss://fapi.bitunix.com/public/"
     bitunix_ws_private_url: str = "wss://fapi.bitunix.com/private/"
     bitunix_live_trading: bool = False
+    bitunix_margin_coin: str = "USDT"
+
+    # -- stratégia / scheduler ----------------------------------------------
+    strategy_runner_enabled: bool = False
+    strategy_interval_seconds: int = 300
+    strategy_top_movers_enabled: bool = True
+    strategy_top_movers_count: int = 3
+    strategy_top_movers_cooldown_minutes: int = 240
+    strategy_min_margin_usdt: str = "0.25"
+    strategy_margin_pct_of_balance: str = "0.01"
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod

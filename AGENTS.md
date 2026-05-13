@@ -40,8 +40,11 @@ make migrate               # DB migrációk
 2. **Soha** ne küldj élő rendelést Bitunixra teszt során – ehhez `BITUNIX_LIVE_TRADING=true` kell és kézi jóváhagyás.
 3. DB séma változás → Alembic revision (`make makemigration msg="..."`).
 4. Új környezeti változó → frissítsd a `.env.example`-t **és** a `docker-compose.yml`-t.
-5. A felhasználó kommunikáció nyelve magyar, a kódé angol.
-6. Commit konvenció: `type(scope): leírás`.
+5. **Nincs külön log csatorna** – minden business esemény DB-be megy az
+   `app.db.audit.record()` / `record_isolated()` segítségével. Stdout csak a
+   startup banner. Ne add vissza a `structlog`-ot a service rétegbe.
+6. A felhasználó kommunikáció nyelve magyar, a kódé angol.
+7. Commit konvenció: `type(scope): leírás`.
 
 ## Tipikus feladatok recept-szerűen
 ### Új API endpoint
@@ -56,3 +59,15 @@ make migrate               # DB migrációk
 2. Komponens(ek) `frontend/src/components/`.
 3. API hívás `frontend/src/lib/api.ts`-ben definiált függvénnyel.
 4. Vitest teszt mellé.
+
+### Új stratégia
+1. Hozz létre osztályt `backend/app/services/strategy/<név>.py` alatt,
+   `Strategy`-ből származtatva. `name` property + `async run(ctx)`.
+2. Regisztráld a `registry.STRATEGIES` dict-be.
+3. Új konfig env-eket (`STRATEGY_<NÉV>_*`) tegyél be a `Settings`-be,
+   `.env.example`-be és `docker-compose.yml`-be.
+4. Az audit hívásokhoz használd `app.db.audit.record()`-ot a kontextus
+   sessionjével, hogy a stratégia tranzakcióval együtt commit-oljon.
+5. Cooldown / state derived a `orders` táblából (`strategy_name` oszlop).
+6. Tesztek: tiszta logika unit tesztek (rangsorolás, számítás), majd egy
+   integráció a `FakeBitunixClient` mintával (`tests/test_top_movers_strategy.py`).

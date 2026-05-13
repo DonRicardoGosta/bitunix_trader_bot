@@ -75,25 +75,31 @@ A header set: `api-key`, `nonce`, `timestamp`, `sign`, `Content-Type`.
 ## 4. Adatmodellek
 
 ```
-orders                   position_snapshots         market_ticks
-  id                       id                         id
-  client_order_id*         symbol                     symbol
-  bitunix_order_id         side                       price
-  symbol                   entry_price                volume
-  side  (BUY/SELL)         mark_price                 created_at
-  type  (MARKET/LIMIT)     quantity
-  quantity                 unrealized_pnl
-  price                    leverage
-  leverage                 created_at / updated_at
-  status                  (PnL elemzésre, audit)
-  reduce_only
-  raw_response  (JSON)
-  created_at / updated_at
+orders                       audit_events              strategy_runs
+  id                           id                        id
+  client_order_id*             level (DEBUG..ERROR)      strategy_name
+  bitunix_order_id             event (dot.notation)      status (RUNNING|SUCCESS|
+  symbol                       message                          NO_OP|FAILED)
+  side  (BUY/SELL)             payload  (JSON)           triggered_by
+  type  (MARKET/LIMIT)         strategy_name             details  (JSON)
+  quantity                     created_at                error
+  price                                                  started_at / finished_at
+  leverage
+  status
+  reduce_only             position_snapshots         market_ticks
+  raw_response  (JSON)      id                         id
+  strategy_name             symbol, side               symbol, price
+  created_at / updated_at   entry/mark price           volume, created_at
+                            qty, unrealized_pnl
+                            leverage
 ```
 
-A `orders` tábla **az** authoritatív audit log a saját rendelésekről. A
-Bitunix maga is forrás, de a saját DB lehetővé teszi a visszamenőleges
-nyomozást és a `bitunix_order_id` ↔ `client_order_id` mapping-et.
+* `orders` – authoritatív audit log a saját rendelésekről. A `strategy_name`
+  oszlop alapján szűr a cooldown logika.
+* `audit_events` – **az** authoritatív futási napló (nincs külön log fájl
+  vagy stdout-only csatorna a business eseményekhez).
+* `strategy_runs` – egy-egy stratégia futás kimenete (időbélyegekkel és
+  szerkezet-független `details` JSON-nel).
 
 ## 5. Frontend
 
@@ -114,7 +120,61 @@ nyomozást és a `bitunix_order_id` ↔ `client_order_id` mapping-et.
 | Integráció (Bitunix mock)   | respx (backend), fetch mock  | `OrderForm.test.tsx`          |
 | End-to-end (manuális)       | docker compose + böngésző    | dev folyamat része            |
 
-## 7. Biztonsági réteg
+## 7. Stratégia framework
+
+```
+                       ┌─────────────────────────────┐
+                       │       StrategyRunner        │
+                       │  (asyncio scheduler loop)   │
+                       └──────────────┬──────────────┘
+                                      │ every N seconds
+                                      ▼
+                       ┌─────────────────────────────┐
+                       │      run_strategy(name)     │
+                       │   (creates StrategyRun row) │
+                       └──────────────┬──────────────┘
+                                      │
+                                      ▼
+                       ┌─────────────────────────────┐
+                       │ Strategy.run(ctx)           │
+                       │   ctx: session, client,     │
+                       │        settings             │
+                       └──────┬─────────────┬────────┘
+                              │             │
+                  audit.record()        BitunixClient
+                       writes              REST/WS
+                       events
+                       to DB
+```
+
+A `Strategy` ABC interfész minimális: `name` + `async run(ctx) -> StrategyResult`.
+A `registry.STRATEGIES` dict tartalmazza a regisztrált osztályokat – új
+stratégia ide kerül berakásra.
+
+### `TopMoversStrategy` döntéslánc
+
+```
+GET /futures/market/tickers  ─┐
+GET /futures/market/trading_pairs ─┤
+GET /futures/account?marginCoin=USDT ┘
+            │
+            ▼  _rank_top_movers (abs % csökkenő, top N)
+            │
+            ▼  cooldown check: SELECT MAX(orders.created_at)
+            │  WHERE strategy_name='top_movers' AND symbol=?
+            │
+            ▼  change_leverage(symbol, maxLeverage)
+            │
+            ▼  compute_margin = max(1% × balance, 0.25 USDT)
+            ▼  compute_quantity = (margin × leverage) / price [round down to precision]
+            │
+            ▼  TradingService.place_order(..., strategy_name='top_movers')
+                  ├── INSERT INTO orders
+                  ├── BitunixClient.place_order (dry-run vagy live)
+                  └── audit.record('trade.order_placed', ...)
+```
+
+## 8. Biztonsági réteg
 
 1. **Dry-run alapérték** – `BITUNIX_LIVE_TRADING=false` mellett nem megy ki
    valódi rendelés. A switch fizikailag egyetlen helyen szóródik szét
@@ -125,7 +185,7 @@ nyomozást és a `bitunix_order_id` ↔ `client_order_id` mapping-et.
 3. **CORS whitelist** – `BACKEND_CORS_ORIGINS` env változóból.
 4. **Frontend nem ismeri a kulcsot** – minden Bitunix hívás a backenden át.
 
-## 8. Bővítési pontok
+## 9. Bővítési pontok
 
 * **TradingView chart** beilleszthető a `frontend/src/app/trade/page.tsx`-be.
 * **Stratégia worker** új modulként a `backend/app/services/strategy.py` alatt,
@@ -135,7 +195,7 @@ nyomozást és a `bitunix_order_id` ↔ `client_order_id` mapping-et.
 * **Risk engine** – ár-eltérési / pozíció-méret limit ellenőrzés a
   `services/trading.py`-ban a `place_order` előtt.
 
-## 9. Tervezési kompromisszumok
+## 10. Tervezési kompromisszumok
 
 | Döntés                                        | Miért?                                                    |
 | --------------------------------------------- | --------------------------------------------------------- |

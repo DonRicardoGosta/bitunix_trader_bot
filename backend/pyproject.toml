@@ -21,7 +21,6 @@ dependencies = [
     "httpx>=0.27",
     "websockets>=12.0",
     "python-dotenv>=1.0",
-    "structlog>=24.1",
     "orjson>=3.10",
 ]
 

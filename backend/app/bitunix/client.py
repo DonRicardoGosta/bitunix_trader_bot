@@ -10,12 +10,9 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-import structlog
 
 from app.bitunix.auth import build_auth_headers
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
-
-log = structlog.get_logger(__name__)
 
 
 class BitunixClient:
@@ -61,6 +58,26 @@ class BitunixClient:
             authenticated=False,
         )
 
+    async def get_all_tickers(self) -> dict[str, Any]:
+        """Összes szimbólum 24h tickere (``symbols`` paraméter nélkül).
+
+        A válasz ``data`` mezője egy lista, elemenként:
+        ``{symbol, lastPrice, open, high, low, baseVol, quoteVol, markPrice, ...}``
+        """
+        return await self._request(
+            "GET",
+            "/api/v1/futures/market/tickers",
+            authenticated=False,
+        )
+
+    async def get_trading_pairs(self) -> dict[str, Any]:
+        """Kereskedési párok metaadatai (precíziók, min/max leverage)."""
+        return await self._request(
+            "GET",
+            "/api/v1/futures/market/trading_pairs",
+            authenticated=False,
+        )
+
     async def get_depth(self, symbol: str, limit: int = 20) -> dict[str, Any]:
         """Orderbook depth lekérdezés."""
         return await self._request(
@@ -72,10 +89,42 @@ class BitunixClient:
 
     # -- privát végpontok --------------------------------------------------
 
-    async def get_account(self) -> dict[str, Any]:
-        """Számla információ (egyenlegek, marginok)."""
+    async def get_account(self, margin_coin: str = "USDT") -> dict[str, Any]:
+        """Számla információ (egyenlegek, marginok).
+
+        Args:
+            margin_coin: Pl. ``"USDT"`` (a futures wallet base coinja).
+        """
         return await self._request(
-            "GET", "/api/v1/futures/account", authenticated=True
+            "GET",
+            "/api/v1/futures/account",
+            params={"marginCoin": margin_coin},
+            authenticated=True,
+        )
+
+    async def change_leverage(
+        self,
+        *,
+        symbol: str,
+        leverage: int,
+        margin_coin: str = "USDT",
+    ) -> dict[str, Any]:
+        """Tőkeáttétel beállítása egy szimbólumra.
+
+        ``BITUNIX_LIVE_TRADING=false`` esetén dry-run választ ad.
+        """
+        body = {
+            "symbol": symbol,
+            "leverage": int(leverage),
+            "marginCoin": margin_coin,
+        }
+        if not self._live_trading:
+            return {"dryRun": True, "echo": body}
+        return await self._request(
+            "POST",
+            "/api/v1/futures/account/change_leverage",
+            json=body,
+            authenticated=True,
         )
 
     async def get_positions(self, symbol: str | None = None) -> dict[str, Any]:
@@ -121,13 +170,6 @@ class BitunixClient:
             body["clientId"] = client_order_id
 
         if not self._live_trading:
-            log.warning(
-                "bitunix.dry_run.place_order",
-                symbol=symbol,
-                side=side,
-                qty=str(quantity),
-                price=str(price) if price else None,
-            )
             return {
                 "dryRun": True,
                 "echo": body,
@@ -146,9 +188,6 @@ class BitunixClient:
     ) -> dict[str, Any]:
         """Rendelés visszavonása."""
         if not self._live_trading:
-            log.warning(
-                "bitunix.dry_run.cancel_order", symbol=symbol, order_id=order_id
-            )
             return {"dryRun": True, "echo": {"symbol": symbol, "orderId": order_id}}
 
         return await self._request(

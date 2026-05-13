@@ -1,8 +1,8 @@
 """SQLAlchemy ORM modellek.
 
 A séma minimalista, de bővíthető: rendelések, pozíció pillanatképek,
-ár tickerek és audit naplók kerülnek tárolásra. A Bitunix maga is forrás,
-a DB elsősorban gyorsítótár, audit log és visszamenőleges elemzés.
+ár tickerek, audit események és stratégia futás-naplók. A Bitunix maga
+is forrás, a DB elsősorban authoritatív audit log és visszamenőleges elemzés.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from decimal import Decimal
 from enum import Enum
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     Index,
     Numeric,
@@ -46,10 +47,27 @@ class OrderStatus(str, Enum):
     EXPIRED = "EXPIRED"
 
 
+class AuditLevel(str, Enum):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+
+
+class StrategyRunStatus(str, Enum):
+    RUNNING = "RUNNING"
+    SUCCESS = "SUCCESS"
+    NO_OP = "NO_OP"
+    FAILED = "FAILED"
+
+
 class Order(Base, TimestampMixin):
     """Rendelés audit napló (a Bitunix saját rendelés-ID-jával társítva)."""
 
     __tablename__ = "orders"
+    __table_args__ = (
+        Index("ix_orders_strategy_symbol_ts", "strategy_name", "symbol", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     client_order_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -69,6 +87,9 @@ class Order(Base, TimestampMixin):
     )
     reduce_only: Mapped[bool] = mapped_column(default=False)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_name: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
 
 
 class PositionSnapshot(Base, TimestampMixin):
@@ -100,4 +121,67 @@ class MarketTick(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+
+
+class AuditEvent(Base):
+    """Strukturált, DB-be írt eseménynapló.
+
+    Ez **az** authoritatív log: nincs külön fájl / stdout-only log a futási
+    események számára. Az ``event`` egy dot-notation kulcs (pl.
+    ``strategy.top_movers.signal``), a ``payload`` szabad JSON adat.
+    """
+
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_events_event_ts", "event", "created_at"),
+        Index("ix_audit_events_level_ts", "level", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    level: Mapped[AuditLevel] = mapped_column(
+        SQLEnum(AuditLevel, name="audit_level"),
+        default=AuditLevel.INFO,
+    )
+    event: Mapped[str] = mapped_column(String(128))
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    strategy_name: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+
+class StrategyRun(Base):
+    """Egy stratégia futás audit rekordja."""
+
+    __tablename__ = "strategy_runs"
+    __table_args__ = (
+        Index("ix_strategy_runs_name_ts", "strategy_name", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_name: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[StrategyRunStatus] = mapped_column(
+        SQLEnum(StrategyRunStatus, name="strategy_run_status"),
+        default=StrategyRunStatus.RUNNING,
+    )
+    triggered_by: Mapped[str] = mapped_column(
+        String(32), default="scheduler"
+    )
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )

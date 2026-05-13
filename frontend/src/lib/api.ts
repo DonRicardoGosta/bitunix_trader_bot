@@ -65,6 +65,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export interface StrategyRun {
+  id: number;
+  strategy_name: string;
+  status: "RUNNING" | "SUCCESS" | "NO_OP" | "FAILED" | null;
+  triggered_by: string;
+  details: Record<string, unknown> | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface StrategyInfo {
+  name: string;
+  enabled: boolean;
+  last_run: StrategyRun | null;
+}
+
+export interface AuditEventRow {
+  id: number;
+  level: "DEBUG" | "INFO" | "WARNING" | "ERROR" | null;
+  event: string;
+  message: string | null;
+  payload: Record<string, unknown> | null;
+  strategy_name: string | null;
+  created_at: string | null;
+}
+
 export const api = {
   health: () => request<{ status: string }>("/api/health"),
   ticker: (symbol: string) =>
@@ -80,4 +107,27 @@ export const api = {
       `/api/positions${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`,
     ),
   account: () => request<unknown>("/api/account"),
+  strategies: () => request<StrategyInfo[]>("/api/strategies"),
+  strategyRuns: (strategy?: string, limit = 50) =>
+    request<StrategyRun[]>(
+      `/api/strategies/runs?limit=${limit}${strategy ? `&strategy=${encodeURIComponent(strategy)}` : ""}`,
+    ),
+  triggerStrategy: (name: string) =>
+    request<{ run_id: number; status: string }>(
+      `/api/strategies/${encodeURIComponent(name)}/run`,
+      { method: "POST" },
+    ),
+  events: (params?: {
+    level?: string;
+    event_prefix?: string;
+    strategy_name?: string;
+    limit?: number;
+  }) => {
+    const usp = new URLSearchParams();
+    if (params?.level) usp.set("level", params.level);
+    if (params?.event_prefix) usp.set("event_prefix", params.event_prefix);
+    if (params?.strategy_name) usp.set("strategy_name", params.strategy_name);
+    usp.set("limit", String(params?.limit ?? 100));
+    return request<AuditEventRow[]>(`/api/events?${usp.toString()}`);
+  },
 };

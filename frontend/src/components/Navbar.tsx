@@ -5,6 +5,8 @@ const links = [
   { href: "/trade", label: "Kereskedés" },
   { href: "/orders", label: "Rendelések" },
   { href: "/positions", label: "Pozíciók" },
+  { href: "/strategies", label: "Stratégiák" },
+  { href: "/events", label: "Eseménynapló" },
 ];
 
 export function Navbar() {

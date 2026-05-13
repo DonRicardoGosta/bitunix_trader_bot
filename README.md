@@ -17,7 +17,7 @@
 | Komponens   | Technológia                                               | Port |
 | ----------- | --------------------------------------------------------- | ---- |
 | `db`        | PostgreSQL 16 (Alpine)                                    | 5432 |
-| `backend`   | FastAPI · SQLAlchemy 2 async · Alembic · httpx · websockets | 8000 |
+| `backend`   | FastAPI · SQLAlchemy 2 async · Alembic · httpx · websockets · pluggable stratégia framework | 8000 |
 | `frontend`  | Next.js 14 (App Router) · TypeScript · TailwindCSS        | 3000 |
 
 A backend a Bitunix REST + WebSocket API-jával kommunikál, kezelve az aláírást
@@ -49,14 +49,46 @@ Elérhetőség:
 
 ### 🛡 Biztonsági kapcsolók
 
-| Változó                   | Alap   | Hatás                                               |
-| ------------------------- | ------ | --------------------------------------------------- |
-| `BITUNIX_LIVE_TRADING`    | `false`| Ha `false`, semmilyen rendelés nem megy a Bitunixhoz – csak DB-be naplóz. |
-| `APP_ENV`                 | `development` | `production` esetén JSON strukturált log, szigorúbb defaultok. |
-| `BACKEND_CORS_ORIGINS`    | localhost:3000 | Engedélyezett CORS originek (vesszővel elválasztva). |
+| Változó                              | Alap            | Hatás                                                   |
+| ------------------------------------ | --------------- | ------------------------------------------------------- |
+| `BITUNIX_LIVE_TRADING`               | `false`         | Ha `false`, semmilyen rendelés nem megy a Bitunixhoz – csak DB-be naplóz. |
+| `STRATEGY_RUNNER_ENABLED`            | `false`         | A háttér scheduler kapcsolója (kézi indítás API-n mindig elérhető). |
+| `STRATEGY_INTERVAL_SECONDS`          | `300`           | Két lefutás közti idő.                                  |
+| `STRATEGY_TOP_MOVERS_COOLDOWN_MINUTES` | `240`         | Per-szimbólum cooldown a `top_movers` stratégiához.    |
+| `STRATEGY_MARGIN_PCT_OF_BALANCE`     | `0.01`          | Margin arány a futures egyenlegből (1%).                |
+| `STRATEGY_MIN_MARGIN_USDT`           | `0.25`          | Margin padló érték.                                     |
+| `APP_ENV`                            | `development`   | `production` esetén szigorúbb defaultok.                |
+| `BACKEND_CORS_ORIGINS`               | localhost:3000  | Engedélyezett CORS originek (vesszővel elválasztva).    |
 
 **Soha** ne add ki a `BITUNIX_API_SECRET`-et és **soha** ne kommitold az
 `.env` fájlt. A `.gitignore` ezt eleve kizárja.
+
+### 🤖 Stratégiák
+
+A stratégia keretrendszer pluggable: a regisztrált logikák a
+`backend/app/services/strategy/` alatt élnek. Minden stratégia futás
+és minden döntés a DB-be kerül – **nincs külön log csatorna**, az
+`audit_events` tábla az egyetlen authoritatív napló.
+
+**`top_movers` stratégia** (alapból elérhető):
+
+1. Lekérdezi az összes szimbólum 24h tickerét (`GET /futures/market/tickers`).
+2. Rangsorolja őket **|24h % változás|** csökkenő sorrendben (az esések is játszanak).
+3. Veszi a **top 3**-at.
+4. Szimbólumonként ellenőrzi a **4 órás cooldownt** (per-stratégia, per-szimbólum).
+5. Lekéri a szimbólum `maxLeverage`-ét (`GET /futures/market/trading_pairs`),
+   és **beállítja** azt a Bitunixon (`POST /futures/account/change_leverage`).
+6. Kiszámolja a margin-t: `max(1% × futures USDT egyenleg, 0.25 USDT)`.
+7. Trend-követő irány: pozitív % → LONG (BUY), negatív → SHORT (SELL).
+8. Piaci rendelést ad fel (a `BITUNIX_LIVE_TRADING` flag-tisztelve).
+
+Indítás:
+* API: `POST /api/strategies/top_movers/run` (manuális)
+* Scheduler: `STRATEGY_RUNNER_ENABLED=true` (5 percenként, vagy ahogy beállítod)
+* UI: a **Stratégiák** oldalon `Indítás most` gomb
+
+A teljes audit látható a **Eseménynapló** oldalon, vagy
+`GET /api/events?strategy_name=top_movers&level=INFO`.
 
 ### 🧱 Projekt fa
 
@@ -76,15 +108,21 @@ Elérhetőség:
 │   │   ├── services/      # üzleti logika
 │   │   ├── config.py      # Pydantic settings
 │   │   └── main.py        # FastAPI factory
-│   ├── alembic/           # DB migrációk
-│   ├── tests/             # pytest (12 teszt)
+│   │   ├── api/routes/    # /health /market /orders /positions /account
+│   │   │                  # /strategies /events
+│   │   ├── services/strategy/   # stratégia framework (base, registry, runner)
+│   │   │                        # + top_movers stratégia
+│   │   └── db/audit.py    # authoritatív DB-be írt eseménynapló
+│   ├── alembic/           # DB migrációk (2 revision)
+│   ├── tests/             # pytest (33 teszt)
 │   └── pyproject.toml
 ├── frontend/
 │   ├── src/
-│   │   ├── app/           # Next.js App Router (dashboard, trade, orders, positions)
+│   │   ├── app/           # Next.js App Router (dashboard, trade, orders,
+│   │   │                  #   positions, strategies, events)
 │   │   ├── components/    # üzleti komponensek + UI primitívek
 │   │   └── lib/           # API kliens, segédfüggvények
-│   ├── tests              # Vitest (13 teszt) — komponensek mellett
+│   ├── tests              # Vitest (17 teszt) — komponensek mellett
 │   └── package.json
 └── ARCHITECTURE.md        # részletes architektúra
 ```
