@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import StrategiesPage from "./page";
+import { WithRefreshProvider } from "@/contexts/RefreshIntervalContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -80,7 +81,11 @@ afterEach(() => {
 
 describe("<StrategiesPage />", () => {
   it("renders strategy with SUCCESS badge and placed counts", async () => {
-    const { container } = render(<StrategiesPage />);
+    const { container } = render(
+      <WithRefreshProvider>
+        <StrategiesPage />
+      </WithRefreshProvider>,
+    );
     await waitFor(() =>
       expect(screen.getAllByText("top_movers").length).toBeGreaterThan(0),
     );
@@ -90,7 +95,11 @@ describe("<StrategiesPage />", () => {
   });
 
   it("triggers strategy on button click", async () => {
-    render(<StrategiesPage />);
+    render(
+      <WithRefreshProvider>
+        <StrategiesPage />
+      </WithRefreshProvider>,
+    );
     const btn = await screen.findByRole("button", { name: /Indítás most/i });
     await userEvent.click(btn);
     await waitFor(() =>

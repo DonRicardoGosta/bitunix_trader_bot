@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OrdersTable } from "./OrdersTable";
+import { WithRefreshProvider } from "@/contexts/RefreshIntervalContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -88,7 +89,11 @@ describe("<OrdersTable /> (grouped)", () => {
       ]),
     ) as unknown as typeof fetch;
 
-    render(<OrdersTable />);
+    render(
+      <WithRefreshProvider>
+        <OrdersTable />
+      </WithRefreshProvider>,
+    );
     // Várjuk meg a load-ot
     await waitFor(() =>
       expect(screen.getByText("BTCUSDT")).toBeInTheDocument(),
@@ -119,7 +124,11 @@ describe("<OrdersTable /> (grouped)", () => {
       ]),
     ) as unknown as typeof fetch;
 
-    render(<OrdersTable />);
+    render(
+      <WithRefreshProvider>
+        <OrdersTable />
+      </WithRefreshProvider>,
+    );
     const header = await screen.findByRole("button", { name: /SAGAUSDT/ });
     expect(header).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(header);
@@ -137,7 +146,11 @@ describe("<OrdersTable /> (grouped)", () => {
       ]),
     ) as unknown as typeof fetch;
 
-    render(<OrdersTable />);
+    render(
+      <WithRefreshProvider>
+        <OrdersTable />
+      </WithRefreshProvider>,
+    );
     await screen.findByText("BTCUSDT");
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
 
@@ -164,7 +177,11 @@ describe("<OrdersTable /> (grouped)", () => {
       ]),
     ) as unknown as typeof fetch;
 
-    render(<OrdersTable />);
+    render(
+      <WithRefreshProvider>
+        <OrdersTable />
+      </WithRefreshProvider>,
+    );
     const header = await screen.findByRole("button", { name: /FOOUSDT/ });
     await userEvent.click(header);
     const roiCell = await screen.findByText(/^0\.00 %$/);

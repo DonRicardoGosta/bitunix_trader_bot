@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Pagination, pageSlice } from "@/components/ui/Pagination";
 import { api, type OrderRow } from "@/lib/api";
+import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseDecimal(value: string | null | undefined): number | null {
@@ -81,6 +82,7 @@ type SortKey = "recent" | "pnl_desc" | "pnl_asc" | "count_desc" | "symbol_asc";
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 export function OrdersTable() {
+  const { intervalSec } = useRefreshInterval();
   const [rows, setRows] = useState<OrderRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -106,12 +108,12 @@ export function OrdersTable() {
       }
     }
     void load();
-    const id = setInterval(load, 5000);
+    const id = setInterval(load, intervalSec * 1000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [intervalSec]);
 
   const filteredRows = useMemo(() => {
     if (!rows) return [];

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 
 interface State {
   trading_enabled: boolean;
@@ -11,6 +12,7 @@ interface State {
 }
 
 export function TradingGateBanner() {
+  const { intervalSec } = useRefreshInterval();
   const [state, setState] = useState<State | null>(null);
 
   useEffect(() => {
@@ -29,12 +31,12 @@ export function TradingGateBanner() {
       }
     }
     void load();
-    const id = setInterval(load, 7000);
+    const id = setInterval(load, intervalSec * 1000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [intervalSec]);
 
   if (state === null) return null;
 

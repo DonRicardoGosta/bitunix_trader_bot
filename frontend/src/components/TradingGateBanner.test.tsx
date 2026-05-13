@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { TradingGateBanner } from "./TradingGateBanner";
+import { WithRefreshProvider } from "@/contexts/RefreshIntervalContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -18,7 +19,6 @@ afterEach(() => {
 
 describe("<TradingGateBanner />", () => {
   it("shows blocking banner when trading_enabled=false", async () => {
-    beforeEach;
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({
         trading_enabled: false,
@@ -31,7 +31,11 @@ describe("<TradingGateBanner />", () => {
       }),
     ) as unknown as typeof fetch;
 
-    render(<TradingGateBanner />);
+    render(
+      <WithRefreshProvider>
+        <TradingGateBanner />
+      </WithRefreshProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByText(/Trading le van tiltva/)).toBeInTheDocument(),
     );
@@ -52,7 +56,11 @@ describe("<TradingGateBanner />", () => {
       }),
     ) as unknown as typeof fetch;
 
-    render(<TradingGateBanner />);
+    render(
+      <WithRefreshProvider>
+        <TradingGateBanner />
+      </WithRefreshProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByText(/Trading engedélyezve/)).toBeInTheDocument(),
     );

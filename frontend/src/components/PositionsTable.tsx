@@ -10,6 +10,7 @@ import {
   type NormalizedPosition,
   type NormalizedPositionsResponse,
 } from "@/lib/api";
+import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { cn, formatNumber } from "@/lib/utils";
 
 function num(v: string | null): number | null {
@@ -35,6 +36,7 @@ type SortKey =
   | "symbol_asc";
 
 export function PositionsTable() {
+  const { intervalSec } = useRefreshInterval();
   const [data, setData] = useState<NormalizedPositionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -59,12 +61,12 @@ export function PositionsTable() {
       }
     }
     void load();
-    const id = setInterval(load, 5000);
+    const id = setInterval(load, intervalSec * 1000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [intervalSec]);
 
   const filtered = useMemo(() => {
     if (!data) return [] as NormalizedPosition[];

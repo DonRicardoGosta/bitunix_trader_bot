@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { DashboardOverview } from "./DashboardOverview";
 import type { DashboardSummary } from "@/lib/api";
+import { WithRefreshProvider } from "@/contexts/RefreshIntervalContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -133,7 +134,11 @@ describe("<DashboardOverview />", () => {
       }),
     ) as unknown as typeof fetch;
 
-    render(<DashboardOverview />);
+    render(
+      <WithRefreshProvider>
+        <DashboardOverview />
+      </WithRefreshProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByText("Számlaegyenleg (equity)")).toBeInTheDocument(),
     );
@@ -162,7 +167,11 @@ describe("<DashboardOverview />", () => {
       ),
     ) as unknown as typeof fetch;
 
-    render(<DashboardOverview />);
+    render(
+      <WithRefreshProvider>
+        <DashboardOverview />
+      </WithRefreshProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByText(/API kulcs hiányzik/)).toBeInTheDocument(),
     );

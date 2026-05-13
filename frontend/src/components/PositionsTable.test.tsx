@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PositionsTable } from "./PositionsTable";
+import { WithRefreshProvider } from "@/contexts/RefreshIntervalContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -66,7 +67,11 @@ describe("<PositionsTable />", () => {
       }),
     ) as unknown as typeof fetch;
 
-    render(<PositionsTable />);
+    render(
+      <WithRefreshProvider>
+        <PositionsTable />
+      </WithRefreshProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByText("BTCUSDT")).toBeInTheDocument(),
     );
@@ -84,7 +89,11 @@ describe("<PositionsTable />", () => {
       }),
     ) as unknown as typeof fetch;
 
-    render(<PositionsTable />);
+    render(
+      <WithRefreshProvider>
+        <PositionsTable />
+      </WithRefreshProvider>,
+    );
     await screen.findByText("BTCUSDT");
     const search = screen.getByLabelText(/Szimbólum/);
     await userEvent.type(search, "ETH");

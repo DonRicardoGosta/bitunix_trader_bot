@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { buildCsv, downloadCsvFile } from "@/lib/csvExport";
 import { api, type StrategyInfo, type StrategyRun } from "@/lib/api";
+import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 
 export default function StrategiesPage() {
+  const { intervalSec } = useRefreshInterval();
   const [list, setList] = useState<StrategyInfo[] | null>(null);
   const [runs, setRuns] = useState<StrategyRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,9 +27,9 @@ export default function StrategiesPage() {
 
   useEffect(() => {
     void refresh();
-    const id = setInterval(refresh, 7000);
+    const id = setInterval(refresh, intervalSec * 1000);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, intervalSec]);
 
   const exportRunsCsv = useCallback(() => {
     if (!runs?.length) return;

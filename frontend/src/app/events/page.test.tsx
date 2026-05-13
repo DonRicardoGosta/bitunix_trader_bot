@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import EventsPage from "./page";
+import { WithRefreshProvider } from "@/contexts/RefreshIntervalContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -49,7 +50,11 @@ afterEach(() => {
 
 describe("<EventsPage />", () => {
   it("lists events with level badges", async () => {
-    render(<EventsPage />);
+    render(
+      <WithRefreshProvider>
+        <EventsPage />
+      </WithRefreshProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByText("strategy.top_movers.ranked")).toBeInTheDocument(),
     );
@@ -64,7 +69,11 @@ describe("<EventsPage />", () => {
   });
 
   it("applies level filter to API call", async () => {
-    render(<EventsPage />);
+    render(
+      <WithRefreshProvider>
+        <EventsPage />
+      </WithRefreshProvider>,
+    );
     await screen.findByText("strategy.top_movers.ranked");
     await userEvent.selectOptions(screen.getByLabelText(/Szint/i), "ERROR");
     await waitFor(() => expect(lastUrl).toContain("level=ERROR"));

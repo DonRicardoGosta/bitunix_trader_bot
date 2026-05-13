@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CalibrationPage from "./page";
+import { WithRefreshProvider } from "@/contexts/RefreshIntervalContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -97,7 +98,11 @@ afterEach(() => {
 
 describe("<CalibrationPage />", () => {
   it("shows trading enabled banner and global TP/SL", async () => {
-    render(<CalibrationPage />);
+    render(
+      <WithRefreshProvider>
+        <CalibrationPage />
+      </WithRefreshProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByText(/Trading/i)).toBeInTheDocument(),
     );
@@ -108,7 +113,11 @@ describe("<CalibrationPage />", () => {
   });
 
   it("triggers calibration on button click", async () => {
-    render(<CalibrationPage />);
+    render(
+      <WithRefreshProvider>
+        <CalibrationPage />
+      </WithRefreshProvider>,
+    );
     await screen.findByText("engedélyezve");
     await userEvent.click(
       screen.getByRole("button", { name: /Kalibrálás most/i }),

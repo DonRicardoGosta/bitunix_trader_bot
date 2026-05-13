@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Navbar } from "@/components/Navbar";
+import { AppShell } from "@/components/AppShell";
 
 export const metadata: Metadata = {
   title: "Bitunix Trader",
@@ -15,8 +15,7 @@ export default function RootLayout({
   return (
     <html lang="hu" className="dark">
       <body>
-        <Navbar />
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

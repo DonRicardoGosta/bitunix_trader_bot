@@ -4,10 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type CalibrationRun } from "@/lib/api";
+import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 
 type Latest = Awaited<ReturnType<typeof api.calibrationLatest>>;
 
 export default function CalibrationPage() {
+  const { intervalSec } = useRefreshInterval();
   const [latest, setLatest] = useState<Latest | null>(null);
   const [runs, setRuns] = useState<CalibrationRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,9 +31,9 @@ export default function CalibrationPage() {
 
   useEffect(() => {
     void refresh();
-    const id = setInterval(refresh, 10000);
+    const id = setInterval(refresh, intervalSec * 1000);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, intervalSec]);
 
   async function trigger() {
     setBusy(true);

@@ -6,8 +6,10 @@ import { Input, Label, Select } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { buildCsv, downloadCsvFile } from "@/lib/csvExport";
 import { api, type AuditEventRow } from "@/lib/api";
+import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 
 export default function EventsPage() {
+  const { intervalSec } = useRefreshInterval();
   const [rows, setRows] = useState<AuditEventRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [level, setLevel] = useState<string>("");
@@ -58,9 +60,9 @@ export default function EventsPage() {
 
   useEffect(() => {
     void load();
-    const id = setInterval(load, 5000);
+    const id = setInterval(load, intervalSec * 1000);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, intervalSec]);
 
   return (
     <Card>
