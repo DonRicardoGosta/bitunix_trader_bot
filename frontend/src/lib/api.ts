@@ -367,6 +367,10 @@ export interface WalkForwardTpslVariations {
   target_tp_win_rate_pct: string;
   min_resolved_trades: number;
   any_variation_meets_target: boolean;
+  variation_tp_move_pct_min: string;
+  variation_tp_move_pct_max: string;
+  variation_sl_move_pct_min: string;
+  variation_sl_move_pct_max: string;
   best_current_signal: WalkForwardCurrentSignal | null;
   variations: TpslVariationRow[];
 }

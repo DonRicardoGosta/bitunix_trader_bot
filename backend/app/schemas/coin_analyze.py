@@ -186,6 +186,10 @@ class WalkForwardTpslVariations(BaseModel):
     target_tp_win_rate_pct: str = "85"
     min_resolved_trades: int = Field(default=2, ge=1, le=100)
     any_variation_meets_target: bool = False
+    variation_tp_move_pct_min: str = "30"
+    variation_tp_move_pct_max: str = "300"
+    variation_sl_move_pct_min: str = "10"
+    variation_sl_move_pct_max: str = "150"
     best_current_signal: WalkForwardCurrentSignal | None = None
     variations: list[TpslVariationRow] = Field(default_factory=list)
 

@@ -136,6 +136,13 @@ def test_simulate_long_same_bar_both_counts_sl() -> None:
     assert touch == "sl" and amb is True
 
 
+def test_clip_variation_tpsl_move_pct() -> None:
+    lo = coin_analyze_mod._clip_variation_tpsl_move_pct(Decimal("1"), Decimal("5"))
+    assert lo == (Decimal("30"), Decimal("10"))
+    hi = coin_analyze_mod._clip_variation_tpsl_move_pct(Decimal("500"), Decimal("200"))
+    assert hi == (Decimal("300"), Decimal("150"))
+
+
 def test_split_half_matches_time_midpoint() -> None:
     klines = [_synth_bar(i * 60_000, "100") for i in range(40)]
     a = split_klines_at_time_fraction(klines, Decimal("0.5"))

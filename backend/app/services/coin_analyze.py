@@ -389,12 +389,31 @@ def _tp_sl_prices_for_side(
     return tp, sl
 
 
+# Variációs szekvencia: effektív ár %-mozgás belépéstől TP/SL szintig (nem leverage ROI).
+_WF_VAR_TP_MOVE_PCT_MIN = Decimal("30")
+_WF_VAR_TP_MOVE_PCT_MAX = Decimal("300")
+_WF_VAR_SL_MOVE_PCT_MIN = Decimal("10")
+_WF_VAR_SL_MOVE_PCT_MAX = Decimal("150")
+
+
+def _clip_variation_tpsl_move_pct(
+    tp_move_pct: Decimal,
+    sl_move_pct: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """``medián × szorzó`` után: TP [30, 300] %, SL [10, 150] % (túllépés levágása)."""
+    return (
+        max(_WF_VAR_TP_MOVE_PCT_MIN, min(_WF_VAR_TP_MOVE_PCT_MAX, tp_move_pct)),
+        max(_WF_VAR_SL_MOVE_PCT_MIN, min(_WF_VAR_SL_MOVE_PCT_MAX, sl_move_pct)),
+    )
+
+
 def _compute_current_signal(
     klines: list[dict[str, Decimal]],
     *,
     choppiness_max: Decimal,
     tp_median_multiplier: Decimal = Decimal("0.5"),
     sl_median_multiplier: Decimal = Decimal("0.5"),
+    clip_variation_tpsl_bounds: bool = False,
 ) -> dict[str, Any]:
     """Teljes eddigi sorozatra: utolsó záró = belépés, TP/SL a train medián × szorzók alapján."""
     empty: dict[str, Any] = {
@@ -422,6 +441,8 @@ def _compute_current_signal(
         return empty
     tp_move = med * tp_median_multiplier
     sl_move = med * sl_median_multiplier
+    if clip_variation_tpsl_bounds:
+        tp_move, sl_move = _clip_variation_tpsl_move_pct(tp_move, sl_move)
     predicted, reason = predict_side_from_train_clean_legs(klines, train_clean)
     entry = klines[-1]["close"]
     if entry <= 0:
@@ -461,6 +482,7 @@ def _build_walk_forward_sequence_core(
     min_train: int = 15,
     margin_bars: int = 5,
     max_trades: int = 40,
+    clip_variation_tpsl_bounds: bool = False,
 ) -> dict[str, Any]:
     """Szekvenciális trade szimuláció: TP/SL távolság = train medián × (tp_mult, sl_mult)."""
     current = _compute_current_signal(
@@ -468,6 +490,7 @@ def _build_walk_forward_sequence_core(
         choppiness_max=choppiness_max,
         tp_median_multiplier=tp_median_multiplier,
         sl_median_multiplier=sl_median_multiplier,
+        clip_variation_tpsl_bounds=clip_variation_tpsl_bounds,
     )
     base: dict[str, Any] = {
         "enabled": False,
@@ -515,6 +538,8 @@ def _build_walk_forward_sequence_core(
             break
         tp_move = med * tp_median_multiplier
         sl_move = med * sl_median_multiplier
+        if clip_variation_tpsl_bounds:
+            tp_move, sl_move = _clip_variation_tpsl_move_pct(tp_move, sl_move)
         predicted, reason = predict_side_from_train_clean_legs(train, train_clean)
         entry = train[-1]["close"]
         if entry <= 0:
@@ -597,6 +622,7 @@ def _build_walk_forward_sequence_core(
         choppiness_max=choppiness_max,
         tp_median_multiplier=tp_median_multiplier,
         sl_median_multiplier=sl_median_multiplier,
+        clip_variation_tpsl_bounds=clip_variation_tpsl_bounds,
     )
     base["enabled"] = bool(trades) or bool(base["current_signal"].get("enabled"))
     if not trades and not base["current_signal"].get("enabled"):
@@ -658,7 +684,10 @@ def build_walk_forward_tpsl_variations_payload(
     target_tp_win_rate_pct: Decimal = Decimal("85"),
     min_resolved_trades: int = 2,
 ) -> dict[str, Any]:
-    """Több TP/SL (medián×) kombináció; rendezés: TP/(TP+SL) szerint csökkenő — legjobb elöl."""
+    """Több TP/SL (medián×) kombináció; effektív TP/SL %% a [30,300] / [10,150] sávra vágva.
+
+    Rendezés: TP/(TP+SL) szerint csökkenő — legjobb elöl.
+    """
     pairs = _tpsl_variation_multiplier_pairs()
     rows_raw: list[dict[str, Any]] = []
     for tp_m, sl_m in pairs:
@@ -668,6 +697,7 @@ def build_walk_forward_tpsl_variations_payload(
             tp_median_multiplier=tp_m,
             sl_median_multiplier=sl_m,
             cooldown_minutes=cooldown_minutes,
+            clip_variation_tpsl_bounds=True,
         )
         summ = seq.get("summary")
         tp_w = int(summ["tp_wins"]) if summ else 0
@@ -737,6 +767,7 @@ def build_walk_forward_tpsl_variations_payload(
             choppiness_max=choppiness_max,
             tp_median_multiplier=best_tp,
             sl_median_multiplier=best_sl,
+            clip_variation_tpsl_bounds=True,
         )
 
     return {
@@ -745,6 +776,10 @@ def build_walk_forward_tpsl_variations_payload(
         "target_tp_win_rate_pct": str(target_tp_win_rate_pct.quantize(Decimal("0.01"))),
         "min_resolved_trades": min_resolved_trades,
         "any_variation_meets_target": any_meets,
+        "variation_tp_move_pct_min": str(_WF_VAR_TP_MOVE_PCT_MIN),
+        "variation_tp_move_pct_max": str(_WF_VAR_TP_MOVE_PCT_MAX),
+        "variation_sl_move_pct_min": str(_WF_VAR_SL_MOVE_PCT_MIN),
+        "variation_sl_move_pct_max": str(_WF_VAR_SL_MOVE_PCT_MAX),
         "best_current_signal": best_sig,
         "variations": rows,
     }

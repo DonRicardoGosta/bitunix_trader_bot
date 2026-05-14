@@ -508,10 +508,15 @@ function TpslVariationsSection({
     <div className="mt-4 space-y-2">
       <div className="text-sm font-medium">TP / SL variációk (train tiszta-láb medián × szorzó)</div>
       <p className="text-xs text-muted">
-        Minden kombináció ugyanazzal a szekvenciális szabállyal fut (50% kezdő train → trade →{" "}
-        {block.variations[0]?.sequence.cooldown_minutes ?? "—"} perc cooldown → újra). A sorrend:{" "}
-        <span className="font-medium text-foreground">TP / (TP+SL)</span> csökkenő (feloldott trade:
-        min. {block.min_resolved_trades}). Cél: ≥{block.target_tp_win_rate_pct}% TP nyerés.
+        A variációkban a <span className="font-medium text-foreground">számolt TP %%</span> legalább{" "}
+        {block.variation_tp_move_pct_min}% és legfeljebb {block.variation_tp_move_pct_max}%; az{" "}
+        <span className="font-medium text-foreground">SL %%</span> (kedvezőtlen irány) legalább{" "}
+        {block.variation_sl_move_pct_min}% és legfeljebb {block.variation_sl_move_pct_max}% (a medián×
+        szorzó után vágva). Minden kombináció ugyanazzal a szekvenciális szabállyal fut (50% kezdő
+        train → trade → {block.variations[0]?.sequence.cooldown_minutes ?? "—"} perc cooldown →
+        újra). A sorrend: <span className="font-medium text-foreground">TP / (TP+SL)</span> csökkenő
+        (feloldott trade: min. {block.min_resolved_trades}). Cél: ≥{block.target_tp_win_rate_pct}% TP
+        nyerés.
         {block.any_variation_meets_target ? (
           <span className="text-emerald-400 font-medium ml-1">Van olyan pont, ami eléri a célt.</span>
         ) : (
