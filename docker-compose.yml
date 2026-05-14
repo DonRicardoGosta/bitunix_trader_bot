@@ -54,7 +54,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://trader:change_me_in_production@db:5432/bitunix_trader}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
-      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       BITUNIX_API_KEY: ${BITUNIX_API_KEY:-}
       BITUNIX_API_SECRET: ${BITUNIX_API_SECRET:-}
       BITUNIX_REST_BASE_URL: ${BITUNIX_REST_BASE_URL:-https://fapi.bitunix.com}

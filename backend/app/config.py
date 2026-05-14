@@ -35,7 +35,9 @@ class Settings(BaseSettings):
     # Tárolás stringként: a pydantic-settings a list[str] mezőket JSON-ként próbálná
     # dekódolni a környezetből (Alembic / Docker), ami vesszős listánál hibát okoz.
     # Elfogadunk CSV-t, JSON tömböt (stringként), vagy Python listát (tesztek).
-    backend_cors_origins: str = Field(default="http://localhost:3000")
+    backend_cors_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000"
+    )
 
     bitunix_api_key: str = ""
     bitunix_api_secret: str = ""
@@ -100,14 +102,14 @@ class Settings(BaseSettings):
     def _normalize_cors_csv(cls, value: object) -> str:
         """CORS originek egyetlen CSV stringgé (vesszővel), alapértelmezéssel."""
         if value is None:
-            return "http://localhost:3000"
+            return "http://localhost:3000,http://127.0.0.1:3000"
         if isinstance(value, list):
             parts = [str(x).strip() for x in value if str(x).strip()]
-            return ",".join(parts) if parts else "http://localhost:3000"
+            return ",".join(parts) if parts else "http://localhost:3000,http://127.0.0.1:3000"
         if isinstance(value, str):
             s = value.strip()
             if not s:
-                return "http://localhost:3000"
+                return "http://localhost:3000,http://127.0.0.1:3000"
             if s.startswith("["):
                 try:
                     parsed = json.loads(s)
@@ -115,10 +117,14 @@ class Settings(BaseSettings):
                     return s
                 if isinstance(parsed, list):
                     parts = [str(x).strip() for x in parsed if str(x).strip()]
-                    return ",".join(parts) if parts else "http://localhost:3000"
+                    return (
+                        ",".join(parts)
+                        if parts
+                        else "http://localhost:3000,http://127.0.0.1:3000"
+                    )
             parts = [p.strip() for p in s.split(",") if p.strip()]
-            return ",".join(parts) if parts else "http://localhost:3000"
-        return "http://localhost:3000"
+            return ",".join(parts) if parts else "http://localhost:3000,http://127.0.0.1:3000"
+        return "http://localhost:3000,http://127.0.0.1:3000"
 
     @property
     def is_production(self) -> bool:

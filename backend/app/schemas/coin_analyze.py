@@ -11,7 +11,7 @@ class MarketSymbolRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     symbol: str
-    max_leverage: int = Field(ge=1, le=500)
+    max_leverage: int = Field(ge=1)
 
 
 class CoinAnalyzeRequest(BaseModel):

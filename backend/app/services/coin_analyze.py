@@ -240,6 +240,13 @@ def build_coin_analysis_payload(
         )
     med = stats["median_move_pct"]
     mean = stats["mean_move_pct"]
+
+    def _fmt_move_stat(x: object | None) -> str | None:
+        if x is None:
+            return None
+        d = x if isinstance(x, Decimal) else Decimal(str(x))
+        return str(d.quantize(Decimal("0.0001")))
+
     return {
         "symbol": symbol,
         "max_leverage": max_leverage,
@@ -249,8 +256,8 @@ def build_coin_analysis_payload(
         "choppiness_max": str(choppiness_max),
         "candles": candles,
         "clean_legs": legs_out,
-        "median_move_pct": (str(med.quantize(Decimal("0.0001"))) if med is not None else None),
-        "mean_move_pct": (str(mean.quantize(Decimal("0.0001"))) if mean is not None else None),
+        "median_move_pct": _fmt_move_stat(med),
+        "mean_move_pct": _fmt_move_stat(mean),
         "clean_leg_count": stats["clean_leg_count"],
         "all_leg_count": stats["all_leg_count"],
     }
