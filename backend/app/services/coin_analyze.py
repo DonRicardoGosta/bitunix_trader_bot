@@ -918,14 +918,17 @@ def walk_forward_live_gate_from_klines(
     choppiness_max: Decimal,
     walk_forward_cooldown_minutes: int = 60,
 ) -> dict[str, Any]:
-    """Top signal / live: ugyanaz a WF variációs + ajánlási logika, mint a coin-analyze API.
+    """Top signal / live: WF variációs rács + aktuális jel.
 
-    ``ok`` csak akkor ``True``, ha van ``has_recommended_variation`` és érvényes
-    ``best_current_signal`` (irány + TP/SL %% a teljes sorozat utolsó zárójára).
+    Először a coin-analyze **profil-ajánlása** (``has_recommended_variation``): ≥5 belépés
+    / 24h és TP/SL nyers %% ≥ UI minimum (30/10). Ha nincs ilyen (kis medián → kis %%),
+    **fallback**: a rangsorban első sor, ahol ``meets_target`` (alapból ≥85% TP win) és
+    ≥5 belépés / 24h — ez egyezik a rács tetején látott „jó” variációval.
 
     Returns:
-        ``ok``, ``reason``, siker esetén: ``side`` (``BUY`` / ``SELL``), ``tp_move_pct``,
-        ``sl_move_pct``, ``tp_median_multiplier``, ``sl_median_multiplier``, ``prediction_reason``.
+        ``ok``, ``reason``, siker esetén: ``side``, ``tp_move_pct``, ``sl_move_pct``,
+        ``tp_median_multiplier``, ``sl_median_multiplier``, ``prediction_reason``,
+        ``wf_gate_source`` (``ui_profile_recommendation`` | ``grid_meets_target``).
     """
     vblock = build_walk_forward_tpsl_variations_payload(
         klines,
@@ -938,11 +941,56 @@ def walk_forward_live_gate_from_klines(
             "reason": "walk_forward_variations_disabled",
             "detail": vblock.get("disabled_reason"),
         }
-    if not vblock.get("has_recommended_variation"):
-        return {"ok": False, "reason": "walk_forward_no_recommended_variation"}
-    sig = vblock.get("best_current_signal")
+
+    sig: dict[str, Any] | None = None
+    wf_gate_source: str = ""
+    rec_tp: str | None = None
+    rec_sl: str | None = None
+
+    if vblock.get("has_recommended_variation"):
+        strict_sig = vblock.get("best_current_signal")
+        if isinstance(strict_sig, dict) and strict_sig.get("enabled"):
+            sig = strict_sig
+            wf_gate_source = "ui_profile_recommendation"
+            for row in vblock.get("variations") or []:
+                if row.get("is_recommended"):
+                    rec_tp = str(row.get("tp_median_multiplier"))
+                    rec_sl = str(row.get("sl_median_multiplier"))
+                    break
+
     if not isinstance(sig, dict) or not sig.get("enabled"):
-        return {"ok": False, "reason": "walk_forward_no_best_signal"}
+        rows = sorted(
+            (vblock.get("variations") or []),
+            key=lambda r: int(r.get("rank", 999)),
+        )
+        for row in rows:
+            if int(row.get("trades_entered_last_24h_count", 0)) < (
+                _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION
+            ):
+                continue
+            if not row.get("meets_target"):
+                continue
+            try:
+                best_tp = Decimal(str(row["tp_median_multiplier"]))
+                best_sl = Decimal(str(row["sl_median_multiplier"]))
+            except (ArithmeticError, ValueError, TypeError):
+                continue
+            cand = _compute_current_signal(
+                klines,
+                choppiness_max=choppiness_max,
+                tp_median_multiplier=best_tp,
+                sl_median_multiplier=best_sl,
+                clip_variation_tpsl_bounds=True,
+            )
+            if isinstance(cand, dict) and cand.get("enabled"):
+                sig = cand
+                wf_gate_source = "grid_meets_target"
+                rec_tp = str(row.get("tp_median_multiplier"))
+                rec_sl = str(row.get("sl_median_multiplier"))
+                break
+
+    if not isinstance(sig, dict) or not sig.get("enabled") or not wf_gate_source:
+        return {"ok": False, "reason": "walk_forward_no_eligible_variation"}
     ps = sig.get("predicted_side")
     side_map = {"long": "BUY", "short": "SELL"}
     if ps not in side_map:
@@ -959,14 +1007,6 @@ def walk_forward_live_gate_from_klines(
     if tp_move_pct <= 0 or sl_move_pct <= 0:
         return {"ok": False, "reason": "walk_forward_non_positive_moves"}
 
-    rec_tp: str | None = None
-    rec_sl: str | None = None
-    for row in vblock.get("variations") or []:
-        if row.get("is_recommended"):
-            rec_tp = str(row.get("tp_median_multiplier"))
-            rec_sl = str(row.get("sl_median_multiplier"))
-            break
-
     return {
         "ok": True,
         "reason": "walk_forward_recommended",
@@ -976,6 +1016,7 @@ def walk_forward_live_gate_from_klines(
         "tp_median_multiplier": rec_tp,
         "sl_median_multiplier": rec_sl,
         "prediction_reason": sig.get("prediction_reason"),
+        "wf_gate_source": wf_gate_source,
     }
 
 

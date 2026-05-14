@@ -388,6 +388,7 @@ class TopSignalEntriesStrategy(Strategy):
                         "wf_tp_median_multiplier": wf.get("tp_median_multiplier"),
                         "wf_sl_median_multiplier": wf.get("sl_median_multiplier"),
                         "wf_prediction_reason": wf.get("prediction_reason"),
+                        "wf_gate_source": wf.get("wf_gate_source"),
                     }
 
                 decision = await self._place_confirmed(

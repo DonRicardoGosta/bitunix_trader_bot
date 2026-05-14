@@ -353,6 +353,7 @@ def test_walk_forward_live_gate_ok(monkeypatch) -> None:
     assert r["side"] == "BUY"
     assert r["tp_move_pct"] == Decimal("3.1")
     assert r["sl_move_pct"] == Decimal("2.4")
+    assert r["wf_gate_source"] == "ui_profile_recommendation"
 
 
 def test_walk_forward_live_gate_no_recommend(monkeypatch) -> None:
@@ -366,4 +367,45 @@ def test_walk_forward_live_gate_no_recommend(monkeypatch) -> None:
         [], choppiness_max=Decimal("1.72")
     )
     assert r["ok"] is False
-    assert r["reason"] == "walk_forward_no_recommended_variation"
+    assert r["reason"] == "walk_forward_no_eligible_variation"
+
+
+def test_walk_forward_live_gate_grid_meets_target_fallback(monkeypatch) -> None:
+    def fake_build(*args, **kwargs):
+        return {
+            "enabled": True,
+            "has_recommended_variation": False,
+            "best_current_signal": None,
+            "variations": [
+                {
+                    "rank": 0,
+                    "tp_median_multiplier": "0.65",
+                    "sl_median_multiplier": "0.65",
+                    "meets_target": True,
+                    "trades_entered_last_24h_count": 5,
+                    "meets_min_tpsl_pct_profile": False,
+                }
+            ],
+        }
+
+    def fake_compute(*args, **kwargs):
+        return {
+            "enabled": True,
+            "predicted_side": "short",
+            "tp_move_pct": "10",
+            "sl_move_pct": "5",
+            "prediction_reason": "clean_legs_down_majority",
+        }
+
+    monkeypatch.setattr(
+        coin_analyze_mod, "build_walk_forward_tpsl_variations_payload", fake_build
+    )
+    monkeypatch.setattr(coin_analyze_mod, "_compute_current_signal", fake_compute)
+    r = coin_analyze_mod.walk_forward_live_gate_from_klines(
+        [], choppiness_max=Decimal("1.72")
+    )
+    assert r["ok"] is True
+    assert r["side"] == "SELL"
+    assert r["wf_gate_source"] == "grid_meets_target"
+    assert r["tp_median_multiplier"] == "0.65"
+    assert r["sl_median_multiplier"] == "0.65"
