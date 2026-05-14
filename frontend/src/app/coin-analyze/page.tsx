@@ -7,6 +7,7 @@ import {
   Legend,
   Line,
   ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -17,6 +18,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select as UiSelect } from "@/components/ui/input";
 import { api, type CleanLegRow, type CoinAnalyzeResult, type MarketSymbolRow } from "@/lib/api";
+
+const WF_REASON_HU: Record<string, string> = {
+  clean_legs_up_majority: "Tiszta lábak: több felfelé szakasz",
+  clean_legs_down_majority: "Tiszta lábak: több lefelé szakasz",
+  clean_legs_tie_positive_net_close: "Döntetlen lábak, nettó záró emelkedett",
+  clean_legs_tie_negative_net_close: "Döntetlen lábak, nettó záró csökkent",
+  clean_legs_tie_flat_close: "Döntetlen lábak, sík záró → long alapértelmezés",
+};
 
 const LOOKBACK_PRESETS: { label: string; minutes: number }[] = [
   { label: "1 óra", minutes: 60 },
@@ -106,7 +115,10 @@ export default function CoinAnalyzePage() {
           <CardTitle>Coin elemzés</CardTitle>
           <p className="text-sm text-muted">
             Lookback időszak, Bitunix max. tőkeáttétel, kline-alapú ár és „simított” swing lábak
-            (alacsony choppiness) – medián mozgás % a kiemelt szakaszokból.
+            (alacsony choppiness) – medián mozgás % a kiemelt szakaszokból. A megadott ablak{" "}
+            <span className="font-medium text-foreground">időben felezve</span> van: az első feléből
+            medián és irány-heurisztika, a második felén szimmetrikus TP/SL (medián/2) szimuláció —
+            hogy a TP vagy az SL érintődött volna-e előbb.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -182,6 +194,7 @@ export default function CoinAnalyzePage() {
                 <Stat label="Átlag mozgás" value={result.mean_move_pct} suffix="%" />
                 <Stat label="Max. leverage" value={String(result.max_leverage)} suffix="×" />
               </div>
+              <WalkForwardCard wf={result.walk_forward} />
               <div className="h-[420px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
@@ -214,6 +227,15 @@ export default function CoinAnalyzePage() {
                       formatter={(value: number) => [value.toLocaleString("hu-HU", { maximumFractionDigits: 8 }), "Záró"]}
                     />
                     <Legend />
+                    {result.walk_forward.enabled &&
+                    result.walk_forward.checkpoint_time_ms != null ? (
+                      <ReferenceLine
+                        x={result.walk_forward.checkpoint_time_ms}
+                        stroke="#fbbf24"
+                        strokeDasharray="4 4"
+                        label={{ value: "Checkpoint", fill: "#fbbf24", fontSize: 10 }}
+                      />
+                    ) : null}
                     {result.clean_legs.map((leg: CleanLegRow, i: number) => (
                       <ReferenceArea
                         key={`${leg.start_time_ms}-${leg.end_time_ms}-${i}`}
@@ -239,7 +261,10 @@ export default function CoinAnalyzePage() {
               <p className="text-xs text-muted mt-2">
                 Zöld háttér: relatíve egyenes felfelé szakasz, piros: lefelé. A szűrés a záró árak
                 lépéseinek összegét hasonlítja a nettó elmozduláshoz (choppiness) – a Bitunix chart
-                stílusához hasonló záró vonal; a kiemelés az elemzés „tiszta” lábai.
+                stílusához hasonló záró vonal; a kiemelés az elemzés „tiszta” lábai. A sárga
+                függőleges vonal a walk-forward{" "}
+                <span className="text-foreground font-medium">checkpoint</span>: innen indul a hátsó
+                fél TP/SL szimulációja (train medián/2 távolság).
               </p>
             </CardContent>
           </Card>
@@ -292,6 +317,113 @@ function Stat({ label, value, suffix }: { label: string; value: string | null; s
       <div className="text-lg font-semibold font-mono">
         {value != null ? `${value}${suffix}` : "—"}
       </div>
+    </div>
+  );
+}
+
+function WalkForwardCard({ wf }: { wf: CoinAnalyzeResult["walk_forward"] }) {
+  if (!wf.enabled) {
+    return (
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-3 mb-4">
+        <div className="text-sm font-medium text-amber-200/90">Walk-forward szimuláció</div>
+        <p className="text-xs text-muted mt-1">
+          {wf.disabled_reason === "too_few_candles_or_bad_time_span"
+            ? "Túl kevés gyertya vagy érvénytelen időtartomány — bővítsd a lookbacket vagy válassz finomabb intervallumot."
+            : wf.disabled_reason === "no_median_clean_legs_in_train"
+              ? "Az első fél időszakban nem volt számolható medián a tiszta swing lábakból — nincs TP/SL távolság."
+              : wf.disabled_reason ?? "Nem futtatható a hátsó fél szimulációja."}
+        </p>
+        {wf.train_bar_count > 0 ? (
+          <p className="text-xs text-muted mt-1">
+            Train: {wf.train_bar_count} gyertya · teszt: {wf.test_bar_count} gyertya
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  const reasonHu =
+    (wf.prediction_reason && WF_REASON_HU[wf.prediction_reason]) ?? wf.prediction_reason ?? "—";
+  const touchLabel =
+    wf.first_touch === "tp"
+      ? "Take profit"
+      : wf.first_touch === "sl"
+        ? "Stop loss"
+        : wf.first_touch === "none"
+          ? "Egyik sem (teszt ablak vége)"
+          : "—";
+  const sideHu = (s: string | null) =>
+    s === "long" ? "Long (BUY)" : s === "short" ? "Short (SELL)" : "—";
+  const win = wf.strategy_would_win === true;
+  const hitSl = wf.first_touch === "sl";
+  const hitNone = wf.first_touch === "none";
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-bg-subtle px-3 py-3 mb-4 space-y-2">
+      <div className="text-sm font-medium">Walk-forward (első fél → hátsó fél)</div>
+      <p className="text-xs text-muted">
+        Train: {wf.train_bar_count} gyertya · teszt: {wf.test_bar_count} gyertya · train medián
+        (tiszta láb): {wf.median_move_pct_train != null ? `${wf.median_move_pct_train}%` : "—"} · TP
+        és SL távolság egyaránt:{" "}
+        {wf.tp_move_pct != null ? `${wf.tp_move_pct}%` : "—"} (medián fele). Belépés (train utolsó
+        záró): {wf.entry_price ?? "—"}
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2 text-sm">
+        <div>
+          <span className="text-muted">Irány-előrejelzés: </span>
+          <span className="font-mono font-medium">{sideHu(wf.predicted_side)}</span>
+          <span className="text-xs text-muted block mt-0.5">{reasonHu}</span>
+        </div>
+        <div>
+          <span className="text-muted">Teszt időszak nettó záró: </span>
+          <span className="font-mono">
+            {wf.test_net_move_pct != null ? `${wf.test_net_move_pct}%` : "—"}
+          </span>
+          <span className="text-muted"> · tényleges oldal: </span>
+          <span className="font-mono">{sideHu(wf.actual_test_side)}</span>
+        </div>
+        <div>
+          <span className="text-muted">Iránytalálat: </span>
+          {wf.direction_guess_correct === true ? (
+            <span className="text-emerald-400">igen</span>
+          ) : wf.direction_guess_correct === false ? (
+            <span className="text-rose-400">nem</span>
+          ) : (
+            "—"
+          )}
+        </div>
+        <div>
+          <span className="text-muted">Előbb érintve: </span>
+          <span className="font-medium">{touchLabel}</span>
+          {wf.same_bar_ambiguous ? (
+            <span className="text-xs text-amber-400 ml-1">(azon gyertyán mindkettő → SL előny)</span>
+          ) : null}
+        </div>
+      </div>
+      <div
+        className={`rounded-md px-3 py-2 text-sm font-medium ${
+          win
+            ? "bg-emerald-500/15 text-emerald-200"
+            : hitNone
+              ? "bg-bg-card text-muted border border-border/50"
+              : hitSl
+                ? "bg-rose-500/15 text-rose-200"
+                : "bg-bg-card text-muted"
+        }`}
+      >
+        {win
+          ? "Stratégia-szimuláció: siker — a TP érintődött volna előbb a checkpoint után."
+          : hitSl
+            ? "Stratégia-szimuláció: stop — az SL érintődött volna előbb."
+            : hitNone
+              ? "Stratégia-szimuláció: sem TP, sem SL nem érintődött a teszt ablakban."
+              : "Stratégia-szimuláció: —"}
+      </div>
+      {wf.first_touch_time_ms != null ? (
+        <p className="text-xs text-muted">
+          Első érintés ideje: {new Date(wf.first_touch_time_ms).toLocaleString("hu-HU")}
+        </p>
+      ) : null}
     </div>
   );
 }
