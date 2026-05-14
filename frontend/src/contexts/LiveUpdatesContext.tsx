@@ -29,7 +29,7 @@ export type LiveTopic = (typeof LIVE_TOPICS)[number];
 const TOPIC_SET = new Set<string>(LIVE_TOPICS);
 
 type Ctx = {
-  /** Van nyitott WebSocket; ilyenkor a polling le van tiltva. */
+  /** Van nyitott WebSocket (Navbar); a REST polling ettől függetlenül fut tovább. */
   pushConnected: boolean;
   /** Adott szekció epochja: invalidációkor nő → useEffect(refetch). */
   epochFor(topic: LiveTopic): number;

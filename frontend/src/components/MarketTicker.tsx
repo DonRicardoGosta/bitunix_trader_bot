@@ -43,17 +43,12 @@ export function MarketTicker({ symbol, refreshMs = 5000 }: Props) {
       }
     }
     void load();
-    if (pushConnected) {
-      return () => {
-        cancelled = true;
-      };
-    }
     const id = setInterval(load, effectiveRefreshMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [symbol, effectiveRefreshMs, pushConnected, marketEpoch]);
+  }, [symbol, effectiveRefreshMs, marketEpoch]);
 
   return (
     <Card>

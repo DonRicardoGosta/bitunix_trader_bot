@@ -11,7 +11,7 @@ import {
   type NormalizedPositionsResponse,
 } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
-import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { cn, formatNumber } from "@/lib/utils";
 
 function num(v: string | null): number | null {
@@ -38,7 +38,6 @@ type SortKey =
 
 export function PositionsTable() {
   const { refreshIntervalMs } = useRefreshInterval();
-  const pushConnected = useLivePushConnected();
   const posEpoch = useLiveEpoch("positions");
   const [data, setData] = useState<NormalizedPositionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,17 +63,12 @@ export function PositionsTable() {
       }
     }
     void load();
-    if (pushConnected) {
-      return () => {
-        cancelled = true;
-      };
-    }
     const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [refreshIntervalMs, pushConnected, posEpoch]);
+  }, [refreshIntervalMs, posEpoch]);
 
   const filtered = useMemo(() => {
     if (!data) return [] as NormalizedPosition[];

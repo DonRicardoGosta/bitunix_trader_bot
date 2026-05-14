@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button";
 import { buildCsv, downloadCsvFile } from "@/lib/csvExport";
 import { api, type AuditEventRow } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
-import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 
 export default function EventsPage() {
   const { refreshIntervalMs } = useRefreshInterval();
-  const pushConnected = useLivePushConnected();
   const eventsEpoch = useLiveEpoch("events");
   const [rows, setRows] = useState<AuditEventRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,12 +62,9 @@ export default function EventsPage() {
 
   useEffect(() => {
     void load();
-    if (pushConnected) {
-      return undefined;
-    }
     const id = setInterval(load, refreshIntervalMs);
     return () => clearInterval(id);
-  }, [load, refreshIntervalMs, pushConnected, eventsEpoch]);
+  }, [load, refreshIntervalMs, eventsEpoch]);
 
   return (
     <Card>

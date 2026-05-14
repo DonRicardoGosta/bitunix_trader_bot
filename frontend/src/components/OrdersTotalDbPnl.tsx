@@ -47,17 +47,12 @@ export function OrdersTotalDbPnl() {
       }
     }
     void load();
-    if (pushConnected) {
-      return () => {
-        cancelled = true;
-      };
-    }
     const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [refreshIntervalMs, pushConnected, pnlEpoch]);
+  }, [refreshIntervalMs, pnlEpoch]);
 
   const tone =
     totalPnl == null ? "neutral" : totalPnl > 0 ? "positive" : totalPnl < 0 ? "negative" : "neutral";

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
-import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 
 interface State {
   trading_enabled: boolean;
@@ -14,7 +14,6 @@ interface State {
 
 export function TradingGateBanner() {
   const { refreshIntervalMs } = useRefreshInterval();
-  const pushConnected = useLivePushConnected();
   const calEpoch = useLiveEpoch("calibration");
   const [state, setState] = useState<State | null>(null);
 
@@ -34,17 +33,12 @@ export function TradingGateBanner() {
       }
     }
     void load();
-    if (pushConnected) {
-      return () => {
-        cancelled = true;
-      };
-    }
     const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [refreshIntervalMs, pushConnected, calEpoch]);
+  }, [refreshIntervalMs, calEpoch]);
 
   if (state === null) return null;
 

@@ -64,17 +64,12 @@ export function DashboardOverview() {
       }
     }
     void load();
-    if (pushConnected) {
-      return () => {
-        cancelled = true;
-      };
-    }
     const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [lookback, refreshIntervalMs, pushConnected, dashEpoch]);
+  }, [lookback, refreshIntervalMs, dashEpoch]);
 
   const account = data?.exchange?.account ?? null;
   const open = data?.exchange?.open_positions;

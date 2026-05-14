@@ -5,13 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type CalibrationRun } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
-import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 
 type Latest = Awaited<ReturnType<typeof api.calibrationLatest>>;
 
 export default function CalibrationPage() {
   const { refreshIntervalMs } = useRefreshInterval();
-  const pushConnected = useLivePushConnected();
   const calEpoch = useLiveEpoch("calibration");
   const [latest, setLatest] = useState<Latest | null>(null);
   const [runs, setRuns] = useState<CalibrationRun[] | null>(null);
@@ -34,12 +33,9 @@ export default function CalibrationPage() {
 
   useEffect(() => {
     void refresh();
-    if (pushConnected) {
-      return undefined;
-    }
     const id = setInterval(refresh, refreshIntervalMs);
     return () => clearInterval(id);
-  }, [refresh, refreshIntervalMs, pushConnected, calEpoch]);
+  }, [refresh, refreshIntervalMs, calEpoch]);
 
   async function trigger() {
     setBusy(true);
