@@ -280,16 +280,35 @@ export interface CleanLegRow {
   end_price: string;
 }
 
+export interface WalkForwardAggregate {
+  total_runs: number;
+  tp_first_count: number;
+  sl_first_count: number;
+  no_touch_count: number;
+  direction_correct_count: number;
+  strategy_win_rate_pct: string | null;
+  direction_hit_rate_pct: string | null;
+}
+
 export interface WalkForwardBacktest {
   enabled: boolean;
   disabled_reason: string | null;
+  time_split_fraction: string | null;
+  train_start_time_ms: number | null;
+  train_end_time_ms: number | null;
   checkpoint_time_ms: number | null;
+  test_start_time_ms: number | null;
+  test_end_time_ms: number | null;
   train_bar_count: number;
   test_bar_count: number;
   median_move_pct_train: string | null;
   tp_move_pct: string | null;
   sl_move_pct: string | null;
   entry_price: string | null;
+  tp_price: string | null;
+  sl_price: string | null;
+  test_start_close: string | null;
+  test_end_close: string | null;
   predicted_side: "long" | "short" | null;
   prediction_reason: string | null;
   test_net_move_pct: string | null;
@@ -299,6 +318,7 @@ export interface WalkForwardBacktest {
   first_touch_time_ms: number | null;
   same_bar_ambiguous: boolean | null;
   strategy_would_win: boolean | null;
+  aggregate: WalkForwardAggregate | null;
 }
 
 export interface CoinAnalyzeResult {

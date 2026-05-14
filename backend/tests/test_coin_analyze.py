@@ -11,6 +11,7 @@ from app.services.coin_analyze import (
     leg_choppiness,
     merge_same_side_swings,
     plan_kline_interval,
+    split_klines_at_time_fraction,
     split_klines_time_midpoint,
 )
 
@@ -111,7 +112,22 @@ def test_simulate_long_same_bar_both_counts_sl() -> None:
     assert touch == "sl" and amb is True
 
 
-def test_build_walk_forward_payload_has_shape() -> None:
+def test_split_half_matches_time_midpoint() -> None:
+    klines = [_synth_bar(i * 60_000, "100") for i in range(40)]
+    a = split_klines_at_time_fraction(klines, Decimal("0.5"))
+    b = split_klines_time_midpoint(klines)
+    assert a is not None and b is not None
+    assert len(a[0]) == len(b[0]) and len(a[1]) == len(b[1])
+
+
+def test_run_walk_forward_includes_tp_sl_prices() -> None:
+    klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(50)]
+    wf = build_walk_forward_payload(klines)
+    assert wf.get("aggregate") is not None or wf["enabled"] is False
+    if wf["enabled"]:
+        assert wf.get("tp_price") is not None
+        assert wf.get("sl_price") is not None
+        assert wf.get("train_start_time_ms") is not None
     klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(40)]
     wf = build_walk_forward_payload(klines)
     assert isinstance(wf["enabled"], bool)
