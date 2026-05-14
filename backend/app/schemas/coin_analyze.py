@@ -94,6 +94,7 @@ class WalkForwardTradeRow(BaseModel):
     sl_price: str
     median_move_pct_train: str
     tp_move_pct: str
+    sl_move_pct: str
     strategy_would_win: bool
     same_bar_ambiguous: bool
     direction_guess_correct: bool
@@ -123,6 +124,7 @@ class WalkForwardCurrentSignal(BaseModel):
     sl_price: str | None = None
     median_move_pct_train: str | None = None
     tp_move_pct: str | None = None
+    sl_move_pct: str | None = None
     train_bar_count: int = 0
 
 
@@ -136,9 +138,56 @@ class WalkForwardSequence(BaseModel):
     cooldown_minutes: int = 60
     initial_split_fraction: str = "0.5"
     first_checkpoint_time_ms: int | None = None
+    tp_median_multiplier: str = "0.5"
+    sl_median_multiplier: str = "0.5"
     trades: list[WalkForwardTradeRow] = Field(default_factory=list)
     summary: WalkForwardSequenceSummary | None = None
     current_signal: WalkForwardCurrentSignal
+
+
+class WalkForwardSequenceCore(BaseModel):
+    """Variációs sor: trade lista + összegzés (nincs ``current_signal``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    disabled_reason: str | None = None
+    cooldown_minutes: int = 60
+    initial_split_fraction: str = "0.5"
+    first_checkpoint_time_ms: int | None = None
+    tp_median_multiplier: str
+    sl_median_multiplier: str
+    trades: list[WalkForwardTradeRow] = Field(default_factory=list)
+    summary: WalkForwardSequenceSummary | None = None
+
+
+class TpslVariationRow(BaseModel):
+    """Egy TP×medián / SL×medián kombináció eredménye."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rank: int = Field(ge=0)
+    tp_median_multiplier: str
+    sl_median_multiplier: str
+    label: str
+    resolved_tp_win_rate_pct: str | None = None
+    meets_target: bool = False
+    resolved_count: int = Field(ge=0)
+    sequence: WalkForwardSequenceCore
+
+
+class WalkForwardTpslVariations(BaseModel):
+    """TP/SL variációk rácsa; cél: TP nyerési arány a feloldott (TP+SL) trade-ek között."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    disabled_reason: str | None = None
+    target_tp_win_rate_pct: str = "85"
+    min_resolved_trades: int = Field(default=2, ge=1, le=100)
+    any_variation_meets_target: bool = False
+    best_current_signal: WalkForwardCurrentSignal | None = None
+    variations: list[TpslVariationRow] = Field(default_factory=list)
 
 
 class WalkForwardBacktest(BaseModel):
@@ -193,3 +242,4 @@ class CoinAnalyzeResponse(BaseModel):
     all_leg_count: int
     walk_forward: WalkForwardBacktest
     walk_forward_sequence: WalkForwardSequence
+    walk_forward_tpsl_variations: WalkForwardTpslVariations

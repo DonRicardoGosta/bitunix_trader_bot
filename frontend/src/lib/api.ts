@@ -297,6 +297,7 @@ export interface WalkForwardTradeRow {
   sl_price: string;
   median_move_pct_train: string;
   tp_move_pct: string;
+  sl_move_pct: string;
   strategy_would_win: boolean;
   same_bar_ambiguous: boolean;
   direction_guess_correct: boolean;
@@ -320,6 +321,7 @@ export interface WalkForwardCurrentSignal {
   sl_price: string | null;
   median_move_pct_train: string | null;
   tp_move_pct: string | null;
+  sl_move_pct: string | null;
   train_bar_count: number;
 }
 
@@ -329,9 +331,44 @@ export interface WalkForwardSequence {
   cooldown_minutes: number;
   initial_split_fraction: string;
   first_checkpoint_time_ms: number | null;
+  tp_median_multiplier: string;
+  sl_median_multiplier: string;
   trades: WalkForwardTradeRow[];
   summary: WalkForwardSequenceSummary | null;
   current_signal: WalkForwardCurrentSignal;
+}
+
+export interface WalkForwardSequenceCore {
+  enabled: boolean;
+  disabled_reason: string | null;
+  cooldown_minutes: number;
+  initial_split_fraction: string;
+  first_checkpoint_time_ms: number | null;
+  tp_median_multiplier: string;
+  sl_median_multiplier: string;
+  trades: WalkForwardTradeRow[];
+  summary: WalkForwardSequenceSummary | null;
+}
+
+export interface TpslVariationRow {
+  rank: number;
+  tp_median_multiplier: string;
+  sl_median_multiplier: string;
+  label: string;
+  resolved_tp_win_rate_pct: string | null;
+  meets_target: boolean;
+  resolved_count: number;
+  sequence: WalkForwardSequenceCore;
+}
+
+export interface WalkForwardTpslVariations {
+  enabled: boolean;
+  disabled_reason: string | null;
+  target_tp_win_rate_pct: string;
+  min_resolved_trades: number;
+  any_variation_meets_target: boolean;
+  best_current_signal: WalkForwardCurrentSignal | null;
+  variations: TpslVariationRow[];
 }
 
 export interface WalkForwardAggregate {
@@ -390,6 +427,7 @@ export interface CoinAnalyzeResult {
   all_leg_count: number;
   walk_forward: WalkForwardBacktest;
   walk_forward_sequence: WalkForwardSequence;
+  walk_forward_tpsl_variations: WalkForwardTpslVariations;
 }
 
 export const api = {

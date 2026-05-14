@@ -9,6 +9,7 @@ from app.services.coin_analyze import (
     analyze_clean_legs,
     build_walk_forward_payload,
     build_walk_forward_sequence,
+    build_walk_forward_tpsl_variations_payload,
     leg_choppiness,
     merge_same_side_swings,
     plan_kline_interval,
@@ -89,8 +90,30 @@ def test_simulate_long_tp_before_sl() -> None:
             "close": Decimal("100.2"),
         }
     ]
-    touch, off, amb = coin_analyze_mod._simulate_symmetric_tp_sl(
-        bars, entry=entry, move_pct=move, side="long"
+    touch, off, amb = coin_analyze_mod._simulate_tp_sl(
+        bars, entry=entry, tp_move_pct=move, sl_move_pct=move, side="long"
+    )
+    assert touch == "tp" and off == 0 and amb is False
+
+
+def test_simulate_long_asymmetric_tp_tighter_than_sl() -> None:
+    """Kisebb TP, nagyobb SL: előbb TP érinthető."""
+    entry = Decimal("100")
+    bars = [
+        {
+            "time": Decimal(1),
+            "open": Decimal("100"),
+            "high": Decimal("100.4"),
+            "low": Decimal("99"),
+            "close": Decimal("100.1"),
+        }
+    ]
+    touch, off, amb = coin_analyze_mod._simulate_tp_sl(
+        bars,
+        entry=entry,
+        tp_move_pct=Decimal("0.3"),
+        sl_move_pct=Decimal("2"),
+        side="long",
     )
     assert touch == "tp" and off == 0 and amb is False
 
@@ -121,11 +144,21 @@ def test_split_half_matches_time_midpoint() -> None:
     assert len(a[0]) == len(b[0]) and len(a[1]) == len(b[1])
 
 
+def test_build_tpsl_variations_payload_grid() -> None:
+    klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(50)]
+    v = build_walk_forward_tpsl_variations_payload(
+        klines, choppiness_max=Decimal("1.72"), cooldown_minutes=0
+    )
+    assert len(v["variations"]) == 36
+    assert v["variations"][0]["rank"] == 0
+
+
 def test_build_walk_forward_sequence_returns_current_signal() -> None:
     klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(50)]
     seq = build_walk_forward_sequence(klines, choppiness_max=Decimal("1.72"), cooldown_minutes=0)
     assert "current_signal" in seq
     assert isinstance(seq["trades"], list)
+    assert seq.get("tp_median_multiplier") == "0.5"
 
 
 def test_run_walk_forward_includes_tp_sl_prices() -> None:

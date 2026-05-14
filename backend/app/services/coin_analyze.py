@@ -282,33 +282,35 @@ def predict_side_from_train_clean_legs(
     return "long", "clean_legs_tie_flat_close"
 
 
-def _simulate_symmetric_tp_sl(
+def _simulate_tp_sl(
     test_bars: list[dict[str, Decimal]],
     *,
     entry: Decimal,
-    move_pct: Decimal,
+    tp_move_pct: Decimal,
+    sl_move_pct: Decimal,
     side: Literal["long", "short"],
 ) -> tuple[Literal["tp", "sl", "none"], int | None, bool]:
-    """Melyik szint érintődik előbb a teszt gyertyákon (ugyanakkora TP és SL %%).
+    """Melyik szint érintődik előbb (külön TP és SL ármozgás %%).
 
-    Ha egy gyertyán belül mindkettő érinthető, **konzervatív**: SL számít
-    előbb ütöttnek (realisztikusabb rossz kitöltés a backtestben).
+    Ha egy gyertyán belül mindkettő érinthető, **konzervatív**: SL számít előbb ütöttnek.
 
     Args:
-        test_bars: A checkpoint utáni gyertyák (idő szerint növekvő).
+        test_bars: A belépés utáni gyertyák (idő szerint növekvő).
         entry: Belépési referenciaár (train utolsó záró).
-        move_pct: TP és SL távolsága százalékban (pl. medián/2).
+        tp_move_pct: TP távolság százalékban (pl. ``medián * k_tp``).
+        sl_move_pct: SL távolság százalékban (pl. ``medián * k_sl``).
         side: ``long`` vagy ``short``.
 
     Returns:
         ``(first_touch, bar_offset_in_test, same_bar_ambiguous)``.
     """
-    if move_pct <= 0 or entry <= 0 or not test_bars:
+    if tp_move_pct <= 0 or sl_move_pct <= 0 or entry <= 0 or not test_bars:
         return "none", None, False
-    m = move_pct / Decimal(100)
+    m_tp = tp_move_pct / Decimal(100)
+    m_sl = sl_move_pct / Decimal(100)
     if side == "long":
-        tp_price = entry * (Decimal(1) + m)
-        sl_price = entry * (Decimal(1) - m)
+        tp_price = entry * (Decimal(1) + m_tp)
+        sl_price = entry * (Decimal(1) - m_sl)
         for i, k in enumerate(test_bars):
             hi, lo = k["high"], k["low"]
             tp_hit = hi >= tp_price
@@ -320,8 +322,8 @@ def _simulate_symmetric_tp_sl(
             if tp_hit:
                 return "tp", i, False
         return "none", None, False
-    tp_price = entry * (Decimal(1) - m)
-    sl_price = entry * (Decimal(1) + m)
+    tp_price = entry * (Decimal(1) - m_tp)
+    sl_price = entry * (Decimal(1) + m_sl)
     for i, k in enumerate(test_bars):
         hi, lo = k["high"], k["low"]
         tp_hit = lo <= tp_price
@@ -333,6 +335,23 @@ def _simulate_symmetric_tp_sl(
         if tp_hit:
             return "tp", i, False
     return "none", None, False
+
+
+def _simulate_symmetric_tp_sl(
+    test_bars: list[dict[str, Decimal]],
+    *,
+    entry: Decimal,
+    move_pct: Decimal,
+    side: Literal["long", "short"],
+) -> tuple[Literal["tp", "sl", "none"], int | None, bool]:
+    """Ugyanakkora TP és SL %% — visszafelé kompatibilis API."""
+    return _simulate_tp_sl(
+        test_bars,
+        entry=entry,
+        tp_move_pct=move_pct,
+        sl_move_pct=move_pct,
+        side=side,
+    )
 
 
 def _next_bar_index_after_cooldown(
@@ -356,15 +375,17 @@ def _next_bar_index_after_cooldown(
 
 def _tp_sl_prices_for_side(
     entry: Decimal,
-    half_med: Decimal,
+    tp_move_pct: Decimal,
+    sl_move_pct: Decimal,
     side: Literal["long", "short"],
 ) -> tuple[Decimal, Decimal]:
+    """TP és SL célárak külön %% mozgással (mindkettő pozitív százalék)."""
     if side == "long":
-        tp = entry * (Decimal(1) + half_med / Decimal(100))
-        sl = entry * (Decimal(1) - half_med / Decimal(100))
+        tp = entry * (Decimal(1) + tp_move_pct / Decimal(100))
+        sl = entry * (Decimal(1) - sl_move_pct / Decimal(100))
     else:
-        tp = entry * (Decimal(1) - half_med / Decimal(100))
-        sl = entry * (Decimal(1) + half_med / Decimal(100))
+        tp = entry * (Decimal(1) - tp_move_pct / Decimal(100))
+        sl = entry * (Decimal(1) + sl_move_pct / Decimal(100))
     return tp, sl
 
 
@@ -372,8 +393,10 @@ def _compute_current_signal(
     klines: list[dict[str, Decimal]],
     *,
     choppiness_max: Decimal,
+    tp_median_multiplier: Decimal = Decimal("0.5"),
+    sl_median_multiplier: Decimal = Decimal("0.5"),
 ) -> dict[str, Any]:
-    """Teljes eddigi sorozatra: utolsó záró = belépés, medián/2 TP/SL (ha van medián)."""
+    """Teljes eddigi sorozatra: utolsó záró = belépés, TP/SL a train medián × szorzók alapján."""
     empty: dict[str, Any] = {
         "enabled": False,
         "disabled_reason": None,
@@ -384,6 +407,7 @@ def _compute_current_signal(
         "sl_price": None,
         "median_move_pct_train": None,
         "tp_move_pct": None,
+        "sl_move_pct": None,
         "train_bar_count": 0,
     }
     if len(klines) < 5:
@@ -396,13 +420,14 @@ def _compute_current_signal(
     if med is None or not isinstance(med, Decimal) or med <= 0:
         empty["disabled_reason"] = "no_median_clean_legs"
         return empty
-    half_med = med / Decimal(2)
+    tp_move = med * tp_median_multiplier
+    sl_move = med * sl_median_multiplier
     predicted, reason = predict_side_from_train_clean_legs(klines, train_clean)
     entry = klines[-1]["close"]
     if entry <= 0:
         empty["disabled_reason"] = "invalid_price"
         return empty
-    tp, sl = _tp_sl_prices_for_side(entry, half_med, predicted)
+    tp, sl = _tp_sl_prices_for_side(entry, tp_move, sl_move, predicted)
 
     def _q4(x: Decimal) -> str:
         return str(x.quantize(Decimal("0.0001")))
@@ -419,29 +444,39 @@ def _compute_current_signal(
         "tp_price": _price_str(tp),
         "sl_price": _price_str(sl),
         "median_move_pct_train": _q4(med),
-        "tp_move_pct": _q4(half_med),
+        "tp_move_pct": _q4(tp_move),
+        "sl_move_pct": _q4(sl_move),
         "train_bar_count": len(klines),
     }
 
 
-def build_walk_forward_sequence(
+def _build_walk_forward_sequence_core(
     klines: list[dict[str, Decimal]],
     *,
     choppiness_max: Decimal,
+    tp_median_multiplier: Decimal,
+    sl_median_multiplier: Decimal,
     initial_split_fraction: Decimal = Decimal("0.5"),
     cooldown_minutes: int = 60,
     min_train: int = 15,
     margin_bars: int = 5,
     max_trades: int = 40,
 ) -> dict[str, Any]:
-    """Kezdeti 50% train után szekvenciális TP/SL trade-ek cooldownnal; végén ``current_signal``."""
-    current = _compute_current_signal(klines, choppiness_max=choppiness_max)
+    """Szekvenciális trade szimuláció: TP/SL távolság = train medián × (tp_mult, sl_mult)."""
+    current = _compute_current_signal(
+        klines,
+        choppiness_max=choppiness_max,
+        tp_median_multiplier=tp_median_multiplier,
+        sl_median_multiplier=sl_median_multiplier,
+    )
     base: dict[str, Any] = {
         "enabled": False,
         "disabled_reason": None,
         "cooldown_minutes": cooldown_minutes,
         "initial_split_fraction": str(initial_split_fraction),
         "first_checkpoint_time_ms": None,
+        "tp_median_multiplier": str(tp_median_multiplier),
+        "sl_median_multiplier": str(sl_median_multiplier),
         "trades": [],
         "summary": None,
         "current_signal": current,
@@ -452,10 +487,10 @@ def build_walk_forward_sequence(
     )
     if sp is None:
         base["disabled_reason"] = "too_few_candles_or_bad_time_span"
-        base["enabled"] = current["enabled"] or False
+        base["enabled"] = bool(current.get("enabled"))
         return base
 
-    train0, _test0, split_idx = sp
+    _train0, _test0, split_idx = sp
     entry_idx = split_idx - 1
     base["first_checkpoint_time_ms"] = _to_int_ms(klines[entry_idx]["time"])
 
@@ -478,7 +513,8 @@ def build_walk_forward_sequence(
         med = train_stats.get("median_move_pct")
         if med is None or not isinstance(med, Decimal) or med <= 0:
             break
-        half_med = med / Decimal(2)
+        tp_move = med * tp_median_multiplier
+        sl_move = med * sl_median_multiplier
         predicted, reason = predict_side_from_train_clean_legs(train, train_clean)
         entry = train[-1]["close"]
         if entry <= 0:
@@ -486,10 +522,11 @@ def build_walk_forward_sequence(
         forward = klines[entry_idx + 1 :]
         if not forward:
             break
-        touch, off, amb = _simulate_symmetric_tp_sl(
+        touch, off, amb = _simulate_tp_sl(
             forward,
             entry=entry,
-            move_pct=half_med,
+            tp_move_pct=tp_move,
+            sl_move_pct=sl_move,
             side=predicted,
         )
         if touch in ("tp", "sl") and off is not None:
@@ -503,7 +540,7 @@ def build_walk_forward_sequence(
         f1 = forward[exit_local]["close"]
         actual_side: Literal["long", "short"] = "long" if f1 > f0 else "short"
         direction_ok = predicted == actual_side
-        tp_price, sl_price = _tp_sl_prices_for_side(entry, half_med, predicted)
+        tp_price, sl_price = _tp_sl_prices_for_side(entry, tp_move, sl_move, predicted)
         chart_from = max(0, entry_idx - margin_bars)
         chart_to = min(n - 1, exit_idx + margin_bars)
         exit_px = klines[exit_idx]["close"]
@@ -525,7 +562,8 @@ def build_walk_forward_sequence(
                 "tp_price": _price_str(tp_price),
                 "sl_price": _price_str(sl_price),
                 "median_move_pct_train": _q4(med),
-                "tp_move_pct": _q4(half_med),
+                "tp_move_pct": _q4(tp_move),
+                "sl_move_pct": _q4(sl_move),
                 "strategy_would_win": touch == "tp",
                 "same_bar_ambiguous": amb,
                 "direction_guess_correct": direction_ok,
@@ -554,10 +592,162 @@ def build_walk_forward_sequence(
 
     base["trades"] = trades
     base["summary"] = summary
-    base["enabled"] = bool(trades) or bool(current.get("enabled"))
-    if not trades and not current.get("enabled"):
+    base["current_signal"] = _compute_current_signal(
+        klines,
+        choppiness_max=choppiness_max,
+        tp_median_multiplier=tp_median_multiplier,
+        sl_median_multiplier=sl_median_multiplier,
+    )
+    base["enabled"] = bool(trades) or bool(base["current_signal"].get("enabled"))
+    if not trades and not base["current_signal"].get("enabled"):
         base["disabled_reason"] = "no_trades_and_no_current_signal"
     return base
+
+
+def build_walk_forward_sequence(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal,
+    initial_split_fraction: Decimal = Decimal("0.5"),
+    cooldown_minutes: int = 60,
+    min_train: int = 15,
+    margin_bars: int = 5,
+    max_trades: int = 40,
+) -> dict[str, Any]:
+    """Alapértelmezés: TP és SL egyaránt ``medián × 0.5`` (régi medián/2 viselkedés)."""
+    return _build_walk_forward_sequence_core(
+        klines,
+        choppiness_max=choppiness_max,
+        tp_median_multiplier=Decimal("0.5"),
+        sl_median_multiplier=Decimal("0.5"),
+        initial_split_fraction=initial_split_fraction,
+        cooldown_minutes=cooldown_minutes,
+        min_train=min_train,
+        margin_bars=margin_bars,
+        max_trades=max_trades,
+    )
+
+
+def _tpsl_variation_multiplier_pairs() -> list[tuple[Decimal, Decimal]]:
+    """TP/SL szorzók a train tiszta-láb mediánjára (rács, deduplikálva)."""
+    vals = [
+        Decimal("0.25"),
+        Decimal("0.35"),
+        Decimal("0.5"),
+        Decimal("0.65"),
+        Decimal("0.75"),
+        Decimal("1.0"),
+    ]
+    out: list[tuple[Decimal, Decimal]] = []
+    seen: set[tuple[str, str]] = set()
+    for tp in vals:
+        for sl in vals:
+            key = (str(tp), str(sl))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((tp, sl))
+    return out
+
+
+def build_walk_forward_tpsl_variations_payload(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal,
+    cooldown_minutes: int,
+    target_tp_win_rate_pct: Decimal = Decimal("85"),
+    min_resolved_trades: int = 2,
+) -> dict[str, Any]:
+    """Több TP/SL (medián×) kombináció; rendezés: TP/(TP+SL) szerint csökkenő — legjobb elöl."""
+    pairs = _tpsl_variation_multiplier_pairs()
+    rows_raw: list[dict[str, Any]] = []
+    for tp_m, sl_m in pairs:
+        seq = _build_walk_forward_sequence_core(
+            klines,
+            choppiness_max=choppiness_max,
+            tp_median_multiplier=tp_m,
+            sl_median_multiplier=sl_m,
+            cooldown_minutes=cooldown_minutes,
+        )
+        summ = seq.get("summary")
+        tp_w = int(summ["tp_wins"]) if summ else 0
+        sl_l = int(summ["sl_losses"]) if summ else 0
+        resolved = tp_w + sl_l
+        rate: Decimal | None = None
+        if resolved >= min_resolved_trades and resolved > 0:
+            rate = Decimal(tp_w) / Decimal(resolved) * Decimal(100)
+        meets = rate is not None and rate >= target_tp_win_rate_pct
+        label = f"TP×{tp_m} med, SL×{sl_m} med"
+        slim = {
+            "enabled": seq["enabled"],
+            "disabled_reason": seq.get("disabled_reason"),
+            "cooldown_minutes": seq["cooldown_minutes"],
+            "initial_split_fraction": seq["initial_split_fraction"],
+            "first_checkpoint_time_ms": seq.get("first_checkpoint_time_ms"),
+            "tp_median_multiplier": seq["tp_median_multiplier"],
+            "sl_median_multiplier": seq["sl_median_multiplier"],
+            "trades": seq["trades"],
+            "summary": seq.get("summary"),
+        }
+        rows_raw.append(
+            {
+                "tp_median_multiplier": str(tp_m),
+                "sl_median_multiplier": str(sl_m),
+                "label": label,
+                "resolved_tp_win_rate_pct": (
+                    str(rate.quantize(Decimal("0.01"))) if rate is not None else None
+                ),
+                "meets_target": meets,
+                "resolved_count": resolved,
+                "sequence": slim,
+            }
+        )
+
+    def _rate_key(r: dict[str, Any]) -> Decimal:
+        s = r.get("resolved_tp_win_rate_pct")
+        if s is None:
+            return Decimal("-1")
+        return Decimal(str(s))
+
+    def _tpw(r: dict[str, Any]) -> int:
+        s = (r.get("sequence") or {}).get("summary")
+        if isinstance(s, dict):
+            return int(s.get("tp_wins", 0))
+        return 0
+
+    rows_raw.sort(
+        key=lambda r: (_rate_key(r), _tpw(r), r.get("resolved_count", 0)),
+        reverse=True,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for rank, r in enumerate(rows_raw):
+        item = dict(r)
+        item["rank"] = rank
+        rows.append(item)
+
+    any_meets = any(r["meets_target"] for r in rows)
+    best_sig: dict[str, Any] | None = None
+    if rows:
+        best = rows[0]
+        best_tp = Decimal(best["tp_median_multiplier"])
+        best_sl = Decimal(best["sl_median_multiplier"])
+        best_sig = _compute_current_signal(
+            klines,
+            choppiness_max=choppiness_max,
+            tp_median_multiplier=best_tp,
+            sl_median_multiplier=best_sl,
+        )
+
+    return {
+        "enabled": bool(rows),
+        "disabled_reason": None if rows else "no_variation_runs",
+        "target_tp_win_rate_pct": str(target_tp_win_rate_pct.quantize(Decimal("0.01"))),
+        "min_resolved_trades": min_resolved_trades,
+        "any_variation_meets_target": any_meets,
+        "best_current_signal": best_sig,
+        "variations": rows,
+    }
 
 
 _WF_AGGREGATE_FRACTIONS: tuple[Decimal, ...] = (
@@ -838,6 +1028,11 @@ def build_coin_analysis_payload(
             klines, choppiness_max=choppiness_max
         ),
         "walk_forward_sequence": build_walk_forward_sequence(
+            klines,
+            choppiness_max=choppiness_max,
+            cooldown_minutes=walk_forward_cooldown_minutes,
+        ),
+        "walk_forward_tpsl_variations": build_walk_forward_tpsl_variations_payload(
             klines,
             choppiness_max=choppiness_max,
             cooldown_minutes=walk_forward_cooldown_minutes,

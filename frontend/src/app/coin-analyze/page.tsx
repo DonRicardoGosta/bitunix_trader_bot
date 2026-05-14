@@ -23,8 +23,9 @@ import {
   type CleanLegRow,
   type CoinAnalyzeResult,
   type MarketSymbolRow,
+  type TpslVariationRow,
   type WalkForwardCurrentSignal,
-  type WalkForwardSequence,
+  type WalkForwardTpslVariations,
   type WalkForwardTradeRow,
 } from "@/lib/api";
 
@@ -125,6 +126,13 @@ export default function CoinAnalyzePage() {
     }));
   }, [result]);
 
+  const chartEntryTrades = useMemo(() => {
+    const v0 = result?.walk_forward_tpsl_variations?.variations?.[0];
+    const t = v0?.sequence?.trades;
+    if (t?.length) return t;
+    return result?.walk_forward_sequence?.trades ?? [];
+  }, [result]);
+
   const runAnalyze = useCallback(async () => {
     if (!symbol.trim()) return;
     setLoadingRun(true);
@@ -152,11 +160,12 @@ export default function CoinAnalyzePage() {
           <p className="text-sm text-muted">
             A fő charton a teljes lookback záróvonala és a tiszta swing lábak látszanak; a kék /
             borostyán sáv az első 50% train vs. második 50% teszt idő (checkpoint: első fél vége). A
-            szekvenciális virtuális trade-ek (TP/SL, cooldown után újra){" "}
-            <span className="font-medium text-foreground">külön kis chartokon</span> jelennek meg
-            lent. A lista végén:{" "}
-            <span className="font-medium text-foreground">jelenlegi predikció</span> az utolsó záró
-            alapján.
+            szekvenciális szimuláció <span className="font-medium text-foreground">több TP×medián / SL×medián</span>{" "}
+            kombinációval fut; a legjobb TP/(TP+SL) arányú variáció mindig kinyitva, a többi becsukható.
+            Céljel: legalább egy variáció{" "}
+            <span className="font-medium text-foreground">≥ 85% TP győzelem</span> a feloldott
+            trade-ek között. A lista végén: <span className="font-medium text-foreground">jelenlegi predikció</span>{" "}
+            a <span className="font-medium text-foreground">legjobb variáció</span> szorzóival.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -327,7 +336,7 @@ export default function CoinAnalyzePage() {
                         label={{ value: "Checkpoint", fill: "#fbbf24", fontSize: 10 }}
                       />
                     ) : null}
-                    {result.walk_forward_sequence.trades.map((tr) => (
+                    {chartEntryTrades.map((tr) => (
                       <ReferenceLine
                         key={`ent-${tr.trade_index}-${tr.entry_time_ms}`}
                         x={tr.entry_time_ms}
@@ -353,8 +362,13 @@ export default function CoinAnalyzePage() {
                 vékony sárga függőlegesek a szekvenciális trade belépések; TP/SL részletek a lenti
                 kis chartokon.
               </p>
-              <WalkForwardSequencePanel candles={result.candles} seq={result.walk_forward_sequence} />
-              <CurrentSignalPanel sig={result.walk_forward_sequence.current_signal} />
+              <TpslVariationsSection candles={result.candles} block={result.walk_forward_tpsl_variations} />
+              <CurrentSignalPanel
+                sig={
+                  result.walk_forward_tpsl_variations.best_current_signal ??
+                  result.walk_forward_sequence.current_signal
+                }
+              />
               <WalkForwardCard wf={result.walk_forward} />
             </CardContent>
           </Card>
@@ -474,49 +488,107 @@ function TradeMiniChart({ candles, trade }: { candles: CandleChartRow[]; trade: 
   );
 }
 
-function WalkForwardSequencePanel({
+function TpslVariationsSection({
   candles,
-  seq,
+  block,
 }: {
   candles: CandleChartRow[];
-  seq: WalkForwardSequence;
+  block: WalkForwardTpslVariations;
 }) {
-  if (!seq.trades.length) {
+  if (!block.variations.length) {
     return (
       <div className="rounded-lg border border-border/50 bg-bg-subtle/40 px-3 py-3 mt-4 text-sm text-muted">
-        {seq.disabled_reason === "too_few_candles_or_bad_time_span"
-          ? "Szekvenciális trade-ek: túl kevés adat a 50% kezdeti vágáshoz."
-          : "Nem futott szekvenciális trade (nincs medián a bővülő train ablakokban)."}
+        {block.disabled_reason === "no_variations_evaluated"
+          ? "TP/SL variációk: nincs kiértékelhető rács."
+          : "Nincs TP/SL variációs eredmény."}
       </div>
     );
   }
-  const s = seq.summary;
   return (
-    <div className="mt-4 space-y-3">
-      <div className="text-sm font-medium">Szekvenciális virtuális trade-ek</div>
+    <div className="mt-4 space-y-2">
+      <div className="text-sm font-medium">TP / SL variációk (train tiszta-láb medián × szorzó)</div>
       <p className="text-xs text-muted">
-        Kezdeti 50% train után: belépés → TP/SL szimuláció → {seq.cooldown_minutes} perc szünet → új
-        train (eddigi összes gyertya a belépésig) → következő trade. Minden trade külön ábrán.
+        Minden kombináció ugyanazzal a szekvenciális szabállyal fut (50% kezdő train → trade →{" "}
+        {block.variations[0]?.sequence.cooldown_minutes ?? "—"} perc cooldown → újra). A sorrend:{" "}
+        <span className="font-medium text-foreground">TP / (TP+SL)</span> csökkenő (feloldott trade:
+        min. {block.min_resolved_trades}). Cél: ≥{block.target_tp_win_rate_pct}% TP nyerés.
+        {block.any_variation_meets_target ? (
+          <span className="text-emerald-400 font-medium ml-1">Van olyan pont, ami eléri a célt.</span>
+        ) : (
+          <span className="text-muted ml-1">Egyik rács-pont sem éri el a 85%-ot.</span>
+        )}
       </p>
-      {s ? (
-        <div className="flex flex-wrap gap-3 text-xs">
-          <span>
-            Trade-ek: <strong className="text-foreground">{s.total_trades}</strong>
-          </span>
-          <span className="text-emerald-400">TP: {s.tp_wins}</span>
-          <span className="text-rose-400">SL: {s.sl_losses}</span>
-          <span className="text-muted">nincs TP/SL: {s.no_result}</span>
-          <span>
-            Irány a trade alatt: <strong className="text-foreground">{s.direction_hits}</strong> /{" "}
-            {s.total_trades}
-          </span>
-        </div>
-      ) : null}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {seq.trades.map((tr) => (
-          <TradeMiniChart key={tr.trade_index} candles={candles} trade={tr} />
-        ))}
-      </div>
+      {block.variations.map((v: TpslVariationRow, i: number) => {
+        const s = v.sequence.summary;
+        const stats = s ? (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted pt-1">
+            <span>
+              Trade: <strong className="text-foreground">{s.total_trades}</strong>
+            </span>
+            <span className="text-emerald-400">TP: {s.tp_wins}</span>
+            <span className="text-rose-400">SL: {s.sl_losses}</span>
+            <span>feloldatlan: {s.no_result}</span>
+            <span>
+              TP/(TP+SL):{" "}
+              <strong className="text-foreground">{v.resolved_tp_win_rate_pct ?? "—"}%</strong>
+            </span>
+            {v.meets_target ? (
+              <span className="text-emerald-400 font-medium">≥ {block.target_tp_win_rate_pct}%</span>
+            ) : null}
+          </div>
+        ) : null;
+        const charts =
+          v.sequence.trades.length > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 pt-2">
+              {v.sequence.trades.map((tr) => (
+                <TradeMiniChart key={`${v.rank}-${tr.trade_index}`} candles={candles} trade={tr} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted pt-2">Nincs trade ebben a variációban.</p>
+          );
+        const head = (
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="font-medium text-foreground">{v.label}</span>
+            <span className="text-xs font-mono text-muted">
+              #{v.rank + 1} · TP×{v.tp_median_multiplier} SL×{v.sl_median_multiplier}
+            </span>
+          </div>
+        );
+        if (i === 0) {
+          return (
+            <div
+              key={`wf-var-${v.rank}`}
+              className="rounded-lg border border-emerald-500/40 bg-emerald-950/25 p-3 space-y-1"
+            >
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300/95">
+                Legjobb eredmény (mindig nyitva)
+              </div>
+              {head}
+              {stats}
+              {charts}
+            </div>
+          );
+        }
+        return (
+          <details
+            key={`wf-var-${v.rank}`}
+            className="rounded-lg border border-border/60 bg-bg-subtle/30 group [&_summary::-webkit-details-marker]:hidden"
+          >
+            <summary className="cursor-pointer select-none list-none px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 hover:bg-bg-subtle/55 rounded-t-lg">
+              <span className="text-sm text-foreground">{v.label}</span>
+              <span className="text-xs font-mono text-muted">
+                TP% {v.resolved_tp_win_rate_pct ?? "—"}
+                {v.meets_target ? <span className="text-emerald-400 ml-2">cél OK</span> : null}
+              </span>
+            </summary>
+            <div className="px-3 pb-3 border-t border-border/40">
+              {stats}
+              {charts}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -540,8 +612,8 @@ function CurrentSignalPanel({ sig }: { sig: WalkForwardCurrentSignal }) {
           </p>
           <p className="text-xs font-mono">
             Belépés: {sig.entry_price} · TP: {sig.tp_price} · SL: {sig.sl_price} · train medián:{" "}
-            {sig.median_move_pct_train}% · TP/SL távolság: {sig.tp_move_pct}% · train gyertyák:{" "}
-            {sig.train_bar_count}
+            {sig.median_move_pct_train}% · TP távolság: {sig.tp_move_pct}% · SL távolság:{" "}
+            {sig.sl_move_pct ?? "—"}% · train gyertyák: {sig.train_bar_count}
           </p>
         </div>
       )}
