@@ -19,6 +19,12 @@ class CoinAnalyzeRequest(BaseModel):
 
     symbol: str = Field(..., min_length=3, max_length=32)
     lookback_minutes: int = Field(default=1440, ge=5, le=120960)  # max 12 hét
+    walk_forward_cooldown_minutes: int = Field(
+        default=60,
+        ge=0,
+        le=10080,
+        description="Virtuális trade lezárása után ennyi percet várunk a következő belépésig.",
+    )
 
     @field_validator("symbol")
     @classmethod
@@ -65,6 +71,74 @@ class WalkForwardAggregate(BaseModel):
     direction_correct_count: int = Field(ge=0)
     strategy_win_rate_pct: str | None = None
     direction_hit_rate_pct: str | None = None
+
+
+class WalkForwardTradeRow(BaseModel):
+    """Egy szekvenciális virtuális trade (rész-chart indexek a teljes candles listához)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trade_index: int = Field(ge=0)
+    entry_bar_index: int = Field(ge=0)
+    exit_bar_index: int = Field(ge=0)
+    chart_from_index: int = Field(ge=0)
+    chart_to_index: int = Field(ge=0)
+    entry_time_ms: int
+    exit_time_ms: int
+    predicted_side: Literal["long", "short"]
+    prediction_reason: str
+    first_touch: Literal["tp", "sl", "none"]
+    entry_price: str
+    exit_price: str
+    tp_price: str
+    sl_price: str
+    median_move_pct_train: str
+    tp_move_pct: str
+    strategy_would_win: bool
+    same_bar_ambiguous: bool
+    direction_guess_correct: bool
+
+
+class WalkForwardSequenceSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total_trades: int = Field(ge=0)
+    tp_wins: int = Field(ge=0)
+    sl_losses: int = Field(ge=0)
+    no_result: int = Field(ge=0)
+    direction_hits: int = Field(ge=0)
+
+
+class WalkForwardCurrentSignal(BaseModel):
+    """Utolsó gyertya zárójára: milyen irányt és TP/SL szinteket adna a modell most."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    disabled_reason: str | None = None
+    predicted_side: Literal["long", "short"] | None = None
+    prediction_reason: str | None = None
+    entry_price: str | None = None
+    tp_price: str | None = None
+    sl_price: str | None = None
+    median_move_pct_train: str | None = None
+    tp_move_pct: str | None = None
+    train_bar_count: int = 0
+
+
+class WalkForwardSequence(BaseModel):
+    """50% első train után: trade → cooldown → új train (bővülő) → következő trade, stb."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    disabled_reason: str | None = None
+    cooldown_minutes: int = 60
+    initial_split_fraction: str = "0.5"
+    first_checkpoint_time_ms: int | None = None
+    trades: list[WalkForwardTradeRow] = Field(default_factory=list)
+    summary: WalkForwardSequenceSummary | None = None
+    current_signal: WalkForwardCurrentSignal
 
 
 class WalkForwardBacktest(BaseModel):
@@ -118,3 +192,4 @@ class CoinAnalyzeResponse(BaseModel):
     clean_leg_count: int
     all_leg_count: int
     walk_forward: WalkForwardBacktest
+    walk_forward_sequence: WalkForwardSequence

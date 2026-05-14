@@ -335,6 +335,231 @@ def _simulate_symmetric_tp_sl(
     return "none", None, False
 
 
+def _next_bar_index_after_cooldown(
+    klines: list[dict[str, Decimal]],
+    exit_bar_index: int,
+    cooldown_minutes: int,
+) -> int | None:
+    """Az ``exit_bar`` időpontja + cooldown utáni első gyertya indexe."""
+    if cooldown_minutes <= 0:
+        nxt = exit_bar_index + 1
+        return nxt if nxt < len(klines) else None
+    if exit_bar_index < 0 or exit_bar_index >= len(klines):
+        return None
+    exit_ms = _to_int_ms(klines[exit_bar_index]["time"])
+    need_ms = exit_ms + cooldown_minutes * 60 * 1000
+    for j in range(exit_bar_index + 1, len(klines)):
+        if _to_int_ms(klines[j]["time"]) >= need_ms:
+            return j
+    return None
+
+
+def _tp_sl_prices_for_side(
+    entry: Decimal,
+    half_med: Decimal,
+    side: Literal["long", "short"],
+) -> tuple[Decimal, Decimal]:
+    if side == "long":
+        tp = entry * (Decimal(1) + half_med / Decimal(100))
+        sl = entry * (Decimal(1) - half_med / Decimal(100))
+    else:
+        tp = entry * (Decimal(1) - half_med / Decimal(100))
+        sl = entry * (Decimal(1) + half_med / Decimal(100))
+    return tp, sl
+
+
+def _compute_current_signal(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal,
+) -> dict[str, Any]:
+    """Teljes eddigi sorozatra: utolsó záró = belépés, medián/2 TP/SL (ha van medián)."""
+    empty: dict[str, Any] = {
+        "enabled": False,
+        "disabled_reason": None,
+        "predicted_side": None,
+        "prediction_reason": None,
+        "entry_price": None,
+        "tp_price": None,
+        "sl_price": None,
+        "median_move_pct_train": None,
+        "tp_move_pct": None,
+        "train_bar_count": 0,
+    }
+    if len(klines) < 5:
+        empty["disabled_reason"] = "too_few_candles"
+        return empty
+    train_clean, train_stats = analyze_clean_legs(
+        klines, choppiness_max=choppiness_max
+    )
+    med = train_stats.get("median_move_pct")
+    if med is None or not isinstance(med, Decimal) or med <= 0:
+        empty["disabled_reason"] = "no_median_clean_legs"
+        return empty
+    half_med = med / Decimal(2)
+    predicted, reason = predict_side_from_train_clean_legs(klines, train_clean)
+    entry = klines[-1]["close"]
+    if entry <= 0:
+        empty["disabled_reason"] = "invalid_price"
+        return empty
+    tp, sl = _tp_sl_prices_for_side(entry, half_med, predicted)
+
+    def _q4(x: Decimal) -> str:
+        return str(x.quantize(Decimal("0.0001")))
+
+    def _price_str(x: Decimal) -> str:
+        return str(x.quantize(Decimal("0.00000001")))
+
+    return {
+        "enabled": True,
+        "disabled_reason": None,
+        "predicted_side": predicted,
+        "prediction_reason": reason,
+        "entry_price": _price_str(entry),
+        "tp_price": _price_str(tp),
+        "sl_price": _price_str(sl),
+        "median_move_pct_train": _q4(med),
+        "tp_move_pct": _q4(half_med),
+        "train_bar_count": len(klines),
+    }
+
+
+def build_walk_forward_sequence(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal,
+    initial_split_fraction: Decimal = Decimal("0.5"),
+    cooldown_minutes: int = 60,
+    min_train: int = 15,
+    margin_bars: int = 5,
+    max_trades: int = 40,
+) -> dict[str, Any]:
+    """Kezdeti 50% train után szekvenciális TP/SL trade-ek cooldownnal; végén ``current_signal``."""
+    current = _compute_current_signal(klines, choppiness_max=choppiness_max)
+    base: dict[str, Any] = {
+        "enabled": False,
+        "disabled_reason": None,
+        "cooldown_minutes": cooldown_minutes,
+        "initial_split_fraction": str(initial_split_fraction),
+        "first_checkpoint_time_ms": None,
+        "trades": [],
+        "summary": None,
+        "current_signal": current,
+    }
+
+    sp = split_klines_at_time_fraction(
+        klines, initial_split_fraction, min_train=min_train, min_test=5
+    )
+    if sp is None:
+        base["disabled_reason"] = "too_few_candles_or_bad_time_span"
+        base["enabled"] = current["enabled"] or False
+        return base
+
+    train0, _test0, split_idx = sp
+    entry_idx = split_idx - 1
+    base["first_checkpoint_time_ms"] = _to_int_ms(klines[entry_idx]["time"])
+
+    trades: list[dict[str, Any]] = []
+    n = len(klines)
+
+    def _q4(x: Decimal) -> str:
+        return str(x.quantize(Decimal("0.0001")))
+
+    def _price_str(x: Decimal) -> str:
+        return str(x.quantize(Decimal("0.00000001")))
+
+    while len(trades) < max_trades:
+        train = klines[: entry_idx + 1]
+        if len(train) < min_train:
+            break
+        train_clean, train_stats = analyze_clean_legs(
+            train, choppiness_max=choppiness_max
+        )
+        med = train_stats.get("median_move_pct")
+        if med is None or not isinstance(med, Decimal) or med <= 0:
+            break
+        half_med = med / Decimal(2)
+        predicted, reason = predict_side_from_train_clean_legs(train, train_clean)
+        entry = train[-1]["close"]
+        if entry <= 0:
+            break
+        forward = klines[entry_idx + 1 :]
+        if not forward:
+            break
+        touch, off, amb = _simulate_symmetric_tp_sl(
+            forward,
+            entry=entry,
+            move_pct=half_med,
+            side=predicted,
+        )
+        if touch in ("tp", "sl") and off is not None:
+            exit_idx = entry_idx + 1 + off
+            exit_local = off
+        else:
+            exit_local = len(forward) - 1
+            exit_idx = entry_idx + 1 + exit_local
+
+        f0 = forward[0]["close"]
+        f1 = forward[exit_local]["close"]
+        actual_side: Literal["long", "short"] = "long" if f1 > f0 else "short"
+        direction_ok = predicted == actual_side
+        tp_price, sl_price = _tp_sl_prices_for_side(entry, half_med, predicted)
+        chart_from = max(0, entry_idx - margin_bars)
+        chart_to = min(n - 1, exit_idx + margin_bars)
+        exit_px = klines[exit_idx]["close"]
+
+        trades.append(
+            {
+                "trade_index": len(trades),
+                "entry_bar_index": entry_idx,
+                "exit_bar_index": exit_idx,
+                "chart_from_index": chart_from,
+                "chart_to_index": chart_to,
+                "entry_time_ms": _to_int_ms(klines[entry_idx]["time"]),
+                "exit_time_ms": _to_int_ms(klines[exit_idx]["time"]),
+                "predicted_side": predicted,
+                "prediction_reason": reason,
+                "first_touch": touch,
+                "entry_price": _price_str(entry),
+                "exit_price": _price_str(exit_px),
+                "tp_price": _price_str(tp_price),
+                "sl_price": _price_str(sl_price),
+                "median_move_pct_train": _q4(med),
+                "tp_move_pct": _q4(half_med),
+                "strategy_would_win": touch == "tp",
+                "same_bar_ambiguous": amb,
+                "direction_guess_correct": direction_ok,
+            }
+        )
+
+        nxt = _next_bar_index_after_cooldown(klines, exit_idx, cooldown_minutes)
+        if nxt is None:
+            break
+        entry_idx = nxt
+
+    tp_w = sum(1 for t in trades if t["first_touch"] == "tp")
+    sl_l = sum(1 for t in trades if t["first_touch"] == "sl")
+    no_r = sum(1 for t in trades if t["first_touch"] == "none")
+    dir_h = sum(1 for t in trades if t["direction_guess_correct"])
+
+    summary: dict[str, Any] | None = None
+    if trades:
+        summary = {
+            "total_trades": len(trades),
+            "tp_wins": tp_w,
+            "sl_losses": sl_l,
+            "no_result": no_r,
+            "direction_hits": dir_h,
+        }
+
+    base["trades"] = trades
+    base["summary"] = summary
+    base["enabled"] = bool(trades) or bool(current.get("enabled"))
+    if not trades and not current.get("enabled"):
+        base["disabled_reason"] = "no_trades_and_no_current_signal"
+    return base
+
+
 _WF_AGGREGATE_FRACTIONS: tuple[Decimal, ...] = (
     Decimal("0.36"),
     Decimal("0.40"),
@@ -556,6 +781,7 @@ def build_coin_analysis_payload(
     kline_limit: int,
     klines_raw: dict[str, Any],
     choppiness_max: Decimal = Decimal("1.72"),
+    walk_forward_cooldown_minutes: int = 60,
 ) -> dict[str, Any]:
     """Teljes API válasz dict összeállítása (Pydantic model_validate-hoz)."""
     klines = parse_klines(klines_raw)
@@ -610,5 +836,10 @@ def build_coin_analysis_payload(
         "all_leg_count": stats["all_leg_count"],
         "walk_forward": build_walk_forward_payload(
             klines, choppiness_max=choppiness_max
+        ),
+        "walk_forward_sequence": build_walk_forward_sequence(
+            klines,
+            choppiness_max=choppiness_max,
+            cooldown_minutes=walk_forward_cooldown_minutes,
         ),
     }

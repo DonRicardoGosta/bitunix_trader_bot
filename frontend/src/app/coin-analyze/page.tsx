@@ -17,7 +17,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select as UiSelect } from "@/components/ui/input";
-import { api, type CleanLegRow, type CoinAnalyzeResult, type MarketSymbolRow } from "@/lib/api";
+import {
+  api,
+  type CandleChartRow,
+  type CleanLegRow,
+  type CoinAnalyzeResult,
+  type MarketSymbolRow,
+  type WalkForwardCurrentSignal,
+  type WalkForwardSequence,
+  type WalkForwardTradeRow,
+} from "@/lib/api";
 
 const WF_REASON_HU: Record<string, string> = {
   clean_legs_up_majority: "Tiszta lábak: több felfelé szakasz",
@@ -43,67 +52,34 @@ type ChartPoint = {
   lo: number;
 };
 
-type WfLinePoint = { t: number; y: number };
-
-function useWalkForwardChartOverlay(result: CoinAnalyzeResult | null) {
+function useMainChartHighlight(result: CoinAnalyzeResult | null) {
   return useMemo(() => {
     const wf = result?.walk_forward;
-    if (!wf?.enabled) return null;
-    if (
-      wf.checkpoint_time_ms == null ||
-      wf.test_start_time_ms == null ||
-      wf.test_end_time_ms == null ||
-      wf.train_start_time_ms == null ||
-      wf.train_end_time_ms == null ||
-      wf.entry_price == null ||
-      wf.tp_price == null ||
-      wf.sl_price == null ||
-      wf.test_start_close == null ||
-      wf.test_end_close == null
-    ) {
-      return null;
-    }
-    const cp = wf.checkpoint_time_ms;
-    const ts = wf.test_start_time_ms;
-    const te = wf.test_end_time_ms;
-    const entry = Number(wf.entry_price);
-    const tp = Number(wf.tp_price);
-    const sl = Number(wf.sl_price);
-    const tsc = Number(wf.test_start_close);
-    const tec = Number(wf.test_end_close);
+    if (!wf?.enabled || wf.train_start_time_ms == null || wf.train_end_time_ms == null) return null;
+    if (wf.test_start_time_ms == null || wf.test_end_time_ms == null) return null;
     return {
       trainStart: wf.train_start_time_ms,
       trainEnd: wf.train_end_time_ms,
-      testStart: ts,
-      testEnd: te,
-      entryLine: [
-        { t: cp, y: entry },
-        { t: te, y: entry },
-      ] satisfies WfLinePoint[],
-      tpLine: [
-        { t: ts, y: tp },
-        { t: te, y: tp },
-      ] satisfies WfLinePoint[],
-      slLine: [
-        { t: ts, y: sl },
-        { t: te, y: sl },
-      ] satisfies WfLinePoint[],
-      actualLine: [
-        { t: ts, y: tsc },
-        { t: te, y: tec },
-      ] satisfies WfLinePoint[],
-      aimLine: [
-        { t: cp, y: entry },
-        { t: te, y: tp },
-      ] satisfies WfLinePoint[],
+      testStart: wf.test_start_time_ms,
+      testEnd: wf.test_end_time_ms,
     };
   }, [result]);
+}
+
+function candlesToChartPoints(candles: CandleChartRow[]): ChartPoint[] {
+  return candles.map((k) => ({
+    t: k.time_ms,
+    c: Number(k.close),
+    hi: Number(k.high),
+    lo: Number(k.low),
+  }));
 }
 
 export default function CoinAnalyzePage() {
   const [symbols, setSymbols] = useState<MarketSymbolRow[] | null>(null);
   const [symbol, setSymbol] = useState("");
   const [lookbackMin, setLookbackMin] = useState(1440);
+  const [wfCooldownMin, setWfCooldownMin] = useState(60);
   const [result, setResult] = useState<CoinAnalyzeResult | null>(null);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingRun, setLoadingRun] = useState(false);
@@ -137,7 +113,7 @@ export default function CoinAnalyzePage() {
     return row?.max_leverage ?? null;
   }, [symbols, symbol]);
 
-  const wfOv = useWalkForwardChartOverlay(result);
+  const chartHl = useMainChartHighlight(result);
 
   const chartData: ChartPoint[] = useMemo(() => {
     if (!result?.candles.length) return [];
@@ -157,6 +133,7 @@ export default function CoinAnalyzePage() {
       const res = await api.coinAnalyze({
         symbol: symbol.trim().toUpperCase(),
         lookback_minutes: lookbackMin,
+        walk_forward_cooldown_minutes: wfCooldownMin,
       });
       setResult(res);
     } catch (e) {
@@ -165,7 +142,7 @@ export default function CoinAnalyzePage() {
     } finally {
       setLoadingRun(false);
     }
-  }, [symbol, lookbackMin]);
+  }, [symbol, lookbackMin, wfCooldownMin]);
 
   return (
     <div className="space-y-6">
@@ -173,16 +150,13 @@ export default function CoinAnalyzePage() {
         <CardHeader>
           <CardTitle>Coin elemzés</CardTitle>
           <p className="text-sm text-muted">
-            A teljes lookbackon swing / tiszta láb elemzés látszik. A charton külön jelöljük:{" "}
-            <span className="font-medium text-foreground">kék zóna</span> = train (első fél időben,
-            ebből medián + irány), <span className="font-medium text-foreground">borostyán</span> =
-            teszt (második fél). A sárga függőleges a checkpoint; a teszt szakaszon{" "}
-            <span className="font-medium text-foreground">sárga vízszintes</span> belépés,{" "}
-            <span className="font-medium text-emerald-300">zöld</span> TP,{" "}
-            <span className="font-medium text-rose-300">piros</span> SL.{" "}
-            <span className="font-medium text-orange-300">Narancs</span> = tényleges záró út a
-            teszten; <span className="font-medium text-violet-300">lila</span> = a fogadás felé
-            mutató cél (checkpoint → TP szint a teszt végén).
+            A fő charton a teljes lookback záróvonala és a tiszta swing lábak látszanak; a kék /
+            borostyán sáv az első 50% train vs. második 50% teszt idő (checkpoint: első fél vége). A
+            szekvenciális virtuális trade-ek (TP/SL, cooldown után újra){" "}
+            <span className="font-medium text-foreground">külön kis chartokon</span> jelennek meg
+            lent. A lista végén:{" "}
+            <span className="font-medium text-foreground">jelenlegi predikció</span> az utolsó záró
+            alapján.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -206,6 +180,17 @@ export default function CoinAnalyzePage() {
               ) : (
                 <p className="text-sm text-rose-400">Nincs elérhető szimbólumlista.</p>
               )}
+            </div>
+            <div>
+              <label className="block text-xs text-muted mb-1">Trade cooldown (perc)</label>
+              <input
+                type="number"
+                min={0}
+                max={10080}
+                className="rounded-md border border-border bg-bg-card px-3 py-2 text-sm w-[7rem]"
+                value={wfCooldownMin}
+                onChange={(e) => setWfCooldownMin(Number(e.target.value) || 0)}
+              />
             </div>
             <div>
               <label className="block text-xs text-muted mb-1">Lookback</label>
@@ -258,21 +243,18 @@ export default function CoinAnalyzePage() {
                 <Stat label="Átlag mozgás" value={result.mean_move_pct} suffix="%" />
                 <Stat label="Max. leverage" value={String(result.max_leverage)} suffix="×" />
               </div>
-              {wfOv ? (
+              {chartHl ? (
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted mb-2 border border-border/40 rounded-md px-2 py-1.5 bg-bg-subtle/80">
                   <span>
                     <span className="inline-block w-2.5 h-2.5 rounded-sm bg-sky-500/40 mr-1 align-middle" />
-                    Train zóna
+                    Train (első 50% idő)
                   </span>
                   <span>
                     <span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-500/35 mr-1 align-middle" />
-                    Teszt zóna
+                    Teszt (második 50%)
                   </span>
-                  <span className="text-amber-200">━</span> Belépés
-                  <span className="text-emerald-400">━</span> TP
-                  <span className="text-rose-400">━</span> SL
-                  <span className="text-orange-400">━</span> Tényleges záró
-                  <span className="text-violet-300">┅</span> Cél (TP irány)
+                  <span className="text-amber-200">│</span> sárga: checkpoint + trade belépések
+                  <span className="text-sky-300">━</span> kék: záró
                 </div>
               ) : null}
               <div className="h-[420px] w-full">
@@ -307,19 +289,19 @@ export default function CoinAnalyzePage() {
                       formatter={(value: number) => [value.toLocaleString("hu-HU", { maximumFractionDigits: 8 }), "Záró"]}
                     />
                     <Legend />
-                    {wfOv ? (
+                    {chartHl ? (
                       <>
                         <ReferenceArea
-                          x1={wfOv.trainStart}
-                          x2={wfOv.trainEnd}
-                          fill="rgba(59,130,246,0.10)"
+                          x1={chartHl.trainStart}
+                          x2={chartHl.trainEnd}
+                          fill="rgba(59,130,246,0.08)"
                           stroke="none"
                           ifOverflow="visible"
                         />
                         <ReferenceArea
-                          x1={wfOv.testStart}
-                          x2={wfOv.testEnd}
-                          fill="rgba(245,158,11,0.09)"
+                          x1={chartHl.testStart}
+                          x2={chartHl.testEnd}
+                          fill="rgba(245,158,11,0.07)"
                           stroke="none"
                           ifOverflow="visible"
                         />
@@ -330,7 +312,7 @@ export default function CoinAnalyzePage() {
                         key={`${leg.start_time_ms}-${leg.end_time_ms}-${i}`}
                         x1={leg.start_time_ms}
                         x2={leg.end_time_ms}
-                        fill={leg.direction === "up" ? "rgba(34,197,94,0.14)" : "rgba(248,113,113,0.14)"}
+                        fill={leg.direction === "up" ? "rgba(34,197,94,0.12)" : "rgba(248,113,113,0.12)"}
                         stroke="none"
                         ifOverflow="visible"
                       />
@@ -345,64 +327,15 @@ export default function CoinAnalyzePage() {
                         label={{ value: "Checkpoint", fill: "#fbbf24", fontSize: 10 }}
                       />
                     ) : null}
-                    {wfOv ? (
-                      <>
-                        <Line
-                          name="Belépés (teszt)"
-                          data={wfOv.entryLine}
-                          dataKey="y"
-                          type="linear"
-                          stroke="#facc15"
-                          strokeWidth={1.5}
-                          strokeDasharray="6 4"
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                        <Line
-                          name="TP szint"
-                          data={wfOv.tpLine}
-                          dataKey="y"
-                          type="linear"
-                          stroke="#4ade80"
-                          strokeWidth={1.5}
-                          strokeDasharray="5 4"
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                        <Line
-                          name="SL szint"
-                          data={wfOv.slLine}
-                          dataKey="y"
-                          type="linear"
-                          stroke="#fb7185"
-                          strokeWidth={1.5}
-                          strokeDasharray="5 4"
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                        <Line
-                          name="Tényleges záró (teszt)"
-                          data={wfOv.actualLine}
-                          dataKey="y"
-                          type="linear"
-                          stroke="#fb923c"
-                          strokeWidth={2.2}
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                        <Line
-                          name="Fogadás → TP cél"
-                          data={wfOv.aimLine}
-                          dataKey="y"
-                          type="linear"
-                          stroke="#c4b5fd"
-                          strokeWidth={2}
-                          strokeDasharray="3 5"
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                      </>
-                    ) : null}
+                    {result.walk_forward_sequence.trades.map((tr) => (
+                      <ReferenceLine
+                        key={`ent-${tr.trade_index}-${tr.entry_time_ms}`}
+                        x={tr.entry_time_ms}
+                        stroke="#fde68a"
+                        strokeWidth={1}
+                        strokeDasharray="2 3"
+                      />
+                    ))}
                     <Line
                       name="Záró"
                       type="monotone"
@@ -416,12 +349,12 @@ export default function CoinAnalyzePage() {
                 </ResponsiveContainer>
               </div>
               <p className="text-xs text-muted mt-2">
-                A halvány zöld/piros sávok a teljes ablak „tiszta” swing lábai (choppiness szűrés). A
-                kék és borostyán háttér a walk-forward train / teszt időszaka. A narancs vonal a teszt
-                első és utolsó zárója között mutatja, merre ment a piac; a lila a checkpointtól a TP
-                szint felé mutató egyenes (merre fogadtunk). A sárga függőleges a checkpoint (train
-                utolsó gyertya).
+                Halvány zöld/piros: tiszta swing lábak. Kék/borostyán: train vs teszt (50% idő). A
+                vékony sárga függőlegesek a szekvenciális trade belépések; TP/SL részletek a lenti
+                kis chartokon.
               </p>
+              <WalkForwardSequencePanel candles={result.candles} seq={result.walk_forward_sequence} />
+              <CurrentSignalPanel sig={result.walk_forward_sequence.current_signal} />
               <WalkForwardCard wf={result.walk_forward} />
             </CardContent>
           </Card>
@@ -463,6 +396,155 @@ export default function CoinAnalyzePage() {
           ) : null}
         </>
       ) : null}
+    </div>
+  );
+}
+
+function TradeMiniChart({ candles, trade }: { candles: CandleChartRow[]; trade: WalkForwardTradeRow }) {
+  const pts = useMemo(
+    () => candlesToChartPoints(candles.slice(trade.chart_from_index, trade.chart_to_index + 1)),
+    [candles, trade],
+  );
+  if (pts.length < 2) return null;
+  const entry = Number(trade.entry_price);
+  const tp = Number(trade.tp_price);
+  const sl = Number(trade.sl_price);
+  const entLine = [
+    { t: trade.entry_time_ms, y: entry },
+    { t: trade.exit_time_ms, y: entry },
+  ];
+  const tpLine = [
+    { t: trade.entry_time_ms, y: tp },
+    { t: trade.exit_time_ms, y: tp },
+  ];
+  const slLine = [
+    { t: trade.entry_time_ms, y: sl },
+    { t: trade.exit_time_ms, y: sl },
+  ];
+  const touchLabel =
+    trade.first_touch === "tp" ? "TP" : trade.first_touch === "sl" ? "SL" : "nincs találat";
+  return (
+    <div className="rounded-lg border border-border/60 bg-bg-subtle/50 p-2">
+      <div className="text-xs font-medium mb-1 flex flex-wrap justify-between gap-1">
+        <span>#{trade.trade_index + 1}</span>
+        <span className="text-muted font-normal">
+          {trade.predicted_side === "long" ? "Long" : "Short"} → {touchLabel}
+          {trade.strategy_would_win ? (
+            <span className="text-emerald-400 ml-1">nyert</span>
+          ) : trade.first_touch === "sl" ? (
+            <span className="text-rose-400 ml-1">SL</span>
+          ) : null}
+        </span>
+      </div>
+      <div className="h-[200px] w-full min-w-0">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={pts} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.35} />
+            <XAxis
+              dataKey="t"
+              type="number"
+              domain={["dataMin", "dataMax"]}
+              tick={{ fontSize: 9 }}
+              tickFormatter={(v) =>
+                new Date(Number(v)).toLocaleTimeString("hu-HU", { hour: "2-digit", minute: "2-digit" })
+              }
+              stroke="#64748b"
+            />
+            <YAxis
+              domain={["auto", "auto"]}
+              orientation="right"
+              width={56}
+              tick={{ fontSize: 9 }}
+              stroke="#64748b"
+              tickFormatter={(v) => Number(v).toLocaleString("hu-HU", { maximumFractionDigits: 6 })}
+            />
+            <Tooltip
+              labelFormatter={(v) => new Date(Number(v)).toLocaleString("hu-HU")}
+              formatter={(v: number) => [v.toLocaleString("hu-HU", { maximumFractionDigits: 8 }), ""]}
+            />
+            <ReferenceLine x={trade.entry_time_ms} stroke="#fbbf24" strokeDasharray="3 3" />
+            <Line data={tpLine} dataKey="y" type="linear" stroke="#4ade80" strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+            <Line data={slLine} dataKey="y" type="linear" stroke="#fb7185" strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+            <Line data={entLine} dataKey="y" type="linear" stroke="#facc15" strokeDasharray="5 3" dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="c" stroke="#38bdf8" strokeWidth={1.2} dot={false} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function WalkForwardSequencePanel({
+  candles,
+  seq,
+}: {
+  candles: CandleChartRow[];
+  seq: WalkForwardSequence;
+}) {
+  if (!seq.trades.length) {
+    return (
+      <div className="rounded-lg border border-border/50 bg-bg-subtle/40 px-3 py-3 mt-4 text-sm text-muted">
+        {seq.disabled_reason === "too_few_candles_or_bad_time_span"
+          ? "Szekvenciális trade-ek: túl kevés adat a 50% kezdeti vágáshoz."
+          : "Nem futott szekvenciális trade (nincs medián a bővülő train ablakokban)."}
+      </div>
+    );
+  }
+  const s = seq.summary;
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="text-sm font-medium">Szekvenciális virtuális trade-ek</div>
+      <p className="text-xs text-muted">
+        Kezdeti 50% train után: belépés → TP/SL szimuláció → {seq.cooldown_minutes} perc szünet → új
+        train (eddigi összes gyertya a belépésig) → következő trade. Minden trade külön ábrán.
+      </p>
+      {s ? (
+        <div className="flex flex-wrap gap-3 text-xs">
+          <span>
+            Trade-ek: <strong className="text-foreground">{s.total_trades}</strong>
+          </span>
+          <span className="text-emerald-400">TP: {s.tp_wins}</span>
+          <span className="text-rose-400">SL: {s.sl_losses}</span>
+          <span className="text-muted">nincs TP/SL: {s.no_result}</span>
+          <span>
+            Irány a trade alatt: <strong className="text-foreground">{s.direction_hits}</strong> /{" "}
+            {s.total_trades}
+          </span>
+        </div>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {seq.trades.map((tr) => (
+          <TradeMiniChart key={tr.trade_index} candles={candles} trade={tr} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CurrentSignalPanel({ sig }: { sig: WalkForwardCurrentSignal }) {
+  return (
+    <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-3 mt-4">
+      <div className="text-sm font-medium text-emerald-100/90">Jelenlegi predikció (utolsó záró)</div>
+      {!sig.enabled ? (
+        <p className="text-xs text-muted mt-1">{sig.disabled_reason ?? "Nem számolható."}</p>
+      ) : (
+        <div className="mt-2 text-sm space-y-1">
+          <p>
+            Irány:{" "}
+            <span className="font-mono font-semibold">
+              {sig.predicted_side === "long" ? "Long (BUY)" : "Short (SELL)"}
+            </span>
+          </p>
+          <p className="text-xs text-muted">
+            {(sig.prediction_reason && WF_REASON_HU[sig.prediction_reason]) ?? sig.prediction_reason}
+          </p>
+          <p className="text-xs font-mono">
+            Belépés: {sig.entry_price} · TP: {sig.tp_price} · SL: {sig.sl_price} · train medián:{" "}
+            {sig.median_move_pct_train}% · TP/SL távolság: {sig.tp_move_pct}% · train gyertyák:{" "}
+            {sig.train_bar_count}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -548,9 +630,9 @@ function WalkForwardCard({ wf }: { wf: CoinAnalyzeResult["walk_forward"] }) {
       <div>
         <div className="text-sm font-medium">Walk-forward — fő forgatókönyv (50% idő: train → teszt)</div>
         <p className="text-xs text-muted mt-1">
-          A charton a kék / borostyán sáv a train vs teszt; a narancs vonal a teszt első és utolsó
-          zárója (merre ment a piac); a lila a checkpointtól a TP szintig (merre fogadtunk). A sárga
-          vízszintes a belépési ár a teszt szakaszon, zöld/piros a TP/SL szintek.
+          Az első 50% idő train ablaka vs. második 50% egy-trade összehasonlítás (régi „fő”
+          forgatókönyv). A szekvenciális több trade részletei és TP/SL vonalak a fenti kis chartokon
+          vannak; itt az aggregált több vágás statisztika.
         </p>
       </div>
       <p className="text-xs text-muted">

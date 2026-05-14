@@ -8,6 +8,7 @@ from app.services import coin_analyze as coin_analyze_mod
 from app.services.coin_analyze import (
     analyze_clean_legs,
     build_walk_forward_payload,
+    build_walk_forward_sequence,
     leg_choppiness,
     merge_same_side_swings,
     plan_kline_interval,
@@ -120,6 +121,13 @@ def test_split_half_matches_time_midpoint() -> None:
     assert len(a[0]) == len(b[0]) and len(a[1]) == len(b[1])
 
 
+def test_build_walk_forward_sequence_returns_current_signal() -> None:
+    klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(50)]
+    seq = build_walk_forward_sequence(klines, choppiness_max=Decimal("1.72"), cooldown_minutes=0)
+    assert "current_signal" in seq
+    assert isinstance(seq["trades"], list)
+
+
 def test_run_walk_forward_includes_tp_sl_prices() -> None:
     klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(50)]
     wf = build_walk_forward_payload(klines)
@@ -128,6 +136,9 @@ def test_run_walk_forward_includes_tp_sl_prices() -> None:
         assert wf.get("tp_price") is not None
         assert wf.get("sl_price") is not None
         assert wf.get("train_start_time_ms") is not None
+
+
+def test_build_walk_forward_payload_has_shape() -> None:
     klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(40)]
     wf = build_walk_forward_payload(klines)
     assert isinstance(wf["enabled"], bool)

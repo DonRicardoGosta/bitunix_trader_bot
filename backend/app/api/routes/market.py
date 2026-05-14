@@ -131,6 +131,7 @@ async def coin_analyze(
         interval=interval,
         kline_limit=limit,
         klines_raw=raw_klines,
+        walk_forward_cooldown_minutes=body.walk_forward_cooldown_minutes,
     )
     if not payload["candles"]:
         raise HTTPException(

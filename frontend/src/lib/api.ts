@@ -280,6 +280,60 @@ export interface CleanLegRow {
   end_price: string;
 }
 
+export interface WalkForwardTradeRow {
+  trade_index: number;
+  entry_bar_index: number;
+  exit_bar_index: number;
+  chart_from_index: number;
+  chart_to_index: number;
+  entry_time_ms: number;
+  exit_time_ms: number;
+  predicted_side: "long" | "short";
+  prediction_reason: string;
+  first_touch: "tp" | "sl" | "none";
+  entry_price: string;
+  exit_price: string;
+  tp_price: string;
+  sl_price: string;
+  median_move_pct_train: string;
+  tp_move_pct: string;
+  strategy_would_win: boolean;
+  same_bar_ambiguous: boolean;
+  direction_guess_correct: boolean;
+}
+
+export interface WalkForwardSequenceSummary {
+  total_trades: number;
+  tp_wins: number;
+  sl_losses: number;
+  no_result: number;
+  direction_hits: number;
+}
+
+export interface WalkForwardCurrentSignal {
+  enabled: boolean;
+  disabled_reason: string | null;
+  predicted_side: "long" | "short" | null;
+  prediction_reason: string | null;
+  entry_price: string | null;
+  tp_price: string | null;
+  sl_price: string | null;
+  median_move_pct_train: string | null;
+  tp_move_pct: string | null;
+  train_bar_count: number;
+}
+
+export interface WalkForwardSequence {
+  enabled: boolean;
+  disabled_reason: string | null;
+  cooldown_minutes: number;
+  initial_split_fraction: string;
+  first_checkpoint_time_ms: number | null;
+  trades: WalkForwardTradeRow[];
+  summary: WalkForwardSequenceSummary | null;
+  current_signal: WalkForwardCurrentSignal;
+}
+
 export interface WalkForwardAggregate {
   total_runs: number;
   tp_first_count: number;
@@ -335,6 +389,7 @@ export interface CoinAnalyzeResult {
   clean_leg_count: number;
   all_leg_count: number;
   walk_forward: WalkForwardBacktest;
+  walk_forward_sequence: WalkForwardSequence;
 }
 
 export const api = {
@@ -342,7 +397,11 @@ export const api = {
   ticker: (symbol: string) =>
     request<TickerInfo>(`/api/market/ticker/${encodeURIComponent(symbol)}`),
   marketSymbols: () => request<MarketSymbolRow[]>("/api/market/symbols"),
-  coinAnalyze: (body: { symbol: string; lookback_minutes: number }) =>
+  coinAnalyze: (body: {
+    symbol: string;
+    lookback_minutes: number;
+    walk_forward_cooldown_minutes?: number;
+  }) =>
     request<CoinAnalyzeResult>("/api/market/coin-analyze", {
       method: "POST",
       body: JSON.stringify(body),
