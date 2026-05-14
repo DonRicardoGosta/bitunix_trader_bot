@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.services.strategy.base import Strategy
 from app.services.strategy.top_movers import TopMoversStrategy
+from app.services.strategy.top_signal_entries import TopSignalEntriesStrategy
 
 
 class StrategyNotFoundError(LookupError):
@@ -12,6 +13,7 @@ class StrategyNotFoundError(LookupError):
 
 STRATEGIES: dict[str, type[Strategy]] = {
     TopMoversStrategy.name: TopMoversStrategy,
+    TopSignalEntriesStrategy.name: TopSignalEntriesStrategy,
 }
 
 

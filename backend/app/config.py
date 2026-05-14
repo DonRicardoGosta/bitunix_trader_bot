@@ -57,6 +57,17 @@ class Settings(BaseSettings):
         "trend", "momentum_breakout", "mean_revert"
     ] = "momentum_breakout"
     strategy_top_movers_range_threshold: str = "0.66"
+    # Top signal entries: top abs 24h movers + kline megerősítés (long/short).
+    strategy_top_signal_entries_enabled: bool = False
+    strategy_top_signal_entries_count: int = 2
+    strategy_top_signal_entries_scan_limit: int = 200
+    strategy_top_signal_entries_kline_lookahead: int = 40
+    strategy_top_signal_entries_kline_interval: str = "15m"
+    strategy_top_signal_entries_kline_limit: int = 80
+    strategy_top_signal_entries_cooldown_minutes: int = 240
+    strategy_top_signal_entries_min_abs_change_pct: str = "1.0"
+    strategy_top_signal_entries_range_threshold: str = "0.60"
+    strategy_top_signal_entries_max_kline_concurrency: int = 10
     strategy_min_margin_usdt: str = "0.25"
     strategy_margin_pct_of_balance: str = "0.01"
 
