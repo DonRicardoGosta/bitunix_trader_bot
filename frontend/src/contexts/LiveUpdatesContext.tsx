@@ -64,23 +64,27 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
+    /** Strict Mode: első mount cleanup lefut, mielőtt a WS megnyílna — a régi handler ne állítson state-et. */
+    let active = true;
     stoppedRef.current = false;
 
     const scheduleReconnect = (fn: () => void, delayMs: number) =>
       window.setTimeout(fn, delayMs);
 
     const connect = () => {
-      if (stoppedRef.current) return;
+      if (!active || stoppedRef.current) return;
       const url = liveStreamWebSocketUrl();
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (!active || wsRef.current !== ws) return;
         reconnectAttempt.current = 0;
         setPushConnected(true);
       };
 
       ws.onmessage = (ev) => {
+        if (!active || wsRef.current !== ws) return;
         try {
           const raw = typeof ev.data === "string" ? ev.data : "";
           const msg = JSON.parse(raw) as { type?: string; topics?: unknown };
@@ -92,12 +96,14 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
       };
 
       ws.onerror = () => {
+        if (!active || wsRef.current !== ws) return;
         setPushConnected(false);
       };
 
       ws.onclose = () => {
+        if (wsRef.current === ws) wsRef.current = null;
+        if (!active) return;
         setPushConnected(false);
-        wsRef.current = null;
         if (stoppedRef.current) return;
         const n = reconnectAttempt.current;
         reconnectAttempt.current = n + 1;
@@ -109,6 +115,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     connect();
 
     return () => {
+      active = false;
       stoppedRef.current = true;
       wsRef.current?.close();
       wsRef.current = null;
