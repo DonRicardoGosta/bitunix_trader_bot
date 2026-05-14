@@ -53,6 +53,20 @@ class CleanLegRow(BaseModel):
     end_price: str
 
 
+class WalkForwardAggregate(BaseModel):
+    """Több időbeli vágási arány (≠ 0.5) ugyanazzal a szabálycsomaggal — összesítés."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_runs: int = Field(ge=0)
+    tp_first_count: int = Field(ge=0)
+    sl_first_count: int = Field(ge=0)
+    no_touch_count: int = Field(ge=0)
+    direction_correct_count: int = Field(ge=0)
+    strategy_win_rate_pct: str | None = None
+    direction_hit_rate_pct: str | None = None
+
+
 class WalkForwardBacktest(BaseModel):
     """Félidős train → irány + medián/2 szimmetrikus TP/SL a hátsó fél gyertyáin."""
 
@@ -60,13 +74,22 @@ class WalkForwardBacktest(BaseModel):
 
     enabled: bool
     disabled_reason: str | None = None
+    time_split_fraction: str | None = None
+    train_start_time_ms: int | None = None
+    train_end_time_ms: int | None = None
     checkpoint_time_ms: int | None = None
+    test_start_time_ms: int | None = None
+    test_end_time_ms: int | None = None
     train_bar_count: int = 0
     test_bar_count: int = 0
     median_move_pct_train: str | None = None
     tp_move_pct: str | None = None
     sl_move_pct: str | None = None
     entry_price: str | None = None
+    tp_price: str | None = None
+    sl_price: str | None = None
+    test_start_close: str | None = None
+    test_end_close: str | None = None
     predicted_side: Literal["long", "short"] | None = None
     prediction_reason: str | None = None
     test_net_move_pct: str | None = None
@@ -76,6 +99,7 @@ class WalkForwardBacktest(BaseModel):
     first_touch_time_ms: int | None = None
     same_bar_ambiguous: bool | None = None
     strategy_would_win: bool | None = None
+    aggregate: WalkForwardAggregate | None = None
 
 
 class CoinAnalyzeResponse(BaseModel):

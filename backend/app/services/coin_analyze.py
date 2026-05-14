@@ -207,20 +207,22 @@ def analyze_clean_legs(
     return clean, stats
 
 
-def split_klines_time_midpoint(
+def split_klines_at_time_fraction(
     klines: list[dict[str, Decimal]],
+    fraction: Decimal,
     *,
     min_train: int = 15,
     min_test: int = 5,
 ) -> tuple[list[dict[str, Decimal]], list[dict[str, Decimal]], int] | None:
-    """Időintervallum közepénél kettévágja a sorozatot (első / második fele).
+    """Időtengely mentén ``fraction`` aránynál vág (train előtte, teszt utána).
 
-    A ``min_train`` / ``min_test`` a legkisebb gyertya darabszám a walk-forward
-    hátsó teszt részéhez (fraktál + TP/SL szimuláció miatt).
+    ``fraction`` ∈ (0, 1): a teljes időintervallum ``t0 + span * fraction``
+    pillanatában kezdődik a teszt (első gyertya, amelyik időben eléri vagy
+    meghaladja ezt a határt).
 
     Returns:
-        ``(train, test, split_index)`` ahol ``test = klines[split_index:]`` és
-        ``train = klines[:split_index]``. ``None``, ha nem osztható értelmesen.
+        ``(train, test, split_index)`` ahol ``test = klines[split_index:]``.
+        ``None``, ha nem osztható értelmesen.
     """
     n = len(klines)
     if n < min_train + min_test:
@@ -230,7 +232,8 @@ def split_klines_time_midpoint(
     span = t1 - t0
     if span <= 0:
         return None
-    mid_t = t0 + span / Decimal(2)
+    frac = max(Decimal("0.01"), min(fraction, Decimal("0.99")))
+    mid_t = t0 + span * frac
     split_at = n
     for i, row in enumerate(klines):
         if row["time"] >= mid_t:
@@ -240,6 +243,18 @@ def split_klines_time_midpoint(
     if split_at < min_train or n - split_at < min_test:
         return None
     return klines[:split_at], klines[split_at:], split_at
+
+
+def split_klines_time_midpoint(
+    klines: list[dict[str, Decimal]],
+    *,
+    min_train: int = 15,
+    min_test: int = 5,
+) -> tuple[list[dict[str, Decimal]], list[dict[str, Decimal]], int] | None:
+    """Időintervallum közepénél kettévágja (``fraction = 0.5``)."""
+    return split_klines_at_time_fraction(
+        klines, Decimal("0.5"), min_train=min_train, min_test=min_test
+    )
 
 
 def predict_side_from_train_clean_legs(
@@ -320,64 +335,50 @@ def _simulate_symmetric_tp_sl(
     return "none", None, False
 
 
-def build_walk_forward_payload(
-    klines: list[dict[str, Decimal]],
+_WF_AGGREGATE_FRACTIONS: tuple[Decimal, ...] = (
+    Decimal("0.36"),
+    Decimal("0.40"),
+    Decimal("0.44"),
+    Decimal("0.48"),
+    Decimal("0.52"),
+    Decimal("0.56"),
+    Decimal("0.60"),
+)
+
+
+def run_walk_forward_simulation(
+    train: list[dict[str, Decimal]],
+    test: list[dict[str, Decimal]],
     *,
-    choppiness_max: Decimal = Decimal("1.72"),
-) -> dict[str, Any]:
-    """Walk-forward: train = első fél időben, irány + medián/2 TP/SL a teszten.
-
-    A teljes ablak továbbra is külön elemzésre kerül a fő ``clean_legs`` mezőben;
-    ez a blokk csak a **félidős** out-of-sample ellenőrzést írja le.
-    """
-    base: dict[str, Any] = {
-        "enabled": False,
-        "disabled_reason": None,
-        "checkpoint_time_ms": None,
-        "train_bar_count": 0,
-        "test_bar_count": 0,
-        "median_move_pct_train": None,
-        "tp_move_pct": None,
-        "sl_move_pct": None,
-        "entry_price": None,
-        "predicted_side": None,
-        "prediction_reason": None,
-        "test_net_move_pct": None,
-        "actual_test_side": None,
-        "direction_guess_correct": None,
-        "first_touch": None,
-        "first_touch_time_ms": None,
-        "same_bar_ambiguous": None,
-        "strategy_would_win": None,
-    }
-    split = split_klines_time_midpoint(klines)
-    if split is None:
-        base["disabled_reason"] = "too_few_candles_or_bad_time_span"
-        return base
-    train, test, _ = split
-    base["train_bar_count"] = len(train)
-    base["test_bar_count"] = len(test)
-    base["checkpoint_time_ms"] = _to_int_ms(train[-1]["time"])
-
+    choppiness_max: Decimal,
+    time_split_fraction: Decimal,
+) -> dict[str, Any] | None:
+    """Egy train/test párra walk-forward eredmény, vagy ``None`` ha nincs train medián."""
     train_clean, train_stats = analyze_clean_legs(
         train, choppiness_max=choppiness_max
     )
     med = train_stats.get("median_move_pct")
     if med is None or not isinstance(med, Decimal) or med <= 0:
-        base["disabled_reason"] = "no_median_clean_legs_in_train"
-        return base
+        return None
 
     half_med = med / Decimal(2)
     predicted, reason = predict_side_from_train_clean_legs(train, train_clean)
     entry = train[-1]["close"]
 
-    t0 = test[0]["close"]
-    t1 = test[-1]["close"]
-    if t0 <= 0:
-        base["disabled_reason"] = "invalid_test_prices"
-        return base
-    test_net = (t1 - t0) / t0 * Decimal(100)
-    actual_side: Literal["long", "short"] = "long" if t1 > t0 else "short"
+    t_open = test[0]["close"]
+    t_close = test[-1]["close"]
+    if t_open <= 0:
+        return None
+
+    if predicted == "long":
+        tp_price = entry * (Decimal(1) + half_med / Decimal(100))
+        sl_price = entry * (Decimal(1) - half_med / Decimal(100))
+    else:
+        tp_price = entry * (Decimal(1) - half_med / Decimal(100))
+        sl_price = entry * (Decimal(1) + half_med / Decimal(100))
+
+    test_net = (t_close - t_open) / t_open * Decimal(100)
+    actual_side: Literal["long", "short"] = "long" if t_close > t_open else "short"
     direction_ok = predicted == actual_side
 
     touch, bar_off, ambiguous = _simulate_symmetric_tp_sl(
@@ -393,24 +394,156 @@ def build_walk_forward_payload(
     def _q4(x: Decimal) -> str:
         return str(x.quantize(Decimal("0.0001")))
 
-    base.update(
-        {
-            "enabled": True,
-            "median_move_pct_train": _q4(med),
-            "tp_move_pct": _q4(half_med),
-            "sl_move_pct": _q4(half_med),
-            "entry_price": str(entry),
-            "predicted_side": predicted,
-            "prediction_reason": reason,
-            "test_net_move_pct": _q4(test_net),
-            "actual_test_side": actual_side,
-            "direction_guess_correct": direction_ok,
-            "first_touch": touch,
-            "first_touch_time_ms": ft_ms,
-            "same_bar_ambiguous": ambiguous,
-            "strategy_would_win": touch == "tp",
-        }
+    def _price_str(x: Decimal) -> str:
+        return str(x.quantize(Decimal("0.00000001")))
+
+    return {
+        "enabled": True,
+        "disabled_reason": None,
+        "time_split_fraction": str(time_split_fraction),
+        "train_start_time_ms": _to_int_ms(train[0]["time"]),
+        "train_end_time_ms": _to_int_ms(train[-1]["time"]),
+        "checkpoint_time_ms": _to_int_ms(train[-1]["time"]),
+        "test_start_time_ms": _to_int_ms(test[0]["time"]),
+        "test_end_time_ms": _to_int_ms(test[-1]["time"]),
+        "train_bar_count": len(train),
+        "test_bar_count": len(test),
+        "median_move_pct_train": _q4(med),
+        "tp_move_pct": _q4(half_med),
+        "sl_move_pct": _q4(half_med),
+        "entry_price": _price_str(entry),
+        "tp_price": _price_str(tp_price),
+        "sl_price": _price_str(sl_price),
+        "test_start_close": _price_str(t_open),
+        "test_end_close": _price_str(t_close),
+        "predicted_side": predicted,
+        "prediction_reason": reason,
+        "test_net_move_pct": _q4(test_net),
+        "actual_test_side": actual_side,
+        "direction_guess_correct": direction_ok,
+        "first_touch": touch,
+        "first_touch_time_ms": ft_ms,
+        "same_bar_ambiguous": ambiguous,
+        "strategy_would_win": touch == "tp",
+    }
+
+
+def _build_walk_forward_aggregate(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal,
+) -> dict[str, Any] | None:
+    """Több időbeli vágási aránynál ugyanaz a szabály — összesített találati arány."""
+    tp_c = sl_c = none_c = dir_c = 0
+    total = 0
+    for frac in _WF_AGGREGATE_FRACTIONS:
+        if frac == Decimal("0.5"):
+            continue
+        sp = split_klines_at_time_fraction(klines, frac)
+        if sp is None:
+            continue
+        tr, te, _ = sp
+        one = run_walk_forward_simulation(
+            tr, te, choppiness_max=choppiness_max, time_split_fraction=frac
+        )
+        if one is None:
+            continue
+        total += 1
+        if one["direction_guess_correct"]:
+            dir_c += 1
+        ft = one["first_touch"]
+        if ft == "tp":
+            tp_c += 1
+        elif ft == "sl":
+            sl_c += 1
+        else:
+            none_c += 1
+    if total == 0:
+        return None
+    resolved = tp_c + sl_c
+    win_rate: Decimal | None = None
+    if resolved > 0:
+        win_rate = Decimal(tp_c) / Decimal(resolved) * Decimal(100)
+    dir_rate = Decimal(dir_c) / Decimal(total) * Decimal(100)
+
+    def _q2(x: Decimal) -> str:
+        return str(x.quantize(Decimal("0.01")))
+
+    return {
+        "total_runs": total,
+        "tp_first_count": tp_c,
+        "sl_first_count": sl_c,
+        "no_touch_count": none_c,
+        "direction_correct_count": dir_c,
+        "strategy_win_rate_pct": (_q2(win_rate) if win_rate is not None else None),
+        "direction_hit_rate_pct": _q2(dir_rate),
+    }
+
+
+def build_walk_forward_payload(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal = Decimal("1.72"),
+) -> dict[str, Any]:
+    """Walk-forward: fő szcenárió idő felezés (0.5), plusz több vágás aggregátum."""
+    base: dict[str, Any] = {
+        "enabled": False,
+        "disabled_reason": None,
+        "time_split_fraction": None,
+        "train_start_time_ms": None,
+        "train_end_time_ms": None,
+        "checkpoint_time_ms": None,
+        "test_start_time_ms": None,
+        "test_end_time_ms": None,
+        "train_bar_count": 0,
+        "test_bar_count": 0,
+        "median_move_pct_train": None,
+        "tp_move_pct": None,
+        "sl_move_pct": None,
+        "entry_price": None,
+        "tp_price": None,
+        "sl_price": None,
+        "test_start_close": None,
+        "test_end_close": None,
+        "predicted_side": None,
+        "prediction_reason": None,
+        "test_net_move_pct": None,
+        "actual_test_side": None,
+        "direction_guess_correct": None,
+        "first_touch": None,
+        "first_touch_time_ms": None,
+        "same_bar_ambiguous": None,
+        "strategy_would_win": None,
+        "aggregate": _build_walk_forward_aggregate(
+            klines, choppiness_max=choppiness_max
+        ),
+    }
+
+    sp = split_klines_at_time_fraction(klines, Decimal("0.5"))
+    if sp is None:
+        base["disabled_reason"] = "too_few_candles_or_bad_time_span"
+        return base
+
+    train, test, _ = sp
+    primary = run_walk_forward_simulation(
+        train,
+        test,
+        choppiness_max=choppiness_max,
+        time_split_fraction=Decimal("0.5"),
     )
+    if primary is None:
+        base["disabled_reason"] = "no_median_clean_legs_in_train"
+        base["train_bar_count"] = len(train)
+        base["test_bar_count"] = len(test)
+        base["checkpoint_time_ms"] = _to_int_ms(train[-1]["time"])
+        base["train_start_time_ms"] = _to_int_ms(train[0]["time"])
+        base["train_end_time_ms"] = _to_int_ms(train[-1]["time"])
+        if test:
+            base["test_start_time_ms"] = _to_int_ms(test[0]["time"])
+            base["test_end_time_ms"] = _to_int_ms(test[-1]["time"])
+        return base
+
+    base.update(primary)
     return base
 
 
