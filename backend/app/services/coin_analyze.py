@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from decimal import Decimal
+from itertools import pairwise
 from statistics import median
 from typing import Any, Literal
 
@@ -161,7 +162,9 @@ def analyze_clean_legs(
         }
 
     clean: list[dict[str, Any]] = []
-    for a, b in zip(swings, swings[1:], strict=True):
+    # Adjacent swing pairs: ``pairwise`` (not ``zip(..., strict=True)``, which
+    # requires equal-length iterables and would always fail for n vs n-1).
+    for a, b in pairwise(swings):
         i0, _, p0 = a
         i1, _, p1 = b
         if i1 <= i0:
