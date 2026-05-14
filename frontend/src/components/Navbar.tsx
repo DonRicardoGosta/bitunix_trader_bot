@@ -6,6 +6,7 @@ import {
   useRefreshInterval,
   type RefreshIntervalSec,
 } from "@/contexts/RefreshIntervalContext";
+import { useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 
 const links = [
   { href: "/", label: "Dashboard" },
@@ -19,6 +20,7 @@ const links = [
 
 export function Navbar() {
   const { intervalSec, setIntervalSec, options } = useRefreshInterval();
+  const pushConnected = useLivePushConnected();
 
   return (
     <header className="border-b border-border bg-bg-subtle/60 backdrop-blur sticky top-0 z-10">
@@ -38,28 +40,37 @@ export function Navbar() {
               </Link>
             ))}
           </nav>
-          <div className="flex items-center gap-2 border-l border-border/60 pl-3">
-            <label htmlFor="ui-refresh-interval" className="text-xs text-muted whitespace-nowrap">
-              Frissítés
-            </label>
-            <Select
-              id="ui-refresh-interval"
-              className="min-w-[5.5rem] text-sm"
-              value={intervalSec}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                if (options.includes(v as RefreshIntervalSec)) {
-                  setIntervalSec(v as RefreshIntervalSec);
-                }
-              }}
+          {!pushConnected ? (
+            <div className="flex items-center gap-2 border-l border-border/60 pl-3">
+              <label htmlFor="ui-refresh-interval" className="text-xs text-muted whitespace-nowrap">
+                Frissítés
+              </label>
+              <Select
+                id="ui-refresh-interval"
+                className="min-w-[5.5rem] text-sm"
+                value={intervalSec}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (options.includes(v as RefreshIntervalSec)) {
+                    setIntervalSec(v as RefreshIntervalSec);
+                  }
+                }}
+              >
+                {options.map((sec) => (
+                  <option key={sec} value={sec}>
+                    {sec} mp
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : (
+            <div
+              className="border-l border-border/60 pl-3 text-xs text-muted whitespace-nowrap"
+              title="WebSocket élő invalidáció; polling kikapcsolva."
             >
-              {options.map((sec) => (
-                <option key={sec} value={sec}>
-                  {sec} mp
-                </option>
-              ))}
-            </Select>
-          </div>
+              Élő frissítés
+            </div>
+          )}
         </div>
       </div>
     </header>

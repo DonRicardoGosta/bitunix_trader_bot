@@ -14,7 +14,7 @@ function parseNum(s: string | null | undefined): number | null {
 }
 
 export function OrdersTotalDbPnl() {
-  const { refreshIntervalMs } = useRefreshInterval();
+  const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
   const pnlEpoch = useLiveEpoch("orders_pnl");
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +75,12 @@ export function OrdersTotalDbPnl() {
         <span className="text-xs text-muted">
           A Postgres <code className="text-[11px]">orders</code> tábla összes sora: soronkénti
           realizált + nem realizált (Bitunix szinkron, mint a táblázatnál) — nyitott és lezárt
-          együtt · frissül {intervalSec} mp-ként
+          együtt ·{" "}
+          {pushConnected ? (
+            <>élő WebSocket push</>
+          ) : (
+            <>frissül {intervalSec} mp-ként</>
+          )}
         </span>
       </CardHeader>
       <CardContent className="space-y-3">
