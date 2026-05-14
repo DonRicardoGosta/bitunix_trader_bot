@@ -9,6 +9,7 @@ import pytest
 from app.services.tpsl import (
     compute_tp_sl_prices,
     implied_price_move_pct_from_roi,
+    implied_tp_roi_pct_from_price_move_pct,
     is_risky_sl_roi,
 )
 
@@ -146,6 +147,25 @@ def test_implied_price_move_pct_from_roi_matches_direct_formula() -> None:
     )
     assert tp == Decimal("110.0000")
     assert sl == Decimal("95.0000")
+
+
+def test_implied_tp_roi_pct_inverse_of_move_from_roi() -> None:
+    """tp_move × leverage ≈ eredeti TP ROI (margin %%)."""
+    tp_m, _sl_m = implied_price_move_pct_from_roi(
+        leverage=20,
+        tp_roi_pct=Decimal("200"),
+        sl_roi_pct=Decimal("100"),
+    )
+    assert implied_tp_roi_pct_from_price_move_pct(tp_move_pct=tp_m, leverage=20) == Decimal(
+        "200"
+    )
+
+
+def test_implied_tp_roi_pct_from_price_move_pct_invalid() -> None:
+    with pytest.raises(ValueError):
+        implied_tp_roi_pct_from_price_move_pct(tp_move_pct=Decimal("1"), leverage=0)
+    with pytest.raises(ValueError):
+        implied_tp_roi_pct_from_price_move_pct(tp_move_pct=Decimal("0"), leverage=10)
 
 
 def test_implied_price_move_pct_from_roi_invalid() -> None:

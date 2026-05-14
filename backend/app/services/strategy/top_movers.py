@@ -24,6 +24,9 @@ Specifikáció:
       ``STRATEGY_SL_ROI_PCT``); lásd ``app/services/tpsl.py``.
     * Piaci rendelés a Bitunix ``/futures/trade/place_order``-en, beépített
       ``tpPrice`` és ``slPrice`` paraméterekkel.
+    * **Minimum TP margin-ROI:** ha ``STRATEGY_MIN_TP_ROI_PCT`` > 0, a számolt
+      ``tp_move_pct × leverage`` (kalibráció vagy ROI fallback) ennél kisebb
+      esetén a szimbólum kihagyásra kerül (``tp_roi_below_min``).
     * Ha a tőzsde elutasítja a rendelést (pl. min. mennyiség), a stratégia
       **nem áll le**: naplózza, kihagyja az adott szimbólumot, és megy tovább
       a következő top moverre.
@@ -51,6 +54,7 @@ from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.tpsl import (
     compute_tp_sl_prices_from_move_pct,
     implied_price_move_pct_from_roi,
+    implied_tp_roi_pct_from_price_move_pct,
     is_risky_sl_roi,
 )
 from app.services.trading import TradingService
@@ -455,6 +459,29 @@ class TopMoversStrategy(Strategy):
                     tp_roi_pct=tp_roi,
                     sl_roi_pct=sl_roi,
                 )
+            min_tp_roi = Decimal(ctx.settings.strategy_min_tp_roi_pct)
+            if min_tp_roi > 0:
+                implied_tp_roi = implied_tp_roi_pct_from_price_move_pct(
+                    tp_move_pct=tp_move_pct, leverage=leverage
+                )
+                if implied_tp_roi < min_tp_roi:
+                    out["placed"] = False
+                    out["reason"] = "tp_roi_below_min"
+                    out["implied_tp_roi_pct"] = str(implied_tp_roi)
+                    out["min_tp_roi_pct"] = str(min_tp_roi)
+                    out["tp_move_pct"] = str(tp_move_pct)
+                    await audit.record(
+                        ctx.session,
+                        "strategy.top_movers.tp_roi_below_min",
+                        level=AuditLevel.INFO,
+                        message=(
+                            f"{symbol} kihagyva: TP margin-ROI {implied_tp_roi}% < "
+                            f"minimum {min_tp_roi}% (tp_move={tp_move_pct}%, lev={leverage}x)."
+                        ),
+                        payload=out,
+                        strategy_name=self.name,
+                    )
+                    return out
             tp_price, sl_price = compute_tp_sl_prices_from_move_pct(
                 entry_price=mover.last_price,
                 side=side,

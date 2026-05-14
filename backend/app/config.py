@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Csak fallback-ként, ha a kalibráció ``lookup``-ja nem ad move %%-et.
     strategy_tp_roi_pct: str = "200"
     strategy_sl_roi_pct: str = "100"
+    # 0 = kikapcsolva. >0: stratégiák kihagyják a belépést, ha a számolt TP
+    # margin-ROI célja (tp_move_pct × leverage) ennél kisebb lenne.
+    strategy_min_tp_roi_pct: str = "0"
     strategy_tpsl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = "MARK_PRICE"
 
     # -- TP/SL automatikus belövő / calibration --

@@ -102,6 +102,28 @@ def implied_price_move_pct_from_roi(
     return tp_move_pct, sl_move_pct
 
 
+def implied_tp_roi_pct_from_price_move_pct(
+    *, tp_move_pct: Decimal, leverage: int
+) -> Decimal:
+    """A marginon elvárt TP ROI %%, ha a teljes TP ár ``tp_move_pct`` (ár-%%).
+
+    Az ``implied_price_move_pct_from_roi`` inverze ugyanarra a modellre:
+    ``tp_roi ≈ tp_move_pct × leverage`` (pl. 10%% ár × 20x ≈ 200%% ROI).
+
+    Args:
+        tp_move_pct: Take-profit cél ár-elmozdulás %%, pozitív.
+        leverage: Tőkeáttétel (> 0).
+
+    Returns:
+        A TP eltalálásakor a marginra vetített nyereség célja %%-ban.
+    """
+    if leverage <= 0:
+        raise ValueError("leverage must be positive")
+    if tp_move_pct <= 0:
+        raise ValueError("tp_move_pct must be positive")
+    return tp_move_pct * Decimal(leverage)
+
+
 def compute_tp_sl_prices_from_move_pct(
     *,
     entry_price: Decimal,

@@ -583,3 +583,75 @@ async def test_top_movers_writes_audit_events() -> None:
     assert "trade.order_placed" in events
     levels = {r.event: r.level for r in rows}
     assert levels["strategy.top_movers.tpsl_set"] == AuditLevel.INFO
+
+
+@pytest.mark.asyncio
+async def test_top_movers_skips_when_tp_margin_roi_below_config_min() -> None:
+    """Ha a számolt TP margin-ROI (tp_move × lev) < strategy_min_tp_roi_pct, skip."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(TpSlCalibration))
+        session.add(
+            TpSlCalibration(
+                status=CalibrationStatus.SUCCESS,
+                triggered_by="test_setup",
+                lookback_minutes=120,
+                top_n=20,
+                summary={
+                    "lookback_minutes": 120,
+                    "top_n": 20,
+                    "tp_atr_mult": "3.0",
+                    "sl_atr_mult": "1.5",
+                    "global": {"tp_move_pct": "0.5", "sl_move_pct": "0.25"},
+                    "per_symbol": {},
+                },
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+        )
+        await session.execute(sa.delete(Order))
+        await session.commit()
+
+    fake = FakeBitunixClient(
+        tickers={
+            "data": [
+                {
+                    "symbol": "ZZZ",
+                    "lastPrice": "110",
+                    "open": "100",
+                    "high": "110",
+                    "low": "100",
+                }
+            ]
+        },
+        trading_pairs={
+            "data": [
+                {
+                    "symbol": "ZZZ",
+                    "maxLeverage": "20",
+                    "basePrecision": "2",
+                    "pricePrecision": "2",
+                }
+            ]
+        },
+        account={"data": {"available": "1000"}},
+    )
+    base = get_settings()
+    settings = base.model_copy(
+        update={
+            "strategy_top_movers_count": 1,
+            "strategy_top_movers_scan_limit": 5,
+            "strategy_top_movers_direction_mode": "trend",
+            "strategy_min_tp_roi_pct": "60",
+        }
+    )
+    strategy = TopMoversStrategy()
+    async with AsyncSessionLocal() as session:
+        ctx = StrategyContext(
+            session=session, client=fake, settings=settings, triggered_by="test"
+        )
+        result = await strategy.run(ctx)
+        await session.commit()
+
+    assert result.placed_orders == []
+    assert any(s.get("reason") == "tp_roi_below_min" for s in result.skipped)
+    assert fake.change_leverage_calls
