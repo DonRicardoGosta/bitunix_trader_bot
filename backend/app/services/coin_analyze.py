@@ -407,6 +407,28 @@ def _clip_variation_tpsl_move_pct(
     )
 
 
+_WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION = 5
+
+
+def _count_trades_with_entry_in_last_hours(
+    klines: list[dict[str, Decimal]],
+    trades: list[dict[str, Any]],
+    *,
+    hours: int = 24,
+) -> int:
+    """Hány trade belépése esik az utolsó gyertya ideje előtti ``hours`` órába (zárt intervallum)."""
+    if not klines or not trades:
+        return 0
+    end_ms = _to_int_ms(klines[-1]["time"])
+    start_ms = end_ms - hours * 60 * 60 * 1000
+    n = 0
+    for t in trades:
+        et = int(t["entry_time_ms"])
+        if start_ms <= et <= end_ms:
+            n += 1
+    return n
+
+
 def _compute_current_signal(
     klines: list[dict[str, Decimal]],
     *,
@@ -686,7 +708,9 @@ def build_walk_forward_tpsl_variations_payload(
 ) -> dict[str, Any]:
     """Több TP/SL (medián×) kombináció; effektív TP/SL %% a [30,300] / [10,150] sávra vágva.
 
-    Rendezés: TP/(TP+SL) szerint csökkenő — legjobb elöl.
+    Rendezés: TP/(TP+SL) szerint csökkenő. **Ajánlott** variáció: legfeljebb egy — a legjobb
+    arányú azok közül, ahol az utolsó 24 órában legalább ``_WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION``
+    belépés történt; csak ekkor töltődik ``best_current_signal``.
     """
     pairs = _tpsl_variation_multiplier_pairs()
     rows_raw: list[dict[str, Any]] = []
@@ -719,6 +743,7 @@ def build_walk_forward_tpsl_variations_payload(
             "trades": seq["trades"],
             "summary": seq.get("summary"),
         }
+        n24 = _count_trades_with_entry_in_last_hours(klines, seq["trades"], hours=24)
         rows_raw.append(
             {
                 "tp_median_multiplier": str(tp_m),
@@ -729,6 +754,7 @@ def build_walk_forward_tpsl_variations_payload(
                 ),
                 "meets_target": meets,
                 "resolved_count": resolved,
+                "trades_entered_last_24h_count": n24,
                 "sequence": slim,
             }
         )
@@ -750,15 +776,36 @@ def build_walk_forward_tpsl_variations_payload(
         reverse=True,
     )
 
+    rec_idx: int | None = None
+    for i, r in enumerate(rows_raw):
+        if int(r["trades_entered_last_24h_count"]) >= _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION:
+            rec_idx = i
+            break
+
+    rows_ordered: list[dict[str, Any]] = []
+    if rec_idx is not None:
+        rec = dict(rows_raw[rec_idx])
+        rec["is_recommended"] = True
+        rows_ordered.append(rec)
+        for j, r in enumerate(rows_raw):
+            if j == rec_idx:
+                continue
+            rr = dict(r)
+            rr["is_recommended"] = False
+            rows_ordered.append(rr)
+    else:
+        rows_ordered = [{**dict(r), "is_recommended": False} for r in rows_raw]
+
     rows: list[dict[str, Any]] = []
-    for rank, r in enumerate(rows_raw):
-        item = dict(r)
-        item["rank"] = rank
-        rows.append(item)
+    for rank, item in enumerate(rows_ordered):
+        row = dict(item)
+        row["rank"] = rank
+        rows.append(row)
 
     any_meets = any(r["meets_target"] for r in rows)
+    has_recommended = rec_idx is not None
     best_sig: dict[str, Any] | None = None
-    if rows:
+    if has_recommended and rows:
         best = rows[0]
         best_tp = Decimal(best["tp_median_multiplier"])
         best_sl = Decimal(best["sl_median_multiplier"])
@@ -776,6 +823,8 @@ def build_walk_forward_tpsl_variations_payload(
         "target_tp_win_rate_pct": str(target_tp_win_rate_pct.quantize(Decimal("0.01"))),
         "min_resolved_trades": min_resolved_trades,
         "any_variation_meets_target": any_meets,
+        "has_recommended_variation": has_recommended,
+        "min_trades_last_24h_for_recommendation": _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION,
         "variation_tp_move_pct_min": str(_WF_VAR_TP_MOVE_PCT_MIN),
         "variation_tp_move_pct_max": str(_WF_VAR_TP_MOVE_PCT_MAX),
         "variation_sl_move_pct_min": str(_WF_VAR_SL_MOVE_PCT_MIN),

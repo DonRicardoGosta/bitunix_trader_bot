@@ -358,6 +358,8 @@ export interface TpslVariationRow {
   resolved_tp_win_rate_pct: string | null;
   meets_target: boolean;
   resolved_count: number;
+  trades_entered_last_24h_count: number;
+  is_recommended: boolean;
   sequence: WalkForwardSequenceCore;
 }
 
@@ -367,6 +369,8 @@ export interface WalkForwardTpslVariations {
   target_tp_win_rate_pct: string;
   min_resolved_trades: number;
   any_variation_meets_target: boolean;
+  has_recommended_variation: boolean;
+  min_trades_last_24h_for_recommendation: number;
   variation_tp_move_pct_min: string;
   variation_tp_move_pct_max: string;
   variation_sl_move_pct_min: string;

@@ -127,9 +127,12 @@ export default function CoinAnalyzePage() {
   }, [result]);
 
   const chartEntryTrades = useMemo(() => {
-    const v0 = result?.walk_forward_tpsl_variations?.variations?.[0];
-    const t = v0?.sequence?.trades;
-    if (t?.length) return t;
+    const vars = result?.walk_forward_tpsl_variations?.variations;
+    if (vars?.length) {
+      const rec = vars.find((v) => v.is_recommended);
+      const t = rec?.sequence?.trades ?? vars[0]?.sequence?.trades;
+      if (t?.length) return t;
+    }
     return result?.walk_forward_sequence?.trades ?? [];
   }, [result]);
 
@@ -521,7 +524,13 @@ function TpslVariationsSection({
           <span className="text-emerald-400 font-medium ml-1">Van olyan pont, ami eléri a célt.</span>
         ) : (
           <span className="text-muted ml-1">Egyik rács-pont sem éri el a 85%-ot.</span>
-        )}
+        )}{" "}
+        <span className="block mt-1">
+          Legfeljebb <span className="font-medium text-foreground">egy ajánlott</span> konfiguráció
+          van: a legjobb TP/(TP+SL) % azok közül, ahol az utolsó 24 órában legalább{" "}
+          {block.min_trades_last_24h_for_recommendation} belépés történt; a jelenlegi predikció csak
+          ilyenkor a javasolt szorzókat mutatja.
+        </span>
       </p>
       {block.variations.map((v: TpslVariationRow, i: number) => {
         const s = v.sequence.summary;
@@ -537,11 +546,22 @@ function TpslVariationsSection({
               TP/(TP+SL):{" "}
               <strong className="text-foreground">{v.resolved_tp_win_rate_pct ?? "—"}%</strong>
             </span>
+            <span>24h belépés: {v.trades_entered_last_24h_count}</span>
+            {v.is_recommended ? (
+              <span className="text-emerald-400 font-medium">ajánlott</span>
+            ) : null}
             {v.meets_target ? (
               <span className="text-emerald-400 font-medium">≥ {block.target_tp_win_rate_pct}%</span>
             ) : null}
           </div>
-        ) : null;
+        ) : (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted pt-1">
+            <span>24h belépés: {v.trades_entered_last_24h_count}</span>
+            {v.is_recommended ? (
+              <span className="text-emerald-400 font-medium">ajánlott</span>
+            ) : null}
+          </div>
+        );
         const charts =
           v.sequence.trades.length > 0 ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 pt-2">
@@ -567,7 +587,9 @@ function TpslVariationsSection({
               className="rounded-lg border border-emerald-500/40 bg-emerald-950/25 p-3 space-y-1"
             >
               <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300/95">
-                Legjobb eredmény (mindig nyitva)
+                {block.has_recommended_variation && v.is_recommended
+                  ? `Ajánlott konfig (≥${block.min_trades_last_24h_for_recommendation} belépés / utolsó 24h)`
+                  : "Legjobb TP% sorrend — nincs 24h aktivitás alapú ajánlás"}
               </div>
               {head}
               {stats}

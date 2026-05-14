@@ -143,6 +143,29 @@ def test_clip_variation_tpsl_move_pct() -> None:
     assert hi == (Decimal("300"), Decimal("150"))
 
 
+def test_count_trades_entry_in_last_24h() -> None:
+    # idő mp-ben (<1e11) → _to_int_ms szoroz 1000-zel
+    klines = [
+        {
+            "time": Decimal(100_000_000),
+            "open": Decimal(1),
+            "high": Decimal(2),
+            "low": Decimal(1),
+            "close": Decimal(1),
+        }
+    ]
+    end_ms = 100_000_000 * 1000
+    start_ms = end_ms - 24 * 60 * 60 * 1000
+    trades = [
+        {"entry_time_ms": start_ms - 1},
+        {"entry_time_ms": start_ms},
+        {"entry_time_ms": start_ms + 1_000_000},
+        {"entry_time_ms": end_ms},
+    ]
+    n = coin_analyze_mod._count_trades_with_entry_in_last_hours(klines, trades, hours=24)
+    assert n == 3
+
+
 def test_split_half_matches_time_midpoint() -> None:
     klines = [_synth_bar(i * 60_000, "100") for i in range(40)]
     a = split_klines_at_time_fraction(klines, Decimal("0.5"))
@@ -158,6 +181,9 @@ def test_build_tpsl_variations_payload_grid() -> None:
     )
     assert len(v["variations"]) == 36
     assert v["variations"][0]["rank"] == 0
+    assert "has_recommended_variation" in v
+    assert "is_recommended" in v["variations"][0]
+    assert sum(1 for row in v["variations"] if row["is_recommended"]) <= 1
 
 
 def test_build_walk_forward_sequence_returns_current_signal() -> None:

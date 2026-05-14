@@ -173,6 +173,8 @@ class TpslVariationRow(BaseModel):
     resolved_tp_win_rate_pct: str | None = None
     meets_target: bool = False
     resolved_count: int = Field(ge=0)
+    trades_entered_last_24h_count: int = Field(ge=0)
+    is_recommended: bool = False
     sequence: WalkForwardSequenceCore
 
 
@@ -186,6 +188,8 @@ class WalkForwardTpslVariations(BaseModel):
     target_tp_win_rate_pct: str = "85"
     min_resolved_trades: int = Field(default=2, ge=1, le=100)
     any_variation_meets_target: bool = False
+    has_recommended_variation: bool = False
+    min_trades_last_24h_for_recommendation: int = Field(default=5, ge=1, le=100)
     variation_tp_move_pct_min: str = "30"
     variation_tp_move_pct_max: str = "300"
     variation_sl_move_pct_min: str = "10"
