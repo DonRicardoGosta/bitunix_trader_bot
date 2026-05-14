@@ -106,7 +106,7 @@ type SortKey = "recent" | "pnl_desc" | "pnl_asc" | "count_desc" | "symbol_asc";
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 export function OrdersTable() {
-  const { intervalSec } = useRefreshInterval();
+  const { refreshIntervalMs } = useRefreshInterval();
   const [rows, setRows] = useState<OrderRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -132,12 +132,12 @@ export function OrdersTable() {
       }
     }
     void load();
-    const id = setInterval(load, intervalSec * 1000);
+    const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [intervalSec]);
+  }, [refreshIntervalMs]);
 
   const filteredRows = useMemo(() => {
     if (!rows) return [];

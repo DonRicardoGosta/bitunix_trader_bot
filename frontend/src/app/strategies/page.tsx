@@ -8,7 +8,7 @@ import { api, type StrategyInfo, type StrategyRun } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 
 export default function StrategiesPage() {
-  const { intervalSec } = useRefreshInterval();
+  const { refreshIntervalMs } = useRefreshInterval();
   const [list, setList] = useState<StrategyInfo[] | null>(null);
   const [runs, setRuns] = useState<StrategyRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,9 +27,9 @@ export default function StrategiesPage() {
 
   useEffect(() => {
     void refresh();
-    const id = setInterval(refresh, intervalSec * 1000);
+    const id = setInterval(refresh, refreshIntervalMs);
     return () => clearInterval(id);
-  }, [refresh, intervalSec]);
+  }, [refresh, refreshIntervalMs]);
 
   const exportRunsCsv = useCallback(() => {
     if (!runs?.length) return;

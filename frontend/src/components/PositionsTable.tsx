@@ -36,7 +36,7 @@ type SortKey =
   | "symbol_asc";
 
 export function PositionsTable() {
-  const { intervalSec } = useRefreshInterval();
+  const { refreshIntervalMs } = useRefreshInterval();
   const [data, setData] = useState<NormalizedPositionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -61,12 +61,12 @@ export function PositionsTable() {
       }
     }
     void load();
-    const id = setInterval(load, intervalSec * 1000);
+    const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [intervalSec]);
+  }, [refreshIntervalMs]);
 
   const filtered = useMemo(() => {
     if (!data) return [] as NormalizedPosition[];

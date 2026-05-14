@@ -9,7 +9,7 @@ import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 type Latest = Awaited<ReturnType<typeof api.calibrationLatest>>;
 
 export default function CalibrationPage() {
-  const { intervalSec } = useRefreshInterval();
+  const { refreshIntervalMs } = useRefreshInterval();
   const [latest, setLatest] = useState<Latest | null>(null);
   const [runs, setRuns] = useState<CalibrationRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,9 +31,9 @@ export default function CalibrationPage() {
 
   useEffect(() => {
     void refresh();
-    const id = setInterval(refresh, intervalSec * 1000);
+    const id = setInterval(refresh, refreshIntervalMs);
     return () => clearInterval(id);
-  }, [refresh, intervalSec]);
+  }, [refresh, refreshIntervalMs]);
 
   async function trigger() {
     setBusy(true);

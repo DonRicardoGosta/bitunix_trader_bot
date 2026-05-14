@@ -13,7 +13,7 @@ function parseNum(s: string | null | undefined): number | null {
 }
 
 export function OrdersTotalDbPnl() {
-  const { intervalSec } = useRefreshInterval();
+  const { refreshIntervalMs } = useRefreshInterval();
   const [error, setError] = useState<string | null>(null);
   const [totalPnl, setTotalPnl] = useState<number | null>(null);
   const [unrealized, setUnrealized] = useState<number | null>(null);
@@ -44,12 +44,12 @@ export function OrdersTotalDbPnl() {
       }
     }
     void load();
-    const id = setInterval(load, intervalSec * 1000);
+    const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [intervalSec]);
+  }, [refreshIntervalMs]);
 
   const tone =
     totalPnl == null ? "neutral" : totalPnl > 0 ? "positive" : totalPnl < 0 ? "negative" : "neutral";

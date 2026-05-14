@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, type TickerInfo } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { backgroundAwareIntervalMs } from "@/contexts/RefreshIntervalContext";
 
 interface Props {
   symbol: string;
@@ -12,6 +13,20 @@ interface Props {
 export function MarketTicker({ symbol, refreshMs = 5000 }: Props) {
   const [data, setData] = useState<TickerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [documentHidden, setDocumentHidden] = useState(false);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const sync = () => setDocumentHidden(document.hidden);
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
+
+  const effectiveRefreshMs = useMemo(
+    () => backgroundAwareIntervalMs(refreshMs, documentHidden),
+    [refreshMs, documentHidden],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -25,18 +40,18 @@ export function MarketTicker({ symbol, refreshMs = 5000 }: Props) {
       }
     }
     void load();
-    const id = setInterval(load, refreshMs);
+    const id = setInterval(load, effectiveRefreshMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [symbol, refreshMs]);
+  }, [symbol, effectiveRefreshMs]);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Piaci ár · {symbol}</CardTitle>
-        <span className="text-xs text-muted">frissítés {refreshMs / 1000}mp-enként</span>
+        <span className="text-xs text-muted">frissítés ~{effectiveRefreshMs / 1000}mp-enként</span>
       </CardHeader>
       <CardContent>
         {error && <p className="text-loss text-sm">{error}</p>}

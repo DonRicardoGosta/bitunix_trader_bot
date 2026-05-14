@@ -41,7 +41,7 @@ const LEVEL_COLOR: Record<string, string> = {
 };
 
 export function DashboardOverview() {
-  const { intervalSec } = useRefreshInterval();
+  const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lookback, setLookback] = useState(1);
@@ -61,12 +61,12 @@ export function DashboardOverview() {
       }
     }
     void load();
-    const id = setInterval(load, intervalSec * 1000);
+    const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [lookback, intervalSec]);
+  }, [lookback, refreshIntervalMs]);
 
   const account = data?.exchange?.account ?? null;
   const open = data?.exchange?.open_positions;

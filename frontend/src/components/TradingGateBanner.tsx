@@ -12,7 +12,7 @@ interface State {
 }
 
 export function TradingGateBanner() {
-  const { intervalSec } = useRefreshInterval();
+  const { refreshIntervalMs } = useRefreshInterval();
   const [state, setState] = useState<State | null>(null);
 
   useEffect(() => {
@@ -31,12 +31,12 @@ export function TradingGateBanner() {
       }
     }
     void load();
-    const id = setInterval(load, intervalSec * 1000);
+    const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [intervalSec]);
+  }, [refreshIntervalMs]);
 
   if (state === null) return null;
 
