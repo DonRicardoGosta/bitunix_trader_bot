@@ -54,3 +54,24 @@ def test_analyze_clean_legs_empty_when_too_few_bars() -> None:
     clean, stats = analyze_clean_legs(klines)
     assert clean == []
     assert stats["clean_leg_count"] == 0
+
+
+def test_analyze_clean_legs_many_swings_no_strict_zip_error() -> None:
+    """Regression: pairwise swing legs must not use strict zip (len n vs n-1)."""
+
+    def bar(t: int, close: int, spread: int = 1) -> dict[str, Decimal]:
+        c = Decimal(close)
+        s = Decimal(spread)
+        return {
+            "time": Decimal(t),
+            "open": c,
+            "high": c + s,
+            "low": c - s,
+            "close": c,
+        }
+
+    klines = [bar(i, 100 + (i % 5) * 3 + (i // 10)) for i in range(50)]
+    clean, stats = analyze_clean_legs(klines)
+    assert stats["all_leg_count"] >= 1
+    assert isinstance(stats.get("median_move_pct"), (Decimal, type(None)))
+    assert isinstance(clean, list)
