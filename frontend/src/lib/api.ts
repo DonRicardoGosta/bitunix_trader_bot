@@ -255,10 +255,56 @@ export interface DashboardSummary {
   };
 }
 
+export interface MarketSymbolRow {
+  symbol: string;
+  max_leverage: number;
+}
+
+export interface CandleChartRow {
+  time_ms: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+}
+
+export interface CleanLegRow {
+  start_time_ms: number;
+  end_time_ms: number;
+  start_index: number;
+  end_index: number;
+  direction: "up" | "down";
+  move_pct: string;
+  choppiness: string;
+  start_price: string;
+  end_price: string;
+}
+
+export interface CoinAnalyzeResult {
+  symbol: string;
+  max_leverage: number;
+  interval: string;
+  kline_limit: number;
+  lookback_minutes_requested: number;
+  choppiness_max: string;
+  candles: CandleChartRow[];
+  clean_legs: CleanLegRow[];
+  median_move_pct: string | null;
+  mean_move_pct: string | null;
+  clean_leg_count: number;
+  all_leg_count: number;
+}
+
 export const api = {
   health: () => request<{ status: string }>("/api/health"),
   ticker: (symbol: string) =>
     request<TickerInfo>(`/api/market/ticker/${encodeURIComponent(symbol)}`),
+  marketSymbols: () => request<MarketSymbolRow[]>("/api/market/symbols"),
+  coinAnalyze: (body: { symbol: string; lookback_minutes: number }) =>
+    request<CoinAnalyzeResult>("/api/market/coin-analyze", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   orders: (params?: { limit?: number; offset?: number; symbol?: string }) => {
     const usp = new URLSearchParams();
     if (params?.limit != null) usp.set("limit", String(params.limit));

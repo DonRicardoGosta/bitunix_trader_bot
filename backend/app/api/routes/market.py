@@ -9,7 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.deps import get_bitunix_client
 from app.bitunix.client import BitunixClient
 from app.bitunix.exceptions import BitunixAPIError
+from app.schemas.coin_analyze import (
+    CoinAnalyzeRequest,
+    CoinAnalyzeResponse,
+    MarketSymbolRow,
+)
 from app.schemas.trading import TickerInfo
+from app.services.coin_analyze import build_coin_analysis_payload, plan_kline_interval
+from app.services.strategy.top_movers import _index_trading_pairs
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -65,3 +72,69 @@ async def get_depth(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
+
+
+@router.get("/symbols", response_model=list[MarketSymbolRow])
+async def list_trading_symbols(
+    client: BitunixClient = Depends(get_bitunix_client),
+) -> list[MarketSymbolRow]:
+    """Összes futures szimbólum max. tőkeáttétellel (Bitunix ``trading_pairs``)."""
+    try:
+        raw = await client.get_trading_pairs()
+    except BitunixAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
+    meta = _index_trading_pairs(raw)
+    return [
+        MarketSymbolRow(symbol=sym, max_leverage=m.max_leverage)
+        for sym, m in sorted(meta.items(), key=lambda x: x[0])
+    ]
+
+
+@router.post("/coin-analyze", response_model=CoinAnalyzeResponse)
+async def coin_analyze(
+    body: CoinAnalyzeRequest,
+    client: BitunixClient = Depends(get_bitunix_client),
+) -> CoinAnalyzeResponse:
+    """Kline + swing elemzés egy szimbólumra (lookback → intervallum automatikus)."""
+    try:
+        raw_pairs = await client.get_trading_pairs()
+    except BitunixAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
+    meta = _index_trading_pairs(raw_pairs)
+    pair = meta.get(body.symbol)
+    if pair is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ismeretlen szimbólum: {body.symbol}",
+        )
+
+    interval, limit = plan_kline_interval(body.lookback_minutes)
+    try:
+        raw_klines = await client.get_klines(
+            body.symbol,
+            interval=interval,
+            limit=limit,
+        )
+    except BitunixAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
+
+    payload = build_coin_analysis_payload(
+        symbol=body.symbol,
+        max_leverage=max(1, int(pair.max_leverage)),
+        lookback_minutes=body.lookback_minutes,
+        interval=interval,
+        kline_limit=limit,
+        klines_raw=raw_klines,
+    )
+    if not payload["candles"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Nincs elegendő kline adat az elemzéshez.",
+        )
+    return CoinAnalyzeResponse.model_validate(payload)

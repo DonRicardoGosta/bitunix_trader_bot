@@ -12,6 +12,7 @@ const links = [
   { href: "/orders", label: "Rendelések" },
   { href: "/positions", label: "Pozíciók" },
   { href: "/strategies", label: "Stratégiák" },
+  { href: "/coin-analyze", label: "Coin elemzés" },
   { href: "/calibration", label: "Kalibráció" },
   { href: "/events", label: "Eseménynapló" },
 ];
