@@ -912,6 +912,73 @@ def build_walk_forward_tpsl_variations_payload(
     }
 
 
+def walk_forward_live_gate_from_klines(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal,
+    walk_forward_cooldown_minutes: int = 60,
+) -> dict[str, Any]:
+    """Top signal / live: ugyanaz a WF variációs + ajánlási logika, mint a coin-analyze API.
+
+    ``ok`` csak akkor ``True``, ha van ``has_recommended_variation`` és érvényes
+    ``best_current_signal`` (irány + TP/SL %% a teljes sorozat utolsó zárójára).
+
+    Returns:
+        ``ok``, ``reason``, siker esetén: ``side`` (``BUY`` / ``SELL``), ``tp_move_pct``,
+        ``sl_move_pct``, ``tp_median_multiplier``, ``sl_median_multiplier``, ``prediction_reason``.
+    """
+    vblock = build_walk_forward_tpsl_variations_payload(
+        klines,
+        choppiness_max=choppiness_max,
+        cooldown_minutes=walk_forward_cooldown_minutes,
+    )
+    if not vblock.get("enabled"):
+        return {
+            "ok": False,
+            "reason": "walk_forward_variations_disabled",
+            "detail": vblock.get("disabled_reason"),
+        }
+    if not vblock.get("has_recommended_variation"):
+        return {"ok": False, "reason": "walk_forward_no_recommended_variation"}
+    sig = vblock.get("best_current_signal")
+    if not isinstance(sig, dict) or not sig.get("enabled"):
+        return {"ok": False, "reason": "walk_forward_no_best_signal"}
+    ps = sig.get("predicted_side")
+    side_map = {"long": "BUY", "short": "SELL"}
+    if ps not in side_map:
+        return {"ok": False, "reason": "walk_forward_invalid_predicted_side"}
+    tp_raw = sig.get("tp_move_pct")
+    sl_raw = sig.get("sl_move_pct")
+    if tp_raw is None or sl_raw is None:
+        return {"ok": False, "reason": "walk_forward_missing_move_pct"}
+    try:
+        tp_move_pct = Decimal(str(tp_raw))
+        sl_move_pct = Decimal(str(sl_raw))
+    except (ArithmeticError, ValueError, TypeError):
+        return {"ok": False, "reason": "walk_forward_move_pct_parse_error"}
+    if tp_move_pct <= 0 or sl_move_pct <= 0:
+        return {"ok": False, "reason": "walk_forward_non_positive_moves"}
+
+    rec_tp: str | None = None
+    rec_sl: str | None = None
+    for row in vblock.get("variations") or []:
+        if row.get("is_recommended"):
+            rec_tp = str(row.get("tp_median_multiplier"))
+            rec_sl = str(row.get("sl_median_multiplier"))
+            break
+
+    return {
+        "ok": True,
+        "reason": "walk_forward_recommended",
+        "side": side_map[ps],
+        "tp_move_pct": tp_move_pct,
+        "sl_move_pct": sl_move_pct,
+        "tp_median_multiplier": rec_tp,
+        "sl_median_multiplier": rec_sl,
+        "prediction_reason": sig.get("prediction_reason"),
+    }
+
+
 _WF_AGGREGATE_FRACTIONS: tuple[Decimal, ...] = (
     Decimal("0.36"),
     Decimal("0.40"),

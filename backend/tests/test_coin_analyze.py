@@ -319,3 +319,51 @@ def test_analyze_clean_legs_many_swings_no_strict_zip_error() -> None:
     assert stats["all_leg_count"] >= 1
     assert isinstance(stats.get("median_move_pct"), (Decimal, type(None)))
     assert isinstance(clean, list)
+
+
+def test_walk_forward_live_gate_ok(monkeypatch) -> None:
+    def fake_build(*args, **kwargs):
+        return {
+            "enabled": True,
+            "has_recommended_variation": True,
+            "best_current_signal": {
+                "enabled": True,
+                "predicted_side": "long",
+                "tp_move_pct": "3.1",
+                "sl_move_pct": "2.4",
+                "prediction_reason": "median_up",
+            },
+            "variations": [
+                {
+                    "is_recommended": True,
+                    "tp_median_multiplier": "0.5",
+                    "sl_median_multiplier": "0.35",
+                },
+                {"is_recommended": False},
+            ],
+        }
+
+    monkeypatch.setattr(
+        coin_analyze_mod, "build_walk_forward_tpsl_variations_payload", fake_build
+    )
+    r = coin_analyze_mod.walk_forward_live_gate_from_klines(
+        [], choppiness_max=Decimal("1.72")
+    )
+    assert r["ok"] is True
+    assert r["side"] == "BUY"
+    assert r["tp_move_pct"] == Decimal("3.1")
+    assert r["sl_move_pct"] == Decimal("2.4")
+
+
+def test_walk_forward_live_gate_no_recommend(monkeypatch) -> None:
+    def fake_build(*args, **kwargs):
+        return {"enabled": True, "has_recommended_variation": False, "variations": []}
+
+    monkeypatch.setattr(
+        coin_analyze_mod, "build_walk_forward_tpsl_variations_payload", fake_build
+    )
+    r = coin_analyze_mod.walk_forward_live_gate_from_klines(
+        [], choppiness_max=Decimal("1.72")
+    )
+    assert r["ok"] is False
+    assert r["reason"] == "walk_forward_no_recommended_variation"

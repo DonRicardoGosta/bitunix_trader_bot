@@ -8,15 +8,20 @@ csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 * A 24h ticker alapján van **range** adat, és az ár a mozgás irányához illő
   extrém zónában van (long: felső ``range_threshold``, short: alsó zóna).
 * A **|24h % változás|** ≥ konfigurálható minimum.
-* **Minimum TP margin-ROI:** ha ``STRATEGY_MIN_TP_ROI_PCT`` > 0, a számolt
-  ``tp_move_pct × leverage`` ennél kisebb esetén nincs belépés.
+* **Walk-forward gate (opcionális):** ha ``STRATEGY_TOP_SIGNAL_ENTRIES_WF_GATE_ENABLED``,
+  a kline lekérés a ``plan_kline_interval(WF_LOOKBACK)`` szerinti intervallum/limit
+  (alap 24h) alapján történik; minden jelöltre lefut a coin-analyze WF variációs
+  ajánlás. Csak akkor nyitunk, ha van **ajánlott** variáció (≥85% TP win cél,
+  profil + 24h aktivitás), a WF irány egyezik a kline belépővel, és a TP/SL
+  a WF ``best_current_signal`` százalékai alapján kerül számításra (nem
+  kalibrációból).
 * A **utolsó lezárt gyertya** (a lista utolsó előtti eleme) **megerősíti** az
   irányt: long esetén bullish zárás és záró > előző gyertya maximuma;
   shortnál bearish zárás és záró < előző gyertya minimuma.
 
-Irány: **BUY** (long) és **SELL** (short) is engedélyezett. TP/SL a
-kalibrációs move %% / ROI fallback + ``compute_tp_sl_prices_from_move_pct``
-útvonalon, a ``top_movers``-sel megegyezően.
+Irány: **BUY** (long) és **SELL** (short) is engedélyezett. TP/SL: WF gate
+bekapcsolva a javasolt variáció százalékai; különben kalibráció / ROI fallback
++ ``compute_tp_sl_prices_from_move_pct``, a ``top_movers``-sel megegyezően.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
 from app.services.calibration import parse_klines
 from app.services.calibration_runner import get_active_calibration_result
+from app.services.coin_analyze import plan_kline_interval, walk_forward_live_gate_from_klines
 from app.services.risk import compute_margin, compute_quantity
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.strategy.top_movers import (
@@ -151,7 +157,22 @@ class TopSignalEntriesStrategy(Strategy):
             200,
             max(3, int(settings.strategy_top_signal_entries_kline_limit)),
         )
+        wf_gate = settings.strategy_top_signal_entries_wf_gate_enabled
+        wf_lb = int(settings.strategy_top_signal_entries_wf_lookback_minutes)
+        fetch_interval = kline_interval
+        fetch_limit = kline_limit
+        if wf_gate:
+            planned_iv, planned_lim = plan_kline_interval(wf_lb)
+            fetch_interval = planned_iv
+            fetch_limit = max(kline_limit, planned_lim)
         max_conc = max(1, int(settings.strategy_top_signal_entries_max_kline_concurrency))
+
+        result.details["walk_forward_gate"] = {
+            "enabled": wf_gate,
+            "lookback_minutes": wf_lb,
+            "kline_fetch_interval": fetch_interval,
+            "kline_fetch_limit": fetch_limit,
+        }
 
         tickers_raw = await ctx.client.get_all_tickers()
         pairs_raw = await ctx.client.get_trading_pairs()
@@ -259,8 +280,8 @@ class TopSignalEntriesStrategy(Strategy):
                     try:
                         raw = await ctx.client.get_klines(
                             symbol,
-                            interval=kline_interval,
-                            limit=kline_limit,
+                            interval=fetch_interval,
+                            limit=fetch_limit,
                         )
                         return symbol, raw, None
                     except (BitunixAPIError, BitunixSignatureError) as exc:
@@ -325,6 +346,50 @@ class TopSignalEntriesStrategy(Strategy):
                     )
                     continue
 
+                wf_moves: tuple[Decimal, Decimal] | None = None
+                wf_audit: dict[str, Any] | None = None
+                if wf_gate:
+                    wf = walk_forward_live_gate_from_klines(
+                        klines,
+                        choppiness_max=Decimal(
+                            settings.strategy_top_signal_entries_wf_choppiness_max
+                        ),
+                        walk_forward_cooldown_minutes=int(
+                            settings.strategy_top_signal_entries_wf_cooldown_minutes
+                        ),
+                    )
+                    if not wf["ok"]:
+                        result.skipped.append(
+                            {
+                                "symbol": mover.symbol,
+                                "placed": False,
+                                "reason": "walk_forward_gate",
+                                "wf_reason": wf["reason"],
+                                "wf_detail": wf.get("detail"),
+                                "change_pct": str(mover.change_pct),
+                            }
+                        )
+                        continue
+                    wf_side = wf["side"]
+                    if wf_side != side:
+                        result.skipped.append(
+                            {
+                                "symbol": mover.symbol,
+                                "placed": False,
+                                "reason": "walk_forward_side_mismatch",
+                                "entry_signal_side": side,
+                                "wf_side": wf_side,
+                                "change_pct": str(mover.change_pct),
+                            }
+                        )
+                        continue
+                    wf_moves = (wf["tp_move_pct"], wf["sl_move_pct"])
+                    wf_audit = {
+                        "wf_tp_median_multiplier": wf.get("tp_median_multiplier"),
+                        "wf_sl_median_multiplier": wf.get("sl_median_multiplier"),
+                        "wf_prediction_reason": wf.get("prediction_reason"),
+                    }
+
                 decision = await self._place_confirmed(
                     ctx,
                     mover=mover,
@@ -338,6 +403,8 @@ class TopSignalEntriesStrategy(Strategy):
                     sl_roi=sl_roi,
                     stop_type=stop_type,
                     calibration=calibration,
+                    wf_move_pct_pair=wf_moves,
+                    wf_audit=wf_audit if wf_gate else None,
                 )
                 if decision.get("placed"):
                     placed_run += 1
@@ -375,6 +442,8 @@ class TopSignalEntriesStrategy(Strategy):
         sl_roi: Decimal,
         stop_type: str,
         calibration: Any | None,
+        wf_move_pct_pair: tuple[Decimal, Decimal] | None = None,
+        wf_audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         symbol = mover.symbol
         out: dict[str, Any] = {
@@ -383,6 +452,8 @@ class TopSignalEntriesStrategy(Strategy):
             "signal_reason": signal_reason,
             "change_pct": str(mover.change_pct),
         }
+        if wf_audit:
+            out.update(wf_audit)
 
         last = await self._last_order_at(ctx, symbol)
         if last and last > cooldown_after:
@@ -456,7 +527,10 @@ class TopSignalEntriesStrategy(Strategy):
 
         tp_source = "roi_fallback"
         try:
-            if calibration is not None:
+            if wf_move_pct_pair is not None:
+                tp_move_pct, sl_move_pct = wf_move_pct_pair
+                tp_source = "walk_forward_recommendation"
+            elif calibration is not None:
                 moves = calibration.lookup(symbol)
                 if moves is not None:
                     tp_move_pct, sl_move_pct = moves

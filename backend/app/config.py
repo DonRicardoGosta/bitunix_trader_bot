@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     strategy_top_signal_entries_min_abs_change_pct: str = "1.0"
     strategy_top_signal_entries_range_threshold: str = "0.60"
     strategy_top_signal_entries_max_kline_concurrency: int = 10
+    # WF variációs coin-elemzés (24h lookback) szűrő + TP/SL a javasolt konfigból.
+    strategy_top_signal_entries_wf_gate_enabled: bool = False
+    strategy_top_signal_entries_wf_lookback_minutes: int = 1440
+    strategy_top_signal_entries_wf_cooldown_minutes: int = 60
+    strategy_top_signal_entries_wf_choppiness_max: str = "1.72"
     strategy_min_margin_usdt: str = "0.25"
     strategy_margin_pct_of_balance: str = "0.01"
 
