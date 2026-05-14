@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { LiveUpdatesProvider } from "@/contexts/LiveUpdatesContext";
+
 const STORAGE_KEY = "bitunix_trader_ui_refresh_interval_sec";
 
 /** Rejtett lapon ritkább polling: kevesebb API/DB terhelés, kevesebb akkumulátorhasználat. */
@@ -92,7 +94,11 @@ export function useRefreshInterval(): Ctx {
   return c;
 }
 
-/** Tesztekhez: provider nélküli render elkerülése. */
+/** Tesztekhez: refresh + élő WebSocket kontextus (éles app: AppShell). */
 export function WithRefreshProvider({ children }: { children: ReactNode }) {
-  return <RefreshIntervalProvider>{children}</RefreshIntervalProvider>;
+  return (
+    <RefreshIntervalProvider>
+      <LiveUpdatesProvider>{children}</LiveUpdatesProvider>
+    </RefreshIntervalProvider>
+  );
 }

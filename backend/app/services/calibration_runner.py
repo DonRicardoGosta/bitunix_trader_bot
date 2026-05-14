@@ -32,6 +32,7 @@ from app.services.calibration import (
     CalibrationService,
     load_result_from_summary,
 )
+from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 
 
 def _build_service(client: BitunixClient) -> CalibrationService:
@@ -78,6 +79,7 @@ async def run_calibration(*, triggered_by: str = "scheduler") -> dict[str, objec
     finally:
         await client.close()
 
+    out: dict[str, object]
     async with AsyncSessionLocal() as session:
         db_row = await session.get(TpSlCalibration, row_id)
         if db_row is not None:
@@ -100,34 +102,30 @@ async def run_calibration(*, triggered_by: str = "scheduler") -> dict[str, objec
                 if db_row.status == CalibrationStatus.FAILED
                 else AuditLevel.INFO,
                 message=(
-                    f"Kalibráció {db_row.status.value} "
-                    f"(triggered_by={triggered_by})."
+                    f"Kalibráció {db_row.status.value} (triggered_by={triggered_by})."
                 ),
                 payload={
                     "calibration_id": row_id,
                     "status": db_row.status.value,
                     "lookback_minutes": db_row.lookback_minutes,
                     "top_n": db_row.top_n,
-                    "calibrated_symbols": (
-                        len(result.per_symbol) if result else 0
-                    ),
-                    "failed_symbols": (
-                        len(result.failed_symbols) if result else 0
-                    ),
-                    "global": (
-                        result.to_dict()["global"] if result else None
-                    ),
+                    "calibrated_symbols": (len(result.per_symbol) if result else 0),
+                    "failed_symbols": (len(result.failed_symbols) if result else 0),
+                    "global": (result.to_dict()["global"] if result else None),
                     "error": db_row.error,
                 },
             )
             await session.commit()
-            return {
+            out = {
                 "calibration_id": row_id,
                 "status": db_row.status.value,
                 "error": db_row.error,
                 "summary": db_row.summary,
             }
-        return {"calibration_id": row_id, "status": "UNKNOWN", "error": error}
+        else:
+            out = {"calibration_id": row_id, "status": "UNKNOWN", "error": error}
+    await publish_invalidate(DEFAULT_INVALIDATION_TOPICS)
+    return out
 
 
 async def get_latest_successful_calibration(
@@ -176,9 +174,7 @@ async def get_active_calibration_result(
         settings.calibration_interval_seconds * 2 // 60,
         settings.calibration_max_age_minutes,
     )
-    row = await get_latest_successful_calibration(
-        session, max_age_minutes=max_age
-    )
+    row = await get_latest_successful_calibration(session, max_age_minutes=max_age)
     if row is None or not row.summary:
         return None
     return load_result_from_summary(row.summary)
@@ -224,9 +220,7 @@ class CalibrationRunner:
     async def wait_initial(self, timeout_seconds: float | None = None) -> bool:
         """Blokkol amíg az első futás be nem fejeződik (vagy timeout)."""
         try:
-            await asyncio.wait_for(
-                self._initial_done.wait(), timeout=timeout_seconds
-            )
+            await asyncio.wait_for(self._initial_done.wait(), timeout=timeout_seconds)
             return True
         except TimeoutError:
             return False
@@ -245,8 +239,6 @@ class CalibrationRunner:
                 finally:
                     self._initial_done.set()
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(
-                        self._stop.wait(), timeout=self._interval
-                    )
+                    await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
         except asyncio.CancelledError:
             return

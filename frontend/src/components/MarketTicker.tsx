@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type TickerInfo } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { backgroundAwareIntervalMs } from "@/contexts/RefreshIntervalContext";
+import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 
 interface Props {
   symbol: string;
@@ -14,6 +15,8 @@ export function MarketTicker({ symbol, refreshMs = 5000 }: Props) {
   const [data, setData] = useState<TickerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [documentHidden, setDocumentHidden] = useState(false);
+  const pushConnected = useLivePushConnected();
+  const marketEpoch = useLiveEpoch("market");
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -40,18 +43,27 @@ export function MarketTicker({ symbol, refreshMs = 5000 }: Props) {
       }
     }
     void load();
+    if (pushConnected) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const id = setInterval(load, effectiveRefreshMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [symbol, effectiveRefreshMs]);
+  }, [symbol, effectiveRefreshMs, pushConnected, marketEpoch]);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Piaci ár · {symbol}</CardTitle>
-        <span className="text-xs text-muted">frissítés ~{effectiveRefreshMs / 1000}mp-enként</span>
+        <span className="text-xs text-muted">
+          {pushConnected
+            ? "Frissítés: élő WebSocket push"
+            : `Frissítés ~${effectiveRefreshMs / 1000} mp-enként`}
+        </span>
       </CardHeader>
       <CardContent>
         {error && <p className="text-loss text-sm">{error}</p>}

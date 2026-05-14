@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
+import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseNum(s: string | null | undefined): number | null {
@@ -14,6 +15,8 @@ function parseNum(s: string | null | undefined): number | null {
 
 export function OrdersTotalDbPnl() {
   const { refreshIntervalMs } = useRefreshInterval();
+  const pushConnected = useLivePushConnected();
+  const pnlEpoch = useLiveEpoch("orders_pnl");
   const [error, setError] = useState<string | null>(null);
   const [totalPnl, setTotalPnl] = useState<number | null>(null);
   const [unrealized, setUnrealized] = useState<number | null>(null);
@@ -44,12 +47,17 @@ export function OrdersTotalDbPnl() {
       }
     }
     void load();
+    if (pushConnected) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [refreshIntervalMs]);
+  }, [refreshIntervalMs, pushConnected, pnlEpoch]);
 
   const tone =
     totalPnl == null ? "neutral" : totalPnl > 0 ? "positive" : totalPnl < 0 ? "negative" : "neutral";

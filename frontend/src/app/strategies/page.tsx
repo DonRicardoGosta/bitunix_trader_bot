@@ -6,9 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { buildCsv, downloadCsvFile } from "@/lib/csvExport";
 import { api, type StrategyInfo, type StrategyRun } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
+import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 
 export default function StrategiesPage() {
   const { refreshIntervalMs } = useRefreshInterval();
+  const pushConnected = useLivePushConnected();
+  const stratEpoch = useLiveEpoch("strategies");
   const [list, setList] = useState<StrategyInfo[] | null>(null);
   const [runs, setRuns] = useState<StrategyRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,9 +30,12 @@ export default function StrategiesPage() {
 
   useEffect(() => {
     void refresh();
+    if (pushConnected) {
+      return undefined;
+    }
     const id = setInterval(refresh, refreshIntervalMs);
     return () => clearInterval(id);
-  }, [refresh, refreshIntervalMs]);
+  }, [refresh, refreshIntervalMs, pushConnected, stratEpoch]);
 
   const exportRunsCsv = useCallback(() => {
     if (!runs?.length) return;

@@ -7,6 +7,19 @@ const BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "http://localhost:8000";
 
+/** Tesztekhez és egyértelmű URL-építéshez (http/https → ws/wss). */
+export function toLiveStreamWsUrl(apiBaseHttp: string): string {
+  const base = apiBaseHttp.replace(/\/+$/, "");
+  const u = new URL("/api/live/stream", base.endsWith("/") ? base : `${base}/`);
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  return u.toString();
+}
+
+/** WebSocket URL a backend ``/api/live/stream`` végpontjához (http→ws). */
+export function liveStreamWebSocketUrl(): string {
+  return toLiveStreamWsUrl(BASE_URL);
+}
+
 export interface TickerInfo {
   symbol: string;
   last_price: string;

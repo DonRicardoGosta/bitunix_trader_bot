@@ -7,6 +7,7 @@ leállási banner megy, hogy a konténerek életjelet adjanak.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import sys
 from collections.abc import AsyncIterator
@@ -22,6 +23,7 @@ from app.api.routes import (
     dashboard,
     events,
     health,
+    live,
     market,
     orders,
     positions,
@@ -31,7 +33,24 @@ from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel
 from app.services.calibration_runner import CalibrationRunner
+from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
+from app.services.live_bus import subscriber_count as live_subscriber_count
 from app.services.strategy.runner import StrategyRunner
+
+
+async def _live_ui_push_tick(stop: asyncio.Event) -> None:
+    """Rendszeres invalidáció, ha van websocket kliens (REST frissítést vált ki)."""
+    while not stop.is_set():
+        settings = get_settings()
+        interval = max(0.3, float(settings.live_ui_push_interval_seconds))
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+            return
+        except TimeoutError:
+            pass
+        if live_subscriber_count() == 0:
+            continue
+        await publish_invalidate(DEFAULT_INVALIDATION_TOPICS)
 
 
 @asynccontextmanager
@@ -73,9 +92,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await runner.start()
         app.state.strategy_runner = runner
 
+    live_push_stop = asyncio.Event()
+    live_push_task: asyncio.Task[None] | None = None
+    if settings.live_ui_push_enabled and settings.live_ui_push_interval_seconds > 0:
+        live_push_task = asyncio.create_task(
+            _live_ui_push_tick(live_push_stop),
+            name="live-ui-push-tick",
+        )
+    app.state.live_push_task = live_push_task
+
     try:
         yield
     finally:
+        live_push_stop.set()
+        if live_push_task is not None:
+            live_push_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await live_push_task
         if runner is not None:
             await runner.stop()
         if calibration_runner is not None:
@@ -101,9 +134,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    _cors = [
-        o.strip() for o in settings.backend_cors_origins.split(",") if o.strip()
-    ]
+    _cors = [o.strip() for o in settings.backend_cors_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors,
@@ -121,6 +152,7 @@ def create_app() -> FastAPI:
     app.include_router(events.router, prefix="/api")
     app.include_router(calibration.router, prefix="/api")
     app.include_router(dashboard.router, prefix="/api")
+    app.include_router(live.router, prefix="/api")
 
     return app
 

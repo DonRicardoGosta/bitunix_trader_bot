@@ -102,6 +102,18 @@ class Settings(BaseSettings):
     # Ha True, a tradelés (manuális is) blokkolva van amíg nincs friss kalibráció.
     require_calibration_for_trading: bool = True
 
+    # -- élő UI push (WebSocket invalidáció + opcionális tick) ----------------
+    live_ui_push_enabled: bool = True
+    live_ui_push_interval_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+        le=120.0,
+        description=(
+            "Ha van websocket kliens, ennyi másodpercenként invalidációs push. "
+            "0: nincs időzített tick (csak eseményvezérelt push)."
+        ),
+    )
+
     @field_validator("backend_cors_origins", mode="before")
     @classmethod
     def _normalize_cors_csv(cls, value: object) -> str:
@@ -110,7 +122,11 @@ class Settings(BaseSettings):
             return "http://localhost:3000,http://127.0.0.1:3000"
         if isinstance(value, list):
             parts = [str(x).strip() for x in value if str(x).strip()]
-            return ",".join(parts) if parts else "http://localhost:3000,http://127.0.0.1:3000"
+            return (
+                ",".join(parts)
+                if parts
+                else "http://localhost:3000,http://127.0.0.1:3000"
+            )
         if isinstance(value, str):
             s = value.strip()
             if not s:
@@ -128,7 +144,11 @@ class Settings(BaseSettings):
                         else "http://localhost:3000,http://127.0.0.1:3000"
                     )
             parts = [p.strip() for p in s.split(",") if p.strip()]
-            return ",".join(parts) if parts else "http://localhost:3000,http://127.0.0.1:3000"
+            return (
+                ",".join(parts)
+                if parts
+                else "http://localhost:3000,http://127.0.0.1:3000"
+            )
         return "http://localhost:3000,http://127.0.0.1:3000"
 
     @property

@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel, StrategyRun, StrategyRunStatus
 from app.db.session import AsyncSessionLocal
+from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.strategy.registry import (
     STRATEGIES,
@@ -104,7 +105,8 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
             await audit.record(
                 session,
                 f"strategy.run.{(db_run.status.value if db_run.status else 'unknown').lower()}",
-                level=AuditLevel.ERROR if db_run.status == StrategyRunStatus.FAILED
+                level=AuditLevel.ERROR
+                if db_run.status == StrategyRunStatus.FAILED
                 else AuditLevel.INFO,
                 message=audit_msg,
                 payload={
@@ -118,6 +120,7 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
             )
             await session.commit()
 
+        await publish_invalidate(DEFAULT_INVALIDATION_TOPICS)
         return {
             "run_id": run_id,
             "status": db_run.status.value if db_run and db_run.status else "UNKNOWN",

@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel, Order, OrderSide, OrderStatus, OrderType
 from app.schemas.trading import OrderRequest, OrderResponse
+from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 from app.services.order_enrichment import (
     PositionMatch,
     TradeAugment,
@@ -134,6 +135,7 @@ class TradingService:
             strategy_name=strategy_name,
         )
         await self._session.commit()
+        await publish_invalidate(DEFAULT_INVALIDATION_TOPICS)
 
         return OrderResponse(
             client_order_id=client_order_id,
@@ -427,11 +429,7 @@ class TradingService:
         cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
         hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
         pid = (hr or {}).get("positionId") or (hr or {}).get("position_id")
-        aug_pos = (
-            trade_by_position.get((o.symbol.upper(), str(pid)))
-            if pid
-            else None
-        )
+        aug_pos = trade_by_position.get((o.symbol.upper(), str(pid))) if pid else None
         aug_pick = pick_trade_augment(
             trade_by_client,
             trade_by_order,

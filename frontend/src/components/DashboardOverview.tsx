@@ -11,6 +11,7 @@ import {
   type NormalizedPosition,
 } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
+import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { cn, formatNumber } from "@/lib/utils";
 
 function num(v: string | null | undefined): number | null {
@@ -42,6 +43,8 @@ const LEVEL_COLOR: Record<string, string> = {
 
 export function DashboardOverview() {
   const { intervalSec, refreshIntervalMs } = useRefreshInterval();
+  const pushConnected = useLivePushConnected();
+  const dashEpoch = useLiveEpoch("dashboard");
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lookback, setLookback] = useState(1);
@@ -61,12 +64,17 @@ export function DashboardOverview() {
       }
     }
     void load();
+    if (pushConnected) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [lookback, refreshIntervalMs]);
+  }, [lookback, refreshIntervalMs, pushConnected, dashEpoch]);
 
   const account = data?.exchange?.account ?? null;
   const open = data?.exchange?.open_positions;
@@ -94,7 +102,12 @@ export function DashboardOverview() {
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Áttekintés</h1>
           <p className="text-muted text-sm mt-1">
-            Élő számla- és tradinginformáció · frissül {intervalSec} mp-enként ·{" "}
+            Élő számla- és tradinginformáció ·{" "}
+            {pushConnected ? (
+              <>élő push (WebSocket) · </>
+            ) : (
+              <>frissül {intervalSec} mp-enként · </>
+            )}
             <span className="text-xs">
               utolsó frissítés:{" "}
               {new Date(data.generated_at).toLocaleString("hu-HU")}

@@ -6,6 +6,7 @@ import { Input, Select } from "@/components/ui/input";
 import { Pagination, pageSlice } from "@/components/ui/Pagination";
 import { api, type OrderRow } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
+import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseDecimal(value: string | null | undefined): number | null {
@@ -107,6 +108,8 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 export function OrdersTable() {
   const { refreshIntervalMs } = useRefreshInterval();
+  const pushConnected = useLivePushConnected();
+  const ordersEpoch = useLiveEpoch("orders");
   const [rows, setRows] = useState<OrderRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -132,12 +135,17 @@ export function OrdersTable() {
       }
     }
     void load();
+    if (pushConnected) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const id = setInterval(load, refreshIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [refreshIntervalMs]);
+  }, [refreshIntervalMs, pushConnected, ordersEpoch]);
 
   const filteredRows = useMemo(() => {
     if (!rows) return [];
