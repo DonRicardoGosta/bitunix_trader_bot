@@ -393,10 +393,25 @@ def _clip_variation_tpsl_move_pct(
     tp_move_pct: Decimal,
     sl_move_pct: Decimal,
 ) -> tuple[Decimal, Decimal]:
-    """``medián × szorzó`` után: TP [30, 300] %, SL [10, 150] % (túllépés levágása)."""
+    """Variációs szimuláció: csak **felső** korlát (TP ≤300%%, SL ≤150%%).
+
+    A TP ≥30%% / SL ≥10%% követelmény **nem** felfelé klipel — különben minden kis
+    medián×szorzó ugyanarra a 30/10-re esne, és a rács sorai megegyeznének.
+    """
     return (
-        max(_WF_VAR_TP_MOVE_PCT_MIN, min(_WF_VAR_TP_MOVE_PCT_MAX, tp_move_pct)),
-        max(_WF_VAR_SL_MOVE_PCT_MIN, min(_WF_VAR_SL_MOVE_PCT_MAX, sl_move_pct)),
+        min(_WF_VAR_TP_MOVE_PCT_MAX, tp_move_pct),
+        min(_WF_VAR_SL_MOVE_PCT_MAX, sl_move_pct),
+    )
+
+
+def _variation_meets_min_tpsl_pct_profile(
+    tp_move_pct_raw: Decimal,
+    sl_move_pct_raw: Decimal,
+) -> bool:
+    """Ajánlási profil: első belépéshez tartozó nyers %% legalább a minimum sávban."""
+    return (
+        tp_move_pct_raw >= _WF_VAR_TP_MOVE_PCT_MIN
+        and sl_move_pct_raw >= _WF_VAR_SL_MOVE_PCT_MIN
     )
 
 
@@ -744,15 +759,14 @@ def build_walk_forward_tpsl_variations_payload(
     target_tp_win_rate_pct: Decimal = Decimal("85"),
     min_resolved_trades: int = 2,
 ) -> dict[str, Any]:
-    """Több TP/SL (medián×) kombináció; effektív TP/SL %% a [30,300] / [10,150] sávra vágva.
+    """Több TP/SL (medián×) kombináció; szimulációban TP/SL %% csak **felülről** vágva (≤300 / ≤150).
 
-    Minden rács-pont lefut. A sorrend: feloldott TP/(TP+SL) csökkenő. Kiesnek azok a sorok,
-    ahol az utolsó 24 órában pontosan egy belépés volt és az nem érintett TP-t sem SL-t
-    (``first_touch == none``). **Ajánlott** (``is_recommended``): legfeljebb egy — a rendezett
-    lista első olyan eleme, ahol az utolsó 24 órában legalább
-    ``_WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION`` belépés volt; csak ekkor töltődik
-    ``best_current_signal``. Az ajánlott elem nincs külön sor elejére téve: a sorrend mindig
-    a TP% szerinti.
+    A TP ≥30%% és SL ≥10%% a ``meets_min_tpsl_pct_profile`` mezőben szerepel (első belépés
+    train-mediánja × szorzó); **ajánláshoz** kell ez is, különben a rács sorai különbözőek lennének,
+    de felfelé klipelés mind ugyanazt a 30/10-et adná. A sorrend: feloldott TP/(TP+SL) csökkenő.
+    Kiesnek a sorok, ha az utolsó 24 órában pontosan egy belépés volt és nincs TP/SL.
+    **Ajánlott**: első rendezett sor, ahol ≥ ``_WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION`` belépés
+    volt 24h-ban **és** ``meets_min_tpsl_pct_profile``; csak ekkor ``best_current_signal``.
     """
     pairs = _tpsl_variation_multiplier_pairs()
     rows_raw: list[dict[str, Any]] = []
@@ -790,6 +804,17 @@ def build_walk_forward_tpsl_variations_payload(
             klines, seq["trades"], hours=24
         ):
             continue
+        raw_tp_s: str | None = None
+        raw_sl_s: str | None = None
+        meets_profile = False
+        trs = seq.get("trades") or []
+        if trs:
+            med0 = Decimal(str(trs[0]["median_move_pct_train"]))
+            raw_tp = med0 * tp_m
+            raw_sl = med0 * sl_m
+            raw_tp_s = str(raw_tp.quantize(Decimal("0.0001")))
+            raw_sl_s = str(raw_sl.quantize(Decimal("0.0001")))
+            meets_profile = _variation_meets_min_tpsl_pct_profile(raw_tp, raw_sl)
         rows_raw.append(
             {
                 "tp_median_multiplier": str(tp_m),
@@ -801,6 +826,9 @@ def build_walk_forward_tpsl_variations_payload(
                 "meets_target": meets,
                 "resolved_count": resolved,
                 "trades_entered_last_24h_count": n24,
+                "first_trade_tp_move_pct_raw": raw_tp_s,
+                "first_trade_sl_move_pct_raw": raw_sl_s,
+                "meets_min_tpsl_pct_profile": meets_profile,
                 "sequence": slim,
             }
         )
@@ -826,10 +854,13 @@ def build_walk_forward_tpsl_variations_payload(
     for i, r in enumerate(rows_raw):
         if (
             int(r["trades_entered_last_24h_count"])
-            >= _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION
+            < _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION
         ):
-            rec_idx = i
-            break
+            continue
+        if not bool(r.get("meets_min_tpsl_pct_profile")):
+            continue
+        rec_idx = i
+        break
 
     rows: list[dict[str, Any]] = []
     for rank, item in enumerate(rows_raw):

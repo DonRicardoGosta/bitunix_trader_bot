@@ -174,6 +174,9 @@ class TpslVariationRow(BaseModel):
     meets_target: bool = False
     resolved_count: int = Field(ge=0)
     trades_entered_last_24h_count: int = Field(ge=0)
+    first_trade_tp_move_pct_raw: str | None = None
+    first_trade_sl_move_pct_raw: str | None = None
+    meets_min_tpsl_pct_profile: bool = False
     is_recommended: bool = False
     sequence: WalkForwardSequenceCore
 
@@ -190,9 +193,15 @@ class WalkForwardTpslVariations(BaseModel):
     any_variation_meets_target: bool = False
     has_recommended_variation: bool = False
     min_trades_last_24h_for_recommendation: int = Field(default=5, ge=1, le=100)
-    variation_tp_move_pct_min: str = "30"
+    variation_tp_move_pct_min: str = Field(
+        default="30",
+        description="Ajánlási profil: első belépés nyers TP%% legalább ennyi (nem szimulációs klipp).",
+    )
     variation_tp_move_pct_max: str = "300"
-    variation_sl_move_pct_min: str = "10"
+    variation_sl_move_pct_min: str = Field(
+        default="10",
+        description="Ajánlási profil: első belépés nyers SL%% legalább ennyi.",
+    )
     variation_sl_move_pct_max: str = "150"
     best_current_signal: WalkForwardCurrentSignal | None = None
     variations: list[TpslVariationRow] = Field(default_factory=list)

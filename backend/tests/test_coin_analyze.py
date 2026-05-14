@@ -137,10 +137,32 @@ def test_simulate_long_same_bar_both_counts_sl() -> None:
 
 
 def test_clip_variation_tpsl_move_pct() -> None:
+    """Csak felső korlát: kicsi érték változatlan; nagy levágódik."""
     lo = coin_analyze_mod._clip_variation_tpsl_move_pct(Decimal("1"), Decimal("5"))
-    assert lo == (Decimal("30"), Decimal("10"))
+    assert lo == (Decimal("1"), Decimal("5"))
     hi = coin_analyze_mod._clip_variation_tpsl_move_pct(Decimal("500"), Decimal("200"))
     assert hi == (Decimal("300"), Decimal("150"))
+
+
+def test_variation_meets_min_tpsl_pct_profile() -> None:
+    assert (
+        coin_analyze_mod._variation_meets_min_tpsl_pct_profile(
+            Decimal("30"), Decimal("10")
+        )
+        is True
+    )
+    assert (
+        coin_analyze_mod._variation_meets_min_tpsl_pct_profile(
+            Decimal("29.9"), Decimal("10")
+        )
+        is False
+    )
+    assert (
+        coin_analyze_mod._variation_meets_min_tpsl_pct_profile(
+            Decimal("30"), Decimal("9")
+        )
+        is False
+    )
 
 
 def test_count_trades_entry_in_last_24h() -> None:

@@ -359,6 +359,9 @@ export interface TpslVariationRow {
   meets_target: boolean;
   resolved_count: number;
   trades_entered_last_24h_count: number;
+  first_trade_tp_move_pct_raw: string | null;
+  first_trade_sl_move_pct_raw: string | null;
+  meets_min_tpsl_pct_profile: boolean;
   is_recommended: boolean;
   sequence: WalkForwardSequenceCore;
 }

@@ -511,28 +511,29 @@ function TpslVariationsSection({
     <div className="mt-4 space-y-2">
       <div className="text-sm font-medium">TP / SL variációk (train tiszta-láb medián × szorzó)</div>
       <p className="text-xs text-muted">
-        A variációkban a <span className="font-medium text-foreground">számolt TP %%</span> legalább{" "}
-        {block.variation_tp_move_pct_min}% és legfeljebb {block.variation_tp_move_pct_max}%; az{" "}
-        <span className="font-medium text-foreground">SL %%</span> (kedvezőtlen irány) legalább{" "}
-        {block.variation_sl_move_pct_min}% és legfeljebb {block.variation_sl_move_pct_max}% (a medián×
-        szorzó után vágva). Minden kombináció ugyanazzal a szekvenciális szabállyal fut (50% kezdő
-        train → trade → {block.variations[0]?.sequence.cooldown_minutes ?? "—"} perc cooldown → újra).
-        Egy trade előretekintése legfeljebb a hátralévő gyertyák harmada (legalább 16 gyertya), így
-        TP/SL nélküli szakasz nem foglalja el az egész idősávot. A sorrend:{" "}
-        <span className="font-medium text-foreground">TP / (TP+SL)</span> csökkenő
-        (feloldott trade: min. {block.min_resolved_trades}). Cél: ≥{block.target_tp_win_rate_pct}% TP
-        nyerés.
+        A szimulációban a medián×szorzóból számolt TP/SL %% csak <span className="font-medium text-foreground">felülről</span>{" "}
+        vágódik (TP legfeljebb {block.variation_tp_move_pct_max}%, SL legfeljebb {block.variation_sl_move_pct_max}%), hogy a
+        rács sorai ne essenek össze egyetlen 30/10-es értékre. A{" "}
+        <span className="font-medium text-foreground">≥{block.variation_tp_move_pct_min}% TP</span> és{" "}
+        <span className="font-medium text-foreground">≥{block.variation_sl_move_pct_min}% SL</span> az{" "}
+        <span className="font-medium text-foreground">első belépés</span> nyers százalékaira vonatkozik (profil
+        jelző a sorban); az ajánláshoz kell ez is. Minden kombináció ugyanazzal
+        a szekvenciális szabállyal fut (50% kezdő train → trade →{" "}
+        {block.variations[0]?.sequence.cooldown_minutes ?? "—"} perc cooldown → újra). Egy trade előretekintése legfeljebb a
+        hátralévő gyertyák harmada (legalább 16 gyertya). A sorrend:{" "}
+        <span className="font-medium text-foreground">TP / (TP+SL)</span> csökkenő (feloldott trade: min.{" "}
+        {block.min_resolved_trades}). Cél: ≥{block.target_tp_win_rate_pct}% TP nyerés.
         {block.any_variation_meets_target ? (
           <span className="text-emerald-400 font-medium ml-1">Van olyan pont, ami eléri a célt.</span>
         ) : (
           <span className="text-muted ml-1">Egyik rács-pont sem éri el a 85%-ot.</span>
         )}{" "}
         <span className="block mt-1">
-          Olyan variáció nincs a listában, ahol az utolsó 24 órában pontosan egy belépés volt, és sem TP,
-          sem SL nem következett be. Legfeljebb <span className="font-medium text-foreground">egy ajánlott</span>{" "}
-          konfiguráció van: a legjobb TP/(TP+SL) % azok közül, ahol az utolsó 24 órában legalább{" "}
-          {block.min_trades_last_24h_for_recommendation} belépés történt; a jelenlegi predikció csak ilyenkor
-          a javasolt szorzókat mutatja.
+          Olyan variáció nincs a listában, ahol az utolsó 24 órában pontosan egy belépés volt, és sem TP, sem SL nem
+          következett be. Legfeljebb <span className="font-medium text-foreground">egy ajánlott</span> konfiguráció van: a
+          legjobb TP/(TP+SL) % azok közül, ahol az utolsó 24 órában legalább{" "}
+          {block.min_trades_last_24h_for_recommendation} belépés történt, és az első belépés nyers TP/SL %% eléri a fenti
+          minimumot; a jelenlegi predikció csak ilyenkor a javasolt szorzókat mutatja.
         </span>
       </p>
       {block.variations.map((v: TpslVariationRow, i: number) => {
@@ -550,6 +551,16 @@ function TpslVariationsSection({
               <strong className="text-foreground">{v.resolved_tp_win_rate_pct ?? "—"}%</strong>
             </span>
             <span>24h belépés: {v.trades_entered_last_24h_count}</span>
+            {v.first_trade_tp_move_pct_raw != null ? (
+              <span>
+                1. belépés nyers: TP {v.first_trade_tp_move_pct_raw}% / SL {v.first_trade_sl_move_pct_raw ?? "—"}%
+              </span>
+            ) : null}
+            {v.meets_min_tpsl_pct_profile ? (
+              <span className="text-sky-400/95">profil ≥ min</span>
+            ) : (
+              <span className="text-muted">profil &lt; min</span>
+            )}
             {v.is_recommended ? (
               <span className="text-emerald-400 font-medium">ajánlott</span>
             ) : null}
@@ -560,6 +571,16 @@ function TpslVariationsSection({
         ) : (
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted pt-1">
             <span>24h belépés: {v.trades_entered_last_24h_count}</span>
+            {v.first_trade_tp_move_pct_raw != null ? (
+              <span>
+                1. belépés nyers: TP {v.first_trade_tp_move_pct_raw}% / SL {v.first_trade_sl_move_pct_raw ?? "—"}%
+              </span>
+            ) : null}
+            {v.meets_min_tpsl_pct_profile ? (
+              <span className="text-sky-400/95">profil ≥ min</span>
+            ) : (
+              <span className="text-muted">profil &lt; min</span>
+            )}
             {v.is_recommended ? (
               <span className="text-emerald-400 font-medium">ajánlott</span>
             ) : null}
