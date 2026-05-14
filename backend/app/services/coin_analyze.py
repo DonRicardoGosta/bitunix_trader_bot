@@ -404,6 +404,14 @@ def _clip_variation_tpsl_move_pct(
     )
 
 
+def _coerce_sl_move_pct_le_tp(
+    tp_move_pct: Decimal,
+    sl_move_pct: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """SL %% távolság nem lehet nagyobb a TP %% távolságnál (medián×szorzó + vágások után)."""
+    return (tp_move_pct, min(sl_move_pct, tp_move_pct))
+
+
 def _variation_meets_min_tpsl_pct_profile(
     tp_move_pct_raw: Decimal,
     sl_move_pct_raw: Decimal,
@@ -506,6 +514,7 @@ def _compute_current_signal(
     sl_move = med * sl_median_multiplier
     if clip_variation_tpsl_bounds:
         tp_move, sl_move = _clip_variation_tpsl_move_pct(tp_move, sl_move)
+    tp_move, sl_move = _coerce_sl_move_pct_le_tp(tp_move, sl_move)
     predicted, reason = predict_side_from_train_clean_legs(klines, train_clean)
     entry = klines[-1]["close"]
     if entry <= 0:
@@ -552,7 +561,8 @@ def _build_walk_forward_sequence_core(
 
     Egy trade előretekintése alapból max. a hátralévő gyertyák harmada (min.
     ``_WF_SEQ_MIN_FORWARD_CHUNK_BARS``), hogy TP/SL nélküli szakasz ne nyelje el az egész tesztet;
-    ``max_trade_forward_bars`` felülírja ezt.
+    ``max_trade_forward_bars`` felülírja ezt. A szimulált SL %% távolság soha nem haladja meg a
+    TP %% távolságot (``_coerce_sl_move_pct_le_tp``).
     """
     current = _compute_current_signal(
         klines,
@@ -609,6 +619,7 @@ def _build_walk_forward_sequence_core(
         sl_move = med * sl_median_multiplier
         if clip_variation_tpsl_bounds:
             tp_move, sl_move = _clip_variation_tpsl_move_pct(tp_move, sl_move)
+        tp_move, sl_move = _coerce_sl_move_pct_le_tp(tp_move, sl_move)
         predicted, reason = predict_side_from_train_clean_legs(train, train_clean)
         entry = train[-1]["close"]
         if entry <= 0:

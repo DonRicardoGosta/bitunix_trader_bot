@@ -144,6 +144,17 @@ def test_clip_variation_tpsl_move_pct() -> None:
     assert hi == (Decimal("300"), Decimal("150"))
 
 
+def test_coerce_sl_move_pct_le_tp() -> None:
+    assert coin_analyze_mod._coerce_sl_move_pct_le_tp(Decimal("5"), Decimal("3")) == (
+        Decimal("5"),
+        Decimal("3"),
+    )
+    assert coin_analyze_mod._coerce_sl_move_pct_le_tp(Decimal("5"), Decimal("8")) == (
+        Decimal("5"),
+        Decimal("5"),
+    )
+
+
 def test_variation_meets_min_tpsl_pct_profile() -> None:
     assert (
         coin_analyze_mod._variation_meets_min_tpsl_pct_profile(

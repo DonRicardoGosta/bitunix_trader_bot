@@ -513,7 +513,7 @@ function TpslVariationsSection({
       <p className="text-xs text-muted">
         A szimulációban a medián×szorzóból számolt TP/SL %% csak <span className="font-medium text-foreground">felülről</span>{" "}
         vágódik (TP legfeljebb {block.variation_tp_move_pct_max}%, SL legfeljebb {block.variation_sl_move_pct_max}%), hogy a
-        rács sorai ne essenek össze egyetlen 30/10-es értékre. A{" "}
+        rács sorai ne essenek össze egyetlen 30/10-es értékre; az effektív SL %% soha nem nagyobb a TP %%-nál. A{" "}
         <span className="font-medium text-foreground">≥{block.variation_tp_move_pct_min}% TP</span> és{" "}
         <span className="font-medium text-foreground">≥{block.variation_sl_move_pct_min}% SL</span> az{" "}
         <span className="font-medium text-foreground">első belépés</span> nyers százalékaira vonatkozik (profil
