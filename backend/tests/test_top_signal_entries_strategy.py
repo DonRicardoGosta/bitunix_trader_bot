@@ -286,6 +286,18 @@ async def test_top_signal_entries_places_long_and_short_with_signals() -> None:
     assert len(fake.place_order_calls) == 2
 
     async with AsyncSessionLocal() as session:
+        o_rows = (
+            await session.execute(
+                sa.select(Order).where(Order.strategy_name == "top_signal_entries")
+            )
+        ).scalars().all()
+    assert len(o_rows) == 2
+    for o in o_rows:
+        assert o.entry_context is not None
+        assert o.entry_context.get("strategy") == "top_signal_entries"
+        assert "tp_move_pct" in o.entry_context
+
+    async with AsyncSessionLocal() as session:
         rows = (
             (
                 await session.execute(

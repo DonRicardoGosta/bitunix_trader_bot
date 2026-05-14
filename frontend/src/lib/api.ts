@@ -32,6 +32,36 @@ export interface OrderExchangeInfo {
   debug?: Record<string, unknown>;
 }
 
+export interface OrderWalkForwardContext {
+  gate_source?: string | null;
+  prediction_reason?: string | null;
+  target_tp_win_rate_pct?: string | null;
+  variation?: {
+    rank?: number;
+    label?: string | null;
+    resolved_tp_win_rate_pct?: string | number | null;
+    meets_target?: boolean;
+    meets_min_tpsl_pct_profile?: boolean;
+    trades_entered_last_24h_count?: number;
+    resolved_count?: number;
+    tp_median_multiplier?: string | number | null;
+    sl_median_multiplier?: string | number | null;
+    target_tp_win_rate_pct?: string | null;
+  } | null;
+}
+
+export interface OrderEntryContext {
+  strategy?: string;
+  signal_reason?: string;
+  direction_reason?: string;
+  change_pct_24h?: string;
+  range_position?: string | null;
+  tp_source?: string;
+  tp_move_pct?: string;
+  sl_move_pct?: string;
+  walk_forward?: OrderWalkForwardContext | null;
+}
+
 export interface OrderRow {
   id: number;
   client_order_id: string;
@@ -45,6 +75,8 @@ export interface OrderRow {
   status: string;
   created_at: string;
   exchange: OrderExchangeInfo;
+  /** Stratégia-belépés összefoglaló (WF win rate, forrás stb.). */
+  entry_context?: OrderEntryContext | null;
 }
 
 /** GET /api/orders/pnl-totals — összes saját DB rendelés PnL összesítője */

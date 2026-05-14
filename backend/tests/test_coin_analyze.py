@@ -326,6 +326,7 @@ def test_walk_forward_live_gate_ok(monkeypatch) -> None:
         return {
             "enabled": True,
             "has_recommended_variation": True,
+            "target_tp_win_rate_pct": "85",
             "best_current_signal": {
                 "enabled": True,
                 "predicted_side": "long",
@@ -336,6 +337,13 @@ def test_walk_forward_live_gate_ok(monkeypatch) -> None:
             "variations": [
                 {
                     "is_recommended": True,
+                    "rank": 0,
+                    "label": "tp0.5_sl0.35",
+                    "resolved_tp_win_rate_pct": "90.00",
+                    "meets_target": True,
+                    "meets_min_tpsl_pct_profile": True,
+                    "trades_entered_last_24h_count": 6,
+                    "resolved_count": 10,
                     "tp_median_multiplier": "0.5",
                     "sl_median_multiplier": "0.35",
                 },
@@ -354,6 +362,11 @@ def test_walk_forward_live_gate_ok(monkeypatch) -> None:
     assert r["tp_move_pct"] == Decimal("3.1")
     assert r["sl_move_pct"] == Decimal("2.4")
     assert r["wf_gate_source"] == "ui_profile_recommendation"
+    assert r["wf_target_tp_win_rate_pct"] == "85"
+    snap = r.get("wf_variation_snapshot")
+    assert isinstance(snap, dict)
+    assert snap.get("tp_median_multiplier") == "0.5"
+    assert snap.get("resolved_tp_win_rate_pct") == "90.00"
 
 
 def test_walk_forward_live_gate_no_recommend(monkeypatch) -> None:
@@ -376,14 +389,18 @@ def test_walk_forward_live_gate_grid_meets_target_fallback(monkeypatch) -> None:
             "enabled": True,
             "has_recommended_variation": False,
             "best_current_signal": None,
+            "target_tp_win_rate_pct": "85",
             "variations": [
                 {
                     "rank": 0,
+                    "label": "tp0.65_sl0.65",
+                    "resolved_tp_win_rate_pct": "100.00",
                     "tp_median_multiplier": "0.65",
                     "sl_median_multiplier": "0.65",
                     "meets_target": True,
                     "trades_entered_last_24h_count": 5,
                     "meets_min_tpsl_pct_profile": False,
+                    "resolved_count": 5,
                 }
             ],
         }
@@ -409,3 +426,7 @@ def test_walk_forward_live_gate_grid_meets_target_fallback(monkeypatch) -> None:
     assert r["wf_gate_source"] == "grid_meets_target"
     assert r["tp_median_multiplier"] == "0.65"
     assert r["sl_median_multiplier"] == "0.65"
+    snap = r.get("wf_variation_snapshot")
+    assert isinstance(snap, dict)
+    assert snap.get("resolved_tp_win_rate_pct") == "100.00"
+    assert snap.get("rank") == 0

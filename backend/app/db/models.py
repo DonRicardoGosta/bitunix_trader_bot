@@ -96,6 +96,7 @@ class Order(Base, TimestampMixin):
     strategy_name: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )
+    entry_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class PositionSnapshot(Base, TimestampMixin):

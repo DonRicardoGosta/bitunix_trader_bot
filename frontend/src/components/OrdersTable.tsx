@@ -27,6 +27,30 @@ function pnlToneClass(n: number | null): string {
   return "";
 }
 
+function compactEntrySummary(r: OrderRow): string {
+  const ec = r.entry_context;
+  if (!ec) return "";
+  const parts: string[] = [];
+  if (ec.strategy) parts.push(ec.strategy);
+  if (ec.tp_source) parts.push(ec.tp_source);
+  const wf = ec.walk_forward;
+  const rate = wf?.variation?.resolved_tp_win_rate_pct;
+  if (rate != null && String(rate) !== "") {
+    parts.push(`TPwin=${String(rate)}%`);
+  }
+  if (wf?.gate_source) parts.push(String(wf.gate_source));
+  return parts.join(" · ");
+}
+
+async function copyOrderEntryContext(r: OrderRow): Promise<void> {
+  const payload = r.entry_context ?? {
+    client_order_id: r.client_order_id,
+    symbol: r.symbol,
+    note: "no_entry_context",
+  };
+  await navigator.clipboard.writeText(JSON.stringify(payload));
+}
+
 interface SymbolGroup {
   symbol: string;
   rows: OrderRow[];
@@ -402,6 +426,7 @@ function OrdersInnerTable({ rows }: { rows: OrderRow[] }) {
           <tr>
             <th className="text-left py-2 px-3">Idő</th>
             <th className="text-left py-2 px-3">Irány</th>
+            <th className="text-left py-2 px-3">Belépés</th>
             <th className="text-left py-2 px-3">Típus</th>
             <th className="text-right py-2 px-3">Mennyiség</th>
             <th className="text-right py-2 px-3">Ár</th>
@@ -416,6 +441,8 @@ function OrdersInnerTable({ rows }: { rows: OrderRow[] }) {
           {visible.map((r) => {
             const ex = r.exchange;
             const roiNum = parseDecimal(ex?.roi_pct ?? null);
+            const entrySummary = compactEntrySummary(r);
+            const ec = r.entry_context;
             return (
               <tr key={r.id} className="border-t border-border/30">
                 <td className="py-1.5 px-3 text-muted num whitespace-nowrap">
@@ -428,6 +455,27 @@ function OrdersInnerTable({ rows }: { rows: OrderRow[] }) {
                   )}
                 >
                   {r.side}
+                </td>
+                <td className="py-1.5 px-3 align-top">
+                  <div className="flex flex-col gap-0.5 min-w-[7rem] max-w-[18rem]">
+                    <span
+                      className="text-[11px] text-muted leading-snug break-words"
+                      title={entrySummary || undefined}
+                    >
+                      {entrySummary || "—"}
+                    </span>
+                    {ec ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-[10px] px-1.5 self-start"
+                        onClick={() => void copyOrderEntryContext(r)}
+                      >
+                        JSON másolás
+                      </Button>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="py-1.5 px-3">{r.type}</td>
                 <td className="py-1.5 px-3 text-right num">{r.quantity}</td>

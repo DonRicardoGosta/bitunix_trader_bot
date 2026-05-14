@@ -77,6 +77,8 @@ def test_place_order_dry_run_via_http() -> None:
         assert "exchange" in first
         assert "lifecycle" in first["exchange"]
         assert "lifecycle_label" in first["exchange"]
+        assert "entry_context" in first
+        assert first["entry_context"] is None
 
         dbg_list = client.get("/api/orders?debug_sync=true")
         assert dbg_list.status_code == 200

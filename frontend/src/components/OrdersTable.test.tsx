@@ -188,4 +188,41 @@ describe("<OrdersTable /> (grouped)", () => {
     expect(roiCell.className).not.toContain("text-profit");
     expect(roiCell.className).not.toContain("text-loss");
   });
+
+  it("shows entry summary and copies entry_context JSON", async () => {
+    const entry_context = {
+      strategy: "top_signal_entries",
+      tp_source: "walk_forward_recommendation",
+      walk_forward: {
+        gate_source: "grid_meets_target",
+        variation: { resolved_tp_win_rate_pct: "92.5" },
+      },
+    };
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse([
+        order({
+          id: 99,
+          symbol: "PTBUSDT",
+          entry_context,
+        }),
+      ]),
+    ) as unknown as typeof fetch;
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(
+      <WithRefreshProvider>
+        <OrdersTable />
+      </WithRefreshProvider>,
+    );
+    const header = await screen.findByRole("button", { name: /PTBUSDT/ });
+    await userEvent.click(header);
+    expect(screen.getByText(/TPwin=92\.5%/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /JSON másolás/i }));
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(entry_context));
+  });
 });

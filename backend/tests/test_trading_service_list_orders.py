@@ -95,6 +95,7 @@ async def _seed_orders(rows: list[dict[str, Any]]) -> None:
                 leverage=row["leverage"],
                 status=row.get("status", OrderStatus.NEW),
                 reduce_only=row.get("reduce_only", False),
+                entry_context=row.get("entry_context"),
             )
             session.add(o)
             await session.flush()
@@ -345,3 +346,31 @@ async def test_orders_pnl_totals_matches_sum_of_list_orders_rows() -> None:
     assert Decimal(totals["realized_pnl_usdt"]) == sum_r
     assert Decimal(totals["unrealized_pnl_usdt"]) == sum_u
     assert Decimal(totals["total_pnl_usdt"]) == sum_r + sum_u
+
+
+@pytest.mark.asyncio
+async def test_list_orders_includes_entry_context_from_db() -> None:
+    when = datetime.fromtimestamp(1778681838.0, tz=UTC)
+    ctx = {
+        "strategy": "top_signal_entries",
+        "tp_source": "walk_forward_recommendation",
+    }
+    await _seed_orders([
+        {
+            "client_order_id": "bt-ctx-1",
+            "symbol": "XRPUSDT",
+            "side": OrderSide.BUY,
+            "quantity": Decimal("1"),
+            "price": None,
+            "leverage": 10,
+            "status": OrderStatus.NEW,
+            "created_at": when,
+            "entry_context": ctx,
+        }
+    ])
+    fake = _FakeClient()
+    async with AsyncSessionLocal() as session:
+        svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
+        rows = await svc.list_orders(limit=10)
+    assert len(rows) == 1
+    assert rows[0]["entry_context"] == ctx

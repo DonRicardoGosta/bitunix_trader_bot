@@ -751,4 +751,5 @@ def build_order_api_dict(
         "status": o.status.value,
         "created_at": o.created_at.isoformat(),
         "exchange": exchange,
+        "entry_context": o.entry_context,
     }

@@ -55,12 +55,14 @@ class TradingService:
         payload: OrderRequest,
         *,
         strategy_name: str | None = None,
+        entry_context: dict[str, Any] | None = None,
     ) -> OrderResponse:
         """Rendelés feladása + DB audit log + audit_event.
 
         Args:
             payload: Megrendelés sémája.
             strategy_name: Ha stratégia indította, annak neve.
+            entry_context: Stratégia-belépés összefoglaló (WF win rate, forrás stb.).
         """
         client_order_id = payload.client_order_id or _new_client_order_id()
 
@@ -75,6 +77,7 @@ class TradingService:
             status=OrderStatus.NEW,
             reduce_only=payload.reduce_only,
             strategy_name=strategy_name,
+            entry_context=entry_context,
         )
         async with self._session.begin_nested():
             self._session.add(order)
@@ -126,6 +129,7 @@ class TradingService:
                 "tp_price": str(payload.tp_price) if payload.tp_price else None,
                 "sl_price": str(payload.sl_price) if payload.sl_price else None,
                 "dry_run": dry_run,
+                "entry_context": entry_context,
             },
             strategy_name=strategy_name,
         )

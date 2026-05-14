@@ -39,7 +39,10 @@ from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
 from app.services.calibration import parse_klines
 from app.services.calibration_runner import get_active_calibration_result
-from app.services.coin_analyze import plan_kline_interval, walk_forward_live_gate_from_klines
+from app.services.coin_analyze import (
+    plan_kline_interval,
+    walk_forward_live_gate_from_klines,
+)
 from app.services.risk import compute_margin, compute_quantity
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.strategy.top_movers import (
@@ -348,6 +351,7 @@ class TopSignalEntriesStrategy(Strategy):
 
                 wf_moves: tuple[Decimal, Decimal] | None = None
                 wf_audit: dict[str, Any] | None = None
+                wf_gate_result: dict[str, Any] | None = None
                 if wf_gate:
                     wf = walk_forward_live_gate_from_klines(
                         klines,
@@ -384,11 +388,17 @@ class TopSignalEntriesStrategy(Strategy):
                         )
                         continue
                     wf_moves = (wf["tp_move_pct"], wf["sl_move_pct"])
+                    wf_gate_result = wf
                     wf_audit = {
                         "wf_tp_median_multiplier": wf.get("tp_median_multiplier"),
                         "wf_sl_median_multiplier": wf.get("sl_median_multiplier"),
                         "wf_prediction_reason": wf.get("prediction_reason"),
                         "wf_gate_source": wf.get("wf_gate_source"),
+                        "wf_resolved_tp_win_rate_pct": (
+                            (wf.get("wf_variation_snapshot") or {}).get(
+                                "resolved_tp_win_rate_pct"
+                            )
+                        ),
                     }
 
                 decision = await self._place_confirmed(
@@ -406,6 +416,7 @@ class TopSignalEntriesStrategy(Strategy):
                     calibration=calibration,
                     wf_move_pct_pair=wf_moves,
                     wf_audit=wf_audit if wf_gate else None,
+                    wf_gate_result=wf_gate_result,
                 )
                 if decision.get("placed"):
                     placed_run += 1
@@ -445,6 +456,7 @@ class TopSignalEntriesStrategy(Strategy):
         calibration: Any | None,
         wf_move_pct_pair: tuple[Decimal, Decimal] | None = None,
         wf_audit: dict[str, Any] | None = None,
+        wf_gate_result: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         symbol = mover.symbol
         out: dict[str, Any] = {
@@ -598,6 +610,24 @@ class TopSignalEntriesStrategy(Strategy):
             return out
         out["tp_source"] = tp_source
 
+        entry_context: dict[str, Any] = {
+            "strategy": self.name,
+            "signal_reason": signal_reason,
+            "change_pct_24h": str(mover.change_pct),
+            "tp_source": tp_source,
+            "tp_move_pct": str(tp_move_pct),
+            "sl_move_pct": str(sl_move_pct),
+        }
+        if isinstance(wf_gate_result, dict) and wf_gate_result.get("ok"):
+            entry_context["walk_forward"] = {
+                "gate_source": wf_gate_result.get("wf_gate_source"),
+                "prediction_reason": wf_gate_result.get("prediction_reason"),
+                "target_tp_win_rate_pct": wf_gate_result.get(
+                    "wf_target_tp_win_rate_pct"
+                ),
+                "variation": wf_gate_result.get("wf_variation_snapshot"),
+            }
+
         request = OrderRequest.model_validate(
             {
                 "symbol": symbol,
@@ -614,7 +644,9 @@ class TopSignalEntriesStrategy(Strategy):
 
         try:
             order_resp = await trading_service.place_order(
-                request, strategy_name=self.name
+                request,
+                strategy_name=self.name,
+                entry_context=entry_context,
             )
         except (BitunixAPIError, BitunixSignatureError) as exc:
             out["placed"] = False
@@ -639,6 +671,7 @@ class TopSignalEntriesStrategy(Strategy):
             sl_price=str(sl_price),
             client_order_id=order_resp.client_order_id,
             dry_run=order_resp.dry_run,
+            entry_context=entry_context,
         )
         await audit.record(
             ctx.session,

@@ -912,6 +912,26 @@ def build_walk_forward_tpsl_variations_payload(
     }
 
 
+def wf_variation_snapshot_from_row(
+    row: dict[str, Any], *, target_tp_win_rate_pct: str | None
+) -> dict[str, Any]:
+    """WF variációs rács-sor kompakt leírása (rendelés ``entry_context``)."""
+    return {
+        "rank": row.get("rank"),
+        "label": row.get("label"),
+        "resolved_tp_win_rate_pct": row.get("resolved_tp_win_rate_pct"),
+        "meets_target": bool(row.get("meets_target")),
+        "meets_min_tpsl_pct_profile": bool(row.get("meets_min_tpsl_pct_profile")),
+        "trades_entered_last_24h_count": int(
+            row.get("trades_entered_last_24h_count", 0) or 0
+        ),
+        "resolved_count": int(row.get("resolved_count", 0) or 0),
+        "tp_median_multiplier": row.get("tp_median_multiplier"),
+        "sl_median_multiplier": row.get("sl_median_multiplier"),
+        "target_tp_win_rate_pct": target_tp_win_rate_pct,
+    }
+
+
 def walk_forward_live_gate_from_klines(
     klines: list[dict[str, Decimal]],
     *,
@@ -928,7 +948,8 @@ def walk_forward_live_gate_from_klines(
     Returns:
         ``ok``, ``reason``, siker esetén: ``side``, ``tp_move_pct``, ``sl_move_pct``,
         ``tp_median_multiplier``, ``sl_median_multiplier``, ``prediction_reason``,
-        ``wf_gate_source`` (``ui_profile_recommendation`` | ``grid_meets_target``).
+        ``wf_gate_source`` (``ui_profile_recommendation`` | ``grid_meets_target``),
+        ``wf_variation_snapshot``, ``wf_target_tp_win_rate_pct``.
     """
     vblock = build_walk_forward_tpsl_variations_payload(
         klines,
@@ -942,10 +963,16 @@ def walk_forward_live_gate_from_klines(
             "detail": vblock.get("disabled_reason"),
         }
 
+    target_tp_raw = vblock.get("target_tp_win_rate_pct")
+    wf_target_tp_win_rate_pct: str | None = (
+        str(target_tp_raw) if target_tp_raw is not None else None
+    )
+
     sig: dict[str, Any] | None = None
     wf_gate_source: str = ""
     rec_tp: str | None = None
     rec_sl: str | None = None
+    selected_row: dict[str, Any] | None = None
 
     if vblock.get("has_recommended_variation"):
         strict_sig = vblock.get("best_current_signal")
@@ -956,6 +983,7 @@ def walk_forward_live_gate_from_klines(
                 if row.get("is_recommended"):
                     rec_tp = str(row.get("tp_median_multiplier"))
                     rec_sl = str(row.get("sl_median_multiplier"))
+                    selected_row = row if isinstance(row, dict) else None
                     break
 
     if not isinstance(sig, dict) or not sig.get("enabled"):
@@ -987,6 +1015,7 @@ def walk_forward_live_gate_from_klines(
                 wf_gate_source = "grid_meets_target"
                 rec_tp = str(row.get("tp_median_multiplier"))
                 rec_sl = str(row.get("sl_median_multiplier"))
+                selected_row = row if isinstance(row, dict) else None
                 break
 
     if not isinstance(sig, dict) or not sig.get("enabled") or not wf_gate_source:
@@ -1007,6 +1036,14 @@ def walk_forward_live_gate_from_klines(
     if tp_move_pct <= 0 or sl_move_pct <= 0:
         return {"ok": False, "reason": "walk_forward_non_positive_moves"}
 
+    wf_variation_snapshot = (
+        wf_variation_snapshot_from_row(
+            selected_row, target_tp_win_rate_pct=wf_target_tp_win_rate_pct
+        )
+        if isinstance(selected_row, dict)
+        else None
+    )
+
     return {
         "ok": True,
         "reason": "walk_forward_recommended",
@@ -1017,6 +1054,8 @@ def walk_forward_live_gate_from_klines(
         "sl_median_multiplier": rec_sl,
         "prediction_reason": sig.get("prediction_reason"),
         "wf_gate_source": wf_gate_source,
+        "wf_variation_snapshot": wf_variation_snapshot,
+        "wf_target_tp_win_rate_pct": wf_target_tp_win_rate_pct,
     }
 
 

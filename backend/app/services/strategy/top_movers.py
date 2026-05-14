@@ -506,6 +506,16 @@ class TopMoversStrategy(Strategy):
             return out
         out["tp_source"] = tp_source
 
+        entry_context: dict[str, Any] = {
+            "strategy": self.name,
+            "direction_reason": out.get("direction_reason"),
+            "change_pct_24h": str(mover.change_pct),
+            "range_position": out.get("range_position"),
+            "tp_source": tp_source,
+            "tp_move_pct": str(tp_move_pct),
+            "sl_move_pct": str(sl_move_pct),
+        }
+
         # 7) belépés natív TP/SL-lel (atomi REST hívás a Bitunixhoz)
         request = OrderRequest.model_validate(
             {
@@ -523,7 +533,9 @@ class TopMoversStrategy(Strategy):
 
         try:
             order_resp = await trading_service.place_order(
-                request, strategy_name=self.name
+                request,
+                strategy_name=self.name,
+                entry_context=entry_context,
             )
         except (BitunixAPIError, BitunixSignatureError) as exc:
             out["placed"] = False
@@ -560,6 +572,7 @@ class TopMoversStrategy(Strategy):
             sl_price=str(sl_price),
             client_order_id=order_resp.client_order_id,
             dry_run=order_resp.dry_run,
+            entry_context=entry_context,
         )
         if tp_source.startswith("calibration") is False:
             out["tp_roi_pct"] = str(tp_roi)
