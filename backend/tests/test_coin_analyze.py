@@ -162,7 +162,9 @@ def test_count_trades_entry_in_last_24h() -> None:
         {"entry_time_ms": start_ms + 1_000_000},
         {"entry_time_ms": end_ms},
     ]
-    n = coin_analyze_mod._count_trades_with_entry_in_last_hours(klines, trades, hours=24)
+    n = coin_analyze_mod._count_trades_with_entry_in_last_hours(
+        klines, trades, hours=24
+    )
     assert n == 3
 
 
@@ -179,16 +181,69 @@ def test_build_tpsl_variations_payload_grid() -> None:
     v = build_walk_forward_tpsl_variations_payload(
         klines, choppiness_max=Decimal("1.72"), cooldown_minutes=0
     )
-    assert len(v["variations"]) == 36
+    assert 1 <= len(v["variations"]) <= 36
     assert v["variations"][0]["rank"] == 0
     assert "has_recommended_variation" in v
     assert "is_recommended" in v["variations"][0]
     assert sum(1 for row in v["variations"] if row["is_recommended"]) <= 1
 
 
+def test_exclude_variation_last_window_single_unresolved() -> None:
+    t_end = 200_000_000_000  # ms — _to_int_ms ne szorozzon
+    klines = [_synth_bar(t_end, "100")]
+    two = [
+        {"entry_time_ms": t_end - 1, "first_touch": "none"},
+        {"entry_time_ms": t_end, "first_touch": "none"},
+    ]
+    assert (
+        coin_analyze_mod._exclude_variation_last_window_single_unresolved(klines, two)
+        is False
+    )
+    one_none = [{"entry_time_ms": t_end, "first_touch": "none"}]
+    assert (
+        coin_analyze_mod._exclude_variation_last_window_single_unresolved(
+            klines, one_none
+        )
+        is True
+    )
+    one_tp = [{"entry_time_ms": t_end, "first_touch": "tp"}]
+    assert (
+        coin_analyze_mod._exclude_variation_last_window_single_unresolved(
+            klines, one_tp
+        )
+        is False
+    )
+
+
+def test_trade_forward_window_bars_chunk() -> None:
+    assert coin_analyze_mod._trade_forward_window_bars(100) == 33
+    assert coin_analyze_mod._trade_forward_window_bars(10) == 10
+    assert (
+        coin_analyze_mod._trade_forward_window_bars(30, max_trade_forward_bars=5) == 5
+    )
+
+
+def test_walk_forward_sequence_horizon_allows_multiple_trades() -> None:
+    klines = [
+        _synth_bar(1_500_000_000_000 + i * 60_000, str(100 + (i % 3)))
+        for i in range(120)
+    ]
+    seq = coin_analyze_mod._build_walk_forward_sequence_core(
+        klines,
+        choppiness_max=Decimal("5"),
+        tp_median_multiplier=Decimal("2"),
+        sl_median_multiplier=Decimal("2"),
+        cooldown_minutes=0,
+        clip_variation_tpsl_bounds=True,
+    )
+    assert len(seq["trades"]) >= 2
+
+
 def test_build_walk_forward_sequence_returns_current_signal() -> None:
     klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(50)]
-    seq = build_walk_forward_sequence(klines, choppiness_max=Decimal("1.72"), cooldown_minutes=0)
+    seq = build_walk_forward_sequence(
+        klines, choppiness_max=Decimal("1.72"), cooldown_minutes=0
+    )
     assert "current_signal" in seq
     assert isinstance(seq["trades"], list)
     assert seq.get("tp_median_multiplier") == "0.5"

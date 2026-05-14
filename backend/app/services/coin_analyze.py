@@ -85,11 +85,7 @@ def fractal_swings(
             and highs[i] > highs[i - 1]
             and highs[i] > highs[i + 1]
         )
-        is_l = (
-            lows[i] == min(win_l)
-            and lows[i] < lows[i - 1]
-            and lows[i] < lows[i + 1]
-        )
+        is_l = lows[i] == min(win_l) and lows[i] < lows[i - 1] and lows[i] < lows[i + 1]
         if is_h and is_l:
             is_l = False
         if is_h:
@@ -126,10 +122,7 @@ def leg_choppiness(
     """Összes záró lépés / |nettó záró elmozdulás| (≥ 1)."""
     if end_i <= start_i:
         return Decimal(1)
-    path = sum(
-        abs(closes[i] - closes[i - 1])
-        for i in range(start_i + 1, end_i + 1)
-    )
+    path = sum(abs(closes[i] - closes[i - 1]) for i in range(start_i + 1, end_i + 1))
     disp = abs(closes[end_i] - closes[start_i])
     tiny = Decimal("1e-12")
     return path / max(disp, tiny)
@@ -409,6 +402,41 @@ def _clip_variation_tpsl_move_pct(
 
 _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION = 5
 
+# Szekvenciális WF: egy trade ne fogyassza el az összes hátralévő gyertyát (TP/SL nélkül),
+# különben nincs hely következő belépésre cooldown után.
+_WF_SEQ_MIN_FORWARD_CHUNK_BARS = 16
+
+
+def _trade_forward_window_bars(
+    remaining_bars: int,
+    *,
+    max_trade_forward_bars: int | None = None,
+) -> int:
+    """Hány gyertyán át szimulálunk egy trade-re (TP/SL vagy horizont vég)."""
+    if remaining_bars <= 0:
+        return 0
+    if max_trade_forward_bars is not None:
+        return min(remaining_bars, max(1, max_trade_forward_bars))
+    chunk = max(_WF_SEQ_MIN_FORWARD_CHUNK_BARS, remaining_bars // 3)
+    return min(remaining_bars, chunk)
+
+
+def _exclude_variation_last_window_single_unresolved(
+    klines: list[dict[str, Decimal]],
+    trades: list[dict[str, Any]],
+    *,
+    hours: int = 24,
+) -> bool:
+    """Igaz, ha a válaszból el kell hagyni: utolsó ``hours`` órában pontosan 1 belépés, nincs TP/SL."""
+    if not klines or not trades:
+        return False
+    end_ms = _to_int_ms(klines[-1]["time"])
+    start_ms = end_ms - hours * 60 * 60 * 1000
+    recent = [t for t in trades if start_ms <= int(t["entry_time_ms"]) <= end_ms]
+    if len(recent) != 1:
+        return False
+    return recent[0].get("first_touch") == "none"
+
 
 def _count_trades_with_entry_in_last_hours(
     klines: list[dict[str, Decimal]],
@@ -454,9 +482,7 @@ def _compute_current_signal(
     if len(klines) < 5:
         empty["disabled_reason"] = "too_few_candles"
         return empty
-    train_clean, train_stats = analyze_clean_legs(
-        klines, choppiness_max=choppiness_max
-    )
+    train_clean, train_stats = analyze_clean_legs(klines, choppiness_max=choppiness_max)
     med = train_stats.get("median_move_pct")
     if med is None or not isinstance(med, Decimal) or med <= 0:
         empty["disabled_reason"] = "no_median_clean_legs"
@@ -505,8 +531,14 @@ def _build_walk_forward_sequence_core(
     margin_bars: int = 5,
     max_trades: int = 40,
     clip_variation_tpsl_bounds: bool = False,
+    max_trade_forward_bars: int | None = None,
 ) -> dict[str, Any]:
-    """Szekvenciális trade szimuláció: TP/SL távolság = train medián × (tp_mult, sl_mult)."""
+    """Szekvenciális trade szimuláció: TP/SL távolság = train medián × (tp_mult, sl_mult).
+
+    Egy trade előretekintése alapból max. a hátralévő gyertyák harmada (min.
+    ``_WF_SEQ_MIN_FORWARD_CHUNK_BARS``), hogy TP/SL nélküli szakasz ne nyelje el az egész tesztet;
+    ``max_trade_forward_bars`` felülírja ezt.
+    """
     current = _compute_current_signal(
         klines,
         choppiness_max=choppiness_max,
@@ -566,9 +598,15 @@ def _build_walk_forward_sequence_core(
         entry = train[-1]["close"]
         if entry <= 0:
             break
-        forward = klines[entry_idx + 1 :]
-        if not forward:
+        remaining = len(klines) - entry_idx - 1
+        if remaining <= 0:
             break
+        mf = _trade_forward_window_bars(
+            remaining, max_trade_forward_bars=max_trade_forward_bars
+        )
+        if mf <= 0:
+            break
+        forward = klines[entry_idx + 1 : entry_idx + 1 + mf]
         touch, off, amb = _simulate_tp_sl(
             forward,
             entry=entry,
@@ -708,9 +746,13 @@ def build_walk_forward_tpsl_variations_payload(
 ) -> dict[str, Any]:
     """Több TP/SL (medián×) kombináció; effektív TP/SL %% a [30,300] / [10,150] sávra vágva.
 
-    Rendezés: TP/(TP+SL) szerint csökkenő. **Ajánlott** variáció: legfeljebb egy — a legjobb
-    arányú azok közül, ahol az utolsó 24 órában legalább ``_WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION``
-    belépés történt; csak ekkor töltődik ``best_current_signal``.
+    Minden rács-pont lefut. A sorrend: feloldott TP/(TP+SL) csökkenő. Kiesnek azok a sorok,
+    ahol az utolsó 24 órában pontosan egy belépés volt és az nem érintett TP-t sem SL-t
+    (``first_touch == none``). **Ajánlott** (``is_recommended``): legfeljebb egy — a rendezett
+    lista első olyan eleme, ahol az utolsó 24 órában legalább
+    ``_WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION`` belépés volt; csak ekkor töltődik
+    ``best_current_signal``. Az ajánlott elem nincs külön sor elejére téve: a sorrend mindig
+    a TP% szerinti.
     """
     pairs = _tpsl_variation_multiplier_pairs()
     rows_raw: list[dict[str, Any]] = []
@@ -744,6 +786,10 @@ def build_walk_forward_tpsl_variations_payload(
             "summary": seq.get("summary"),
         }
         n24 = _count_trades_with_entry_in_last_hours(klines, seq["trades"], hours=24)
+        if _exclude_variation_last_window_single_unresolved(
+            klines, seq["trades"], hours=24
+        ):
+            continue
         rows_raw.append(
             {
                 "tp_median_multiplier": str(tp_m),
@@ -778,35 +824,25 @@ def build_walk_forward_tpsl_variations_payload(
 
     rec_idx: int | None = None
     for i, r in enumerate(rows_raw):
-        if int(r["trades_entered_last_24h_count"]) >= _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION:
+        if (
+            int(r["trades_entered_last_24h_count"])
+            >= _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION
+        ):
             rec_idx = i
             break
 
-    rows_ordered: list[dict[str, Any]] = []
-    if rec_idx is not None:
-        rec = dict(rows_raw[rec_idx])
-        rec["is_recommended"] = True
-        rows_ordered.append(rec)
-        for j, r in enumerate(rows_raw):
-            if j == rec_idx:
-                continue
-            rr = dict(r)
-            rr["is_recommended"] = False
-            rows_ordered.append(rr)
-    else:
-        rows_ordered = [{**dict(r), "is_recommended": False} for r in rows_raw]
-
     rows: list[dict[str, Any]] = []
-    for rank, item in enumerate(rows_ordered):
+    for rank, item in enumerate(rows_raw):
         row = dict(item)
         row["rank"] = rank
+        row["is_recommended"] = rec_idx is not None and rank == rec_idx
         rows.append(row)
 
     any_meets = any(r["meets_target"] for r in rows)
     has_recommended = rec_idx is not None
     best_sig: dict[str, Any] | None = None
-    if has_recommended and rows:
-        best = rows[0]
+    if has_recommended and rows_raw:
+        best = rows_raw[rec_idx]
         best_tp = Decimal(best["tp_median_multiplier"])
         best_sl = Decimal(best["sl_median_multiplier"])
         best_sig = _compute_current_signal(
@@ -853,9 +889,7 @@ def run_walk_forward_simulation(
     time_split_fraction: Decimal,
 ) -> dict[str, Any] | None:
     """Egy train/test párra walk-forward eredmény, vagy ``None`` ha nincs train medián."""
-    train_clean, train_stats = analyze_clean_legs(
-        train, choppiness_max=choppiness_max
-    )
+    train_clean, train_stats = analyze_clean_legs(train, choppiness_max=choppiness_max)
     med = train_stats.get("median_move_pct")
     if med is None or not isinstance(med, Decimal) or med <= 0:
         return None

@@ -516,8 +516,10 @@ function TpslVariationsSection({
         <span className="font-medium text-foreground">SL %%</span> (kedvezőtlen irány) legalább{" "}
         {block.variation_sl_move_pct_min}% és legfeljebb {block.variation_sl_move_pct_max}% (a medián×
         szorzó után vágva). Minden kombináció ugyanazzal a szekvenciális szabállyal fut (50% kezdő
-        train → trade → {block.variations[0]?.sequence.cooldown_minutes ?? "—"} perc cooldown →
-        újra). A sorrend: <span className="font-medium text-foreground">TP / (TP+SL)</span> csökkenő
+        train → trade → {block.variations[0]?.sequence.cooldown_minutes ?? "—"} perc cooldown → újra).
+        Egy trade előretekintése legfeljebb a hátralévő gyertyák harmada (legalább 16 gyertya), így
+        TP/SL nélküli szakasz nem foglalja el az egész idősávot. A sorrend:{" "}
+        <span className="font-medium text-foreground">TP / (TP+SL)</span> csökkenő
         (feloldott trade: min. {block.min_resolved_trades}). Cél: ≥{block.target_tp_win_rate_pct}% TP
         nyerés.
         {block.any_variation_meets_target ? (
@@ -526,10 +528,11 @@ function TpslVariationsSection({
           <span className="text-muted ml-1">Egyik rács-pont sem éri el a 85%-ot.</span>
         )}{" "}
         <span className="block mt-1">
-          Legfeljebb <span className="font-medium text-foreground">egy ajánlott</span> konfiguráció
-          van: a legjobb TP/(TP+SL) % azok közül, ahol az utolsó 24 órában legalább{" "}
-          {block.min_trades_last_24h_for_recommendation} belépés történt; a jelenlegi predikció csak
-          ilyenkor a javasolt szorzókat mutatja.
+          Olyan variáció nincs a listában, ahol az utolsó 24 órában pontosan egy belépés volt, és sem TP,
+          sem SL nem következett be. Legfeljebb <span className="font-medium text-foreground">egy ajánlott</span>{" "}
+          konfiguráció van: a legjobb TP/(TP+SL) % azok közül, ahol az utolsó 24 órában legalább{" "}
+          {block.min_trades_last_24h_for_recommendation} belépés történt; a jelenlegi predikció csak ilyenkor
+          a javasolt szorzókat mutatja.
         </span>
       </p>
       {block.variations.map((v: TpslVariationRow, i: number) => {
@@ -589,7 +592,9 @@ function TpslVariationsSection({
               <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300/95">
                 {block.has_recommended_variation && v.is_recommended
                   ? `Ajánlott konfig (≥${block.min_trades_last_24h_for_recommendation} belépés / utolsó 24h)`
-                  : "Legjobb TP% sorrend — nincs 24h aktivitás alapú ajánlás"}
+                  : block.has_recommended_variation
+                    ? "Legjobb TP% a listában — az ajánlott más sorban van (jelölve)"
+                    : "Legjobb TP% sorrend — nincs 24h aktivitás alapú ajánlás"}
               </div>
               {head}
               {stats}
