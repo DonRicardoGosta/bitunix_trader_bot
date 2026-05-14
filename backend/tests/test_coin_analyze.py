@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from app.services import coin_analyze as coin_analyze_mod
 from app.services.coin_analyze import (
     analyze_clean_legs,
+    build_walk_forward_payload,
     leg_choppiness,
     merge_same_side_swings,
     plan_kline_interval,
+    split_klines_time_midpoint,
 )
 
 
@@ -54,6 +57,66 @@ def test_analyze_clean_legs_empty_when_too_few_bars() -> None:
     clean, stats = analyze_clean_legs(klines)
     assert clean == []
     assert stats["clean_leg_count"] == 0
+
+
+def _synth_bar(t_ms: int, close: str, spread: str = "0.5") -> dict[str, Decimal]:
+    c = Decimal(close)
+    s = Decimal(spread)
+    t = Decimal(t_ms)
+    return {"time": t, "open": c, "high": c + s, "low": c - s, "close": c}
+
+
+def test_split_klines_time_midpoint_splits() -> None:
+    klines = [_synth_bar(i * 60_000, "100") for i in range(40)]
+    out = split_klines_time_midpoint(klines)
+    assert out is not None
+    train, test, _ = out
+    assert len(train) >= 15 and len(test) >= 5
+    assert len(train) + len(test) == 40
+
+
+def test_simulate_long_tp_before_sl() -> None:
+    entry = Decimal("100")
+    move = Decimal("1")
+    bars = [
+        {
+            "time": Decimal(1),
+            "open": Decimal("100"),
+            "high": Decimal("101.5"),
+            "low": Decimal("99.5"),
+            "close": Decimal("100.2"),
+        }
+    ]
+    touch, off, amb = coin_analyze_mod._simulate_symmetric_tp_sl(
+        bars, entry=entry, move_pct=move, side="long"
+    )
+    assert touch == "tp" and off == 0 and amb is False
+
+
+def test_simulate_long_same_bar_both_counts_sl() -> None:
+    entry = Decimal("100")
+    move = Decimal("1")
+    bars = [
+        {
+            "time": Decimal(1),
+            "open": Decimal("100"),
+            "high": Decimal("102"),
+            "low": Decimal("98"),
+            "close": Decimal("100"),
+        }
+    ]
+    touch, off, amb = coin_analyze_mod._simulate_symmetric_tp_sl(
+        bars, entry=entry, move_pct=move, side="long"
+    )
+    assert touch == "sl" and amb is True
+
+
+def test_build_walk_forward_payload_has_shape() -> None:
+    klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(40)]
+    wf = build_walk_forward_payload(klines)
+    assert isinstance(wf["enabled"], bool)
+    if wf["train_bar_count"] > 0:
+        assert wf["train_bar_count"] + wf["test_bar_count"] == 40
 
 
 def test_analyze_clean_legs_many_swings_no_strict_zip_error() -> None:

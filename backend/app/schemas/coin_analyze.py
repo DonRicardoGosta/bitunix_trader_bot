@@ -53,6 +53,31 @@ class CleanLegRow(BaseModel):
     end_price: str
 
 
+class WalkForwardBacktest(BaseModel):
+    """Félidős train → irány + medián/2 szimmetrikus TP/SL a hátsó fél gyertyáin."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    disabled_reason: str | None = None
+    checkpoint_time_ms: int | None = None
+    train_bar_count: int = 0
+    test_bar_count: int = 0
+    median_move_pct_train: str | None = None
+    tp_move_pct: str | None = None
+    sl_move_pct: str | None = None
+    entry_price: str | None = None
+    predicted_side: Literal["long", "short"] | None = None
+    prediction_reason: str | None = None
+    test_net_move_pct: str | None = None
+    actual_test_side: Literal["long", "short"] | None = None
+    direction_guess_correct: bool | None = None
+    first_touch: Literal["tp", "sl", "none"] | None = None
+    first_touch_time_ms: int | None = None
+    same_bar_ambiguous: bool | None = None
+    strategy_would_win: bool | None = None
+
+
 class CoinAnalyzeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -68,3 +93,4 @@ class CoinAnalyzeResponse(BaseModel):
     mean_move_pct: str | None
     clean_leg_count: int
     all_leg_count: int
+    walk_forward: WalkForwardBacktest

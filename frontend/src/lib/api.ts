@@ -280,6 +280,27 @@ export interface CleanLegRow {
   end_price: string;
 }
 
+export interface WalkForwardBacktest {
+  enabled: boolean;
+  disabled_reason: string | null;
+  checkpoint_time_ms: number | null;
+  train_bar_count: number;
+  test_bar_count: number;
+  median_move_pct_train: string | null;
+  tp_move_pct: string | null;
+  sl_move_pct: string | null;
+  entry_price: string | null;
+  predicted_side: "long" | "short" | null;
+  prediction_reason: string | null;
+  test_net_move_pct: string | null;
+  actual_test_side: "long" | "short" | null;
+  direction_guess_correct: boolean | null;
+  first_touch: "tp" | "sl" | "none" | null;
+  first_touch_time_ms: number | null;
+  same_bar_ambiguous: boolean | null;
+  strategy_would_win: boolean | null;
+}
+
 export interface CoinAnalyzeResult {
   symbol: string;
   max_leverage: number;
@@ -293,6 +314,7 @@ export interface CoinAnalyzeResult {
   mean_move_pct: string | null;
   clean_leg_count: number;
   all_leg_count: number;
+  walk_forward: WalkForwardBacktest;
 }
 
 export const api = {

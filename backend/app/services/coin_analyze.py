@@ -7,6 +7,11 @@ abszolút lépése nem sokkal nagyobb a nettó elmozdulásnál (alacsony choppin
 
 A medián a tiszta lábak ``move_pct`` értékeire vonatkozik (nettó százalék a
 láb elejétől végéig, záró árakkal).
+
+Opcionális **walk-forward** blokk: az időintervallum közepénél kettévágva az első
+félen számolt tiszta-láb medián fele szimmetrikus TP/SL, a hátsó fél gyertyáin
+előbb-utóbb melyik szint érintődött (egyszerű irány-heurisztika + konzervatív
+azon-gyertya döntés).
 """
 
 from __future__ import annotations
@@ -202,6 +207,213 @@ def analyze_clean_legs(
     return clean, stats
 
 
+def split_klines_time_midpoint(
+    klines: list[dict[str, Decimal]],
+    *,
+    min_train: int = 15,
+    min_test: int = 5,
+) -> tuple[list[dict[str, Decimal]], list[dict[str, Decimal]], int] | None:
+    """Időintervallum közepénél kettévágja a sorozatot (első / második fele).
+
+    A ``min_train`` / ``min_test`` a legkisebb gyertya darabszám a walk-forward
+    hátsó teszt részéhez (fraktál + TP/SL szimuláció miatt).
+
+    Returns:
+        ``(train, test, split_index)`` ahol ``test = klines[split_index:]`` és
+        ``train = klines[:split_index]``. ``None``, ha nem osztható értelmesen.
+    """
+    n = len(klines)
+    if n < min_train + min_test:
+        return None
+    t0 = klines[0]["time"]
+    t1 = klines[-1]["time"]
+    span = t1 - t0
+    if span <= 0:
+        return None
+    mid_t = t0 + span / Decimal(2)
+    split_at = n
+    for i, row in enumerate(klines):
+        if row["time"] >= mid_t:
+            split_at = i
+            break
+    split_at = max(min_train, min(split_at, n - min_test))
+    if split_at < min_train or n - split_at < min_test:
+        return None
+    return klines[:split_at], klines[split_at:], split_at
+
+
+def predict_side_from_train_clean_legs(
+    train_klines: list[dict[str, Decimal]],
+    clean_legs: list[dict[str, Any]],
+) -> tuple[Literal["long", "short"], str]:
+    """Egyszerű irány-heurisztika az első fél tiszta lábain + nettó záró változás.
+
+    Returns:
+        ``(predicted_side, reason_code)``.
+    """
+    up = sum(1 for leg in clean_legs if leg.get("direction") == "up")
+    down = len(clean_legs) - up
+    c0 = train_klines[0]["close"]
+    c1 = train_klines[-1]["close"]
+    net = c1 - c0
+    if up > down:
+        return "long", "clean_legs_up_majority"
+    if down > up:
+        return "short", "clean_legs_down_majority"
+    if net > 0:
+        return "long", "clean_legs_tie_positive_net_close"
+    if net < 0:
+        return "short", "clean_legs_tie_negative_net_close"
+    return "long", "clean_legs_tie_flat_close"
+
+
+def _simulate_symmetric_tp_sl(
+    test_bars: list[dict[str, Decimal]],
+    *,
+    entry: Decimal,
+    move_pct: Decimal,
+    side: Literal["long", "short"],
+) -> tuple[Literal["tp", "sl", "none"], int | None, bool]:
+    """Melyik szint érintődik előbb a teszt gyertyákon (ugyanakkora TP és SL %%).
+
+    Ha egy gyertyán belül mindkettő érinthető, **konzervatív**: SL számít
+    előbb ütöttnek (realisztikusabb rossz kitöltés a backtestben).
+
+    Args:
+        test_bars: A checkpoint utáni gyertyák (idő szerint növekvő).
+        entry: Belépési referenciaár (train utolsó záró).
+        move_pct: TP és SL távolsága százalékban (pl. medián/2).
+        side: ``long`` vagy ``short``.
+
+    Returns:
+        ``(first_touch, bar_offset_in_test, same_bar_ambiguous)``.
+    """
+    if move_pct <= 0 or entry <= 0 or not test_bars:
+        return "none", None, False
+    m = move_pct / Decimal(100)
+    if side == "long":
+        tp_price = entry * (Decimal(1) + m)
+        sl_price = entry * (Decimal(1) - m)
+        for i, k in enumerate(test_bars):
+            hi, lo = k["high"], k["low"]
+            tp_hit = hi >= tp_price
+            sl_hit = lo <= sl_price
+            if tp_hit and sl_hit:
+                return "sl", i, True
+            if sl_hit:
+                return "sl", i, False
+            if tp_hit:
+                return "tp", i, False
+        return "none", None, False
+    tp_price = entry * (Decimal(1) - m)
+    sl_price = entry * (Decimal(1) + m)
+    for i, k in enumerate(test_bars):
+        hi, lo = k["high"], k["low"]
+        tp_hit = lo <= tp_price
+        sl_hit = hi >= sl_price
+        if tp_hit and sl_hit:
+            return "sl", i, True
+        if sl_hit:
+            return "sl", i, False
+        if tp_hit:
+            return "tp", i, False
+    return "none", None, False
+
+
+def build_walk_forward_payload(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal = Decimal("1.72"),
+) -> dict[str, Any]:
+    """Walk-forward: train = első fél időben, irány + medián/2 TP/SL a teszten.
+
+    A teljes ablak továbbra is külön elemzésre kerül a fő ``clean_legs`` mezőben;
+    ez a blokk csak a **félidős** out-of-sample ellenőrzést írja le.
+    """
+    base: dict[str, Any] = {
+        "enabled": False,
+        "disabled_reason": None,
+        "checkpoint_time_ms": None,
+        "train_bar_count": 0,
+        "test_bar_count": 0,
+        "median_move_pct_train": None,
+        "tp_move_pct": None,
+        "sl_move_pct": None,
+        "entry_price": None,
+        "predicted_side": None,
+        "prediction_reason": None,
+        "test_net_move_pct": None,
+        "actual_test_side": None,
+        "direction_guess_correct": None,
+        "first_touch": None,
+        "first_touch_time_ms": None,
+        "same_bar_ambiguous": None,
+        "strategy_would_win": None,
+    }
+    split = split_klines_time_midpoint(klines)
+    if split is None:
+        base["disabled_reason"] = "too_few_candles_or_bad_time_span"
+        return base
+    train, test, _ = split
+    base["train_bar_count"] = len(train)
+    base["test_bar_count"] = len(test)
+    base["checkpoint_time_ms"] = _to_int_ms(train[-1]["time"])
+
+    train_clean, train_stats = analyze_clean_legs(
+        train, choppiness_max=choppiness_max
+    )
+    med = train_stats.get("median_move_pct")
+    if med is None or not isinstance(med, Decimal) or med <= 0:
+        base["disabled_reason"] = "no_median_clean_legs_in_train"
+        return base
+
+    half_med = med / Decimal(2)
+    predicted, reason = predict_side_from_train_clean_legs(train, train_clean)
+    entry = train[-1]["close"]
+
+    t0 = test[0]["close"]
+    t1 = test[-1]["close"]
+    if t0 <= 0:
+        base["disabled_reason"] = "invalid_test_prices"
+        return base
+    test_net = (t1 - t0) / t0 * Decimal(100)
+    actual_side: Literal["long", "short"] = "long" if t1 > t0 else "short"
+    direction_ok = predicted == actual_side
+
+    touch, bar_off, ambiguous = _simulate_symmetric_tp_sl(
+        test,
+        entry=entry,
+        move_pct=half_med,
+        side=predicted,
+    )
+    ft_ms: int | None = None
+    if bar_off is not None and 0 <= bar_off < len(test):
+        ft_ms = _to_int_ms(test[bar_off]["time"])
+
+    def _q4(x: Decimal) -> str:
+        return str(x.quantize(Decimal("0.0001")))
+
+    base.update(
+        {
+            "enabled": True,
+            "median_move_pct_train": _q4(med),
+            "tp_move_pct": _q4(half_med),
+            "sl_move_pct": _q4(half_med),
+            "entry_price": str(entry),
+            "predicted_side": predicted,
+            "prediction_reason": reason,
+            "test_net_move_pct": _q4(test_net),
+            "actual_test_side": actual_side,
+            "direction_guess_correct": direction_ok,
+            "first_touch": touch,
+            "first_touch_time_ms": ft_ms,
+            "same_bar_ambiguous": ambiguous,
+            "strategy_would_win": touch == "tp",
+        }
+    )
+    return base
+
+
 def build_coin_analysis_payload(
     *,
     symbol: str,
@@ -263,4 +475,7 @@ def build_coin_analysis_payload(
         "mean_move_pct": _fmt_move_stat(mean),
         "clean_leg_count": stats["clean_leg_count"],
         "all_leg_count": stats["all_leg_count"],
+        "walk_forward": build_walk_forward_payload(
+            klines, choppiness_max=choppiness_max
+        ),
     }
