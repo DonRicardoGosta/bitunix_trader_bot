@@ -326,9 +326,9 @@ class BitunixClient:
 
         has_tp = tp_price is not None
         has_sl = sl_price is not None
-        if ts == "OPEN" and has_tp != has_sl:
+        if has_tp != has_sl:
             raise ValueError(
-                "OPEN rendelésnél tpPrice és slPrice együtt kötelező (atomi TP/SL)."
+                "tpPrice és slPrice együtt kötelező a trade place_order-en."
             )
 
         body: dict[str, Any] = {
@@ -364,6 +364,55 @@ class BitunixClient:
         return await self._request(
             "POST",
             "/api/v1/futures/trade/place_order",
+            json=body,
+            authenticated=True,
+        )
+
+    async def place_position_tp_sl_order(
+        self,
+        *,
+        symbol: str,
+        position_id: str,
+        tp_price: Decimal | str | None = None,
+        sl_price: Decimal | str | None = None,
+        tp_stop_type: str = "MARK_PRICE",
+        sl_stop_type: str = "MARK_PRICE",
+    ) -> dict[str, Any]:
+        """Teljes pozíció TP/SL (nem partial qty) – Bitunix position TP/SL végpont.
+
+        A ``/futures/tpsl/position/place_order`` triggerkor a **teljes** nyitott
+        pozíciót zárja marketen; nincs ``tpQty`` / ``slQty``.
+        """
+        has_tp = tp_price is not None
+        has_sl = sl_price is not None
+        if not has_tp and not has_sl:
+            raise ValueError("At least one of tp_price or sl_price is required.")
+        if has_tp != has_sl:
+            raise ValueError(
+                "tp_price and sl_price must both be set for position TP/SL."
+            )
+
+        body: dict[str, Any] = {
+            "symbol": symbol,
+            "positionId": str(position_id),
+            "tpPrice": str(tp_price),
+            "tpStopType": tp_stop_type,
+            "slPrice": str(sl_price),
+            "slStopType": sl_stop_type,
+        }
+
+        if not self._live_trading:
+            return {
+                "dryRun": True,
+                "echo": body,
+                "note": (
+                    "BITUNIX_LIVE_TRADING=false – position TP/SL nem került küldésre."
+                ),
+            }
+
+        return await self._request(
+            "POST",
+            "/api/v1/futures/tpsl/position/place_order",
             json=body,
             authenticated=True,
         )

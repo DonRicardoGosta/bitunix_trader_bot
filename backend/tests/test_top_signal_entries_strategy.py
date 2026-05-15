@@ -179,6 +179,8 @@ class _FakeClient:
         self._klines_by_symbol = klines_by_symbol
         self._positions_raw = positions_raw or {"data": []}
         self.place_order_calls: list[dict] = []
+        self.place_position_tp_sl_calls: list[dict] = []
+        self._open_positions: dict[tuple[str, str], str] = {}
         self.get_klines_calls: list[str] = []
 
     async def get_all_tickers(self) -> dict:
@@ -191,7 +193,29 @@ class _FakeClient:
         return self._account
 
     async def get_positions(self, symbol: str | None = None) -> dict:
+        rows = []
+        for (sym, side), pid in self._open_positions.items():
+            if symbol and sym != symbol.upper():
+                continue
+            rows.append(
+                {
+                    "symbol": sym,
+                    "side": side,
+                    "positionId": pid,
+                    "qty": "1",
+                }
+            )
+        if rows:
+            return {"data": rows}
         return self._positions_raw
+
+    async def get_ticker(self, symbol: str) -> dict:
+        data = self._tickers.get("data") or []
+        if isinstance(data, list):
+            for row in data:
+                if str(row.get("symbol", "")).upper() == symbol.upper():
+                    return {"data": [row]}
+        return {"data": [{"symbol": symbol, "lastPrice": "100"}]}
 
     async def get_klines(self, symbol: str, **kwargs) -> dict:
         self.get_klines_calls.append(symbol)
@@ -202,7 +226,15 @@ class _FakeClient:
 
     async def place_order(self, **kwargs) -> dict:
         self.place_order_calls.append(kwargs)
+        sym = str(kwargs.get("symbol", "")).upper()
+        side = str(kwargs.get("side", "BUY")).upper()
+        if kwargs.get("trade_side", "OPEN") == "OPEN" and not kwargs.get("reduce_only"):
+            self._open_positions[(sym, side)] = f"pos-{sym}"
         return {"dryRun": True, "echo": {}}
+
+    async def place_position_tp_sl_order(self, **kwargs) -> dict:
+        self.place_position_tp_sl_calls.append(kwargs)
+        return {"dryRun": True, "data": {"orderId": "tpsl-mock"}, "echo": kwargs}
 
 
 def _make_tickers() -> dict:

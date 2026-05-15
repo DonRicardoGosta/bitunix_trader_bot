@@ -31,6 +31,8 @@ class FakeBitunixClient:
     def __init__(self) -> None:
         self.place_order_calls: list = []
         self.change_leverage_calls: list = []
+        self.place_position_tp_sl_calls: list = []
+        self._open_positions: dict[tuple[str, str], str] = {}
 
     async def get_all_tickers(self) -> dict:
         return {
@@ -61,7 +63,17 @@ class FakeBitunixClient:
         return {"data": {"available": "1000"}}
 
     async def get_positions(self, symbol: str | None = None) -> dict:
-        return {"data": []}
+        rows = []
+        for (sym, side), pid in self._open_positions.items():
+            if symbol and sym != symbol.upper():
+                continue
+            rows.append(
+                {"symbol": sym, "side": side, "positionId": pid, "qty": "1"}
+            )
+        return {"data": rows} if rows else {"data": []}
+
+    async def get_ticker(self, symbol: str) -> dict:
+        return {"data": [{"symbol": symbol, "lastPrice": "60"}]}
 
     async def change_leverage(self, **kwargs) -> dict:
         self.change_leverage_calls.append(kwargs)
@@ -69,7 +81,15 @@ class FakeBitunixClient:
 
     async def place_order(self, **kwargs) -> dict:
         self.place_order_calls.append(kwargs)
+        sym = str(kwargs.get("symbol", "")).upper()
+        side = str(kwargs.get("side", "BUY")).upper()
+        if kwargs.get("trade_side", "OPEN") == "OPEN" and not kwargs.get("reduce_only"):
+            self._open_positions[(sym, side)] = f"pos-{sym}"
         return {"dryRun": True, "echo": kwargs}
+
+    async def place_position_tp_sl_order(self, **kwargs) -> dict:
+        self.place_position_tp_sl_calls.append(kwargs)
+        return {"dryRun": True, "data": {"orderId": "tpsl"}, "echo": kwargs}
 
 
 @pytest.fixture(scope="module", autouse=True)

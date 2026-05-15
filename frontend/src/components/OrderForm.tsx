@@ -160,9 +160,9 @@ export function OrderForm() {
       </div>
 
       <p className="text-xs text-muted leading-relaxed">
-        Új pozíció (OPEN): a TP és SL a belépő rendeléssel együtt megy a tőzsdére
-        (egyetlen API hívás). Ha üresen hagyod, a backend a kalibráció / ROI alapján
-        számolja ki.
+        Új pozíció (OPEN): először a belépő megy, majd teljes pozíció TP/SL
+        (Bitunix position TP/SL – nem partial qty). Ha üresen hagyod a mezőket, a
+        backend a kalibráció / ROI alapján számol.
       </p>
 
       <label className="flex items-center gap-2 text-sm">

@@ -87,6 +87,8 @@ class FakeBitunixClient:
         self._positions_raw = positions_raw or {"data": []}
         self.change_leverage_calls: list[dict] = []
         self.place_order_calls: list[dict] = []
+        self.place_position_tp_sl_calls: list[dict] = []
+        self._open_positions: dict[tuple[str, str], str] = {}
 
     async def get_all_tickers(self) -> dict:
         return self._tickers
@@ -94,18 +96,24 @@ class FakeBitunixClient:
     async def get_trading_pairs(self) -> dict:
         return self._trading_pairs
 
-    async def get_ticker(self, symbol: str) -> dict:
-        data = self._tickers.get("data") or []
-        if isinstance(data, list):
-            for row in data:
-                if str(row.get("symbol", "")).upper() == symbol.upper():
-                    return {"data": [row]}
-        return {"data": [{"symbol": symbol, "lastPrice": "100"}]}
-
     async def get_account(self, margin_coin: str = "USDT") -> dict:
         return self._account
 
     async def get_positions(self, symbol: str | None = None) -> dict:
+        rows = []
+        for (sym, side), pid in self._open_positions.items():
+            if symbol and sym != symbol.upper():
+                continue
+            rows.append(
+                {
+                    "symbol": sym,
+                    "side": side,
+                    "positionId": pid,
+                    "qty": "1",
+                }
+            )
+        if rows:
+            return {"data": rows}
         return self._positions_raw
 
     async def change_leverage(
@@ -118,7 +126,10 @@ class FakeBitunixClient:
 
     async def place_order(self, **kwargs) -> dict:
         self.place_order_calls.append(kwargs)
-        sym = str(kwargs.get("symbol", ""))
+        sym = str(kwargs.get("symbol", "")).upper()
+        side = str(kwargs.get("side", "BUY")).upper()
+        if kwargs.get("trade_side", "OPEN") == "OPEN" and not kwargs.get("reduce_only"):
+            self._open_positions[(sym, side)] = f"pos-{sym}"
         if sym in self._fail_place_order_symbols:
             raise BitunixAPIError(
                 "The amount should be larger than 700 TRUTH [Bitunix code=30016] | {\"data\": null}",
@@ -127,6 +138,18 @@ class FakeBitunixClient:
                 response_body={"code": 30016, "data": None, "msg": "The amount should be larger than 700 TRUTH"},
             )
         return self._place_order_response
+
+    async def place_position_tp_sl_order(self, **kwargs) -> dict:
+        self.place_position_tp_sl_calls.append(kwargs)
+        return {"dryRun": True, "data": {"orderId": "tpsl-mock"}, "echo": kwargs}
+
+    async def get_ticker(self, symbol: str) -> dict:
+        data = self._tickers.get("data") or []
+        if isinstance(data, list):
+            for row in data:
+                if str(row.get("symbol", "")).upper() == symbol.upper():
+                    return {"data": [row]}
+        return {"data": [{"symbol": symbol, "lastPrice": "100"}]}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -206,14 +229,18 @@ async def test_top_movers_places_orders_for_top3_with_correct_direction() -> Non
     leverage_set = {c["symbol"]: c["leverage"] for c in fake.change_leverage_calls}
     assert leverage_set == {"BBB": 75, "CCC": 100, "DDD": 20}
 
-    # TP/SL az entry order-en megy a Bitunixhoz
+    # Belépés külön, teljes pozíció TP/SL a position API-n
     by_symbol = {c["symbol"]: c for c in fake.place_order_calls}
     for sym in ("BBB", "CCC", "DDD"):
-        assert by_symbol[sym]["tp_price"] is not None
-        assert by_symbol[sym]["sl_price"] is not None
-        assert by_symbol[sym]["tp_stop_type"] == "MARK_PRICE"
-        assert by_symbol[sym]["sl_stop_type"] == "MARK_PRICE"
+        assert by_symbol[sym]["tp_price"] is None
+        assert by_symbol[sym]["sl_price"] is None
         assert by_symbol[sym]["trade_side"] == "OPEN"
+    tpsl_by_sym = {c["symbol"]: c for c in fake.place_position_tp_sl_calls}
+    for sym in ("BBB", "CCC", "DDD"):
+        assert tpsl_by_sym[sym]["tp_price"] is not None
+        assert tpsl_by_sym[sym]["sl_price"] is not None
+        assert tpsl_by_sym[sym]["tp_stop_type"] == "MARK_PRICE"
+        assert tpsl_by_sym[sym]["sl_stop_type"] == "MARK_PRICE"
 
     # Kalibráció globális fallback: tp_move=1.5%, sl_move=0.75%
     # +25% CCC LONG  entry=125 → tp=126.87(5), sl=124.06(25), 2 dec round_down

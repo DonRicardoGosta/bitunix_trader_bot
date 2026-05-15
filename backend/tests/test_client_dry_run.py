@@ -33,7 +33,7 @@ async def test_place_order_dry_run_does_not_send_http() -> None:
 
 
 @pytest.mark.asyncio
-async def test_place_order_dry_run_open_requires_both_tp_and_sl() -> None:
+async def test_place_order_requires_both_tp_and_sl_when_partial_set() -> None:
     client = BitunixClient(api_key="ak", api_secret="sk", live_trading=False)
     try:
         with pytest.raises(ValueError, match="tpPrice és slPrice"):
@@ -49,23 +49,22 @@ async def test_place_order_dry_run_open_requires_both_tp_and_sl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_place_order_dry_run_includes_native_tp_sl() -> None:
+async def test_place_position_tp_sl_dry_run() -> None:
     client = BitunixClient(api_key="ak", api_secret="sk", live_trading=False)
     try:
-        result = await client.place_order(
+        result = await client.place_position_tp_sl_order(
             symbol="BTCUSDT",
-            side="BUY",
-            order_type="MARKET",
-            quantity=Decimal("0.01"),
+            position_id="pos-1",
             tp_price=Decimal("110"),
             sl_price=Decimal("90"),
         )
     finally:
         await client.close()
+    assert result["dryRun"] is True
     assert result["echo"]["tpPrice"] == "110"
     assert result["echo"]["slPrice"] == "90"
-    assert result["echo"]["tpOrderType"] == "MARKET"
-    assert result["echo"]["slOrderType"] == "MARKET"
+    assert result["echo"]["positionId"] == "pos-1"
+    assert "tpQty" not in result["echo"]
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,11 @@ from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel, Order, OrderSide, OrderStatus, OrderType
 from app.schemas.trading import OrderRequest, OrderResponse
-from app.services.entry_order_prep import OpenEntryPreparationError, prepare_open_entry_order
+from app.services.entry_order_prep import (
+    OpenEntryPreparationError,
+    attach_full_position_tp_sl,
+    prepare_open_entry_order,
+)
 from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 from app.services.order_enrichment import (
     PositionMatch,
@@ -90,6 +94,15 @@ class TradingService:
             strategy_name=strategy_name,
             entry_context=entry_context,
         )
+        use_position_tpsl = (
+            payload.trade_side == "OPEN"
+            and not payload.reduce_only
+            and payload.tp_price is not None
+            and payload.sl_price is not None
+        )
+        tp_stop = payload.tp_stop_type
+        sl_stop = payload.sl_stop_type
+
         async with self._session.begin_nested():
             self._session.add(order)
             await self._session.flush()
@@ -103,13 +116,29 @@ class TradingService:
                 client_order_id=client_order_id,
                 trade_side=payload.trade_side,
                 position_id=payload.position_id,
-                tp_price=payload.tp_price,
-                sl_price=payload.sl_price,
-                tp_stop_type=payload.tp_stop_type,
-                sl_stop_type=payload.sl_stop_type,
+                tp_price=None if use_position_tpsl else payload.tp_price,
+                sl_price=None if use_position_tpsl else payload.sl_price,
+                tp_stop_type=tp_stop,
+                sl_stop_type=sl_stop,
             )
 
             dry_run = bool(response.get("dryRun"))
+            if use_position_tpsl:
+                tpsl_resp = await attach_full_position_tp_sl(
+                    self._client,
+                    symbol=payload.symbol,
+                    side=payload.side,
+                    tp_price=payload.tp_price,  # type: ignore[arg-type]
+                    sl_price=payload.sl_price,  # type: ignore[arg-type]
+                    tp_stop_type=tp_stop,
+                    sl_stop_type=sl_stop,
+                    dry_run_entry=dry_run,
+                )
+                response = {
+                    **response,
+                    "positionTpSl": tpsl_resp,
+                    "tpsl_mode": "position_full",
+                }
             order.raw_response = json.dumps(response, default=str)
             if not dry_run:
                 data = response.get("data") or {}
