@@ -176,7 +176,7 @@ def test_variation_meets_min_tpsl_pct_profile() -> None:
     )
 
 
-def test_count_trades_entry_in_last_24h() -> None:
+def test_count_trades_entry_in_last_48h() -> None:
     # idő mp-ben (<1e11) → _to_int_ms szoroz 1000-zel
     klines = [
         {
@@ -188,7 +188,7 @@ def test_count_trades_entry_in_last_24h() -> None:
         }
     ]
     end_ms = 100_000_000 * 1000
-    start_ms = end_ms - 24 * 60 * 60 * 1000
+    start_ms = end_ms - 48 * 60 * 60 * 1000
     trades = [
         {"entry_time_ms": start_ms - 1},
         {"entry_time_ms": start_ms},
@@ -196,9 +196,19 @@ def test_count_trades_entry_in_last_24h() -> None:
         {"entry_time_ms": end_ms},
     ]
     n = coin_analyze_mod._count_trades_with_entry_in_last_hours(
-        klines, trades, hours=24
+        klines, trades, hours=48
     )
     assert n == 3
+
+
+def test_compute_tp_win_rate_unresolved_not_success() -> None:
+    """3 TP + 2 feloldatlan → 60%%, nem 100%% (régi TP/(TP+SL) hiba)."""
+    rate = coin_analyze_mod._compute_tp_win_rate_pct(3, 0, 2, min_trades=2)
+    assert rate is not None
+    assert rate == Decimal("60.00")
+    assert coin_analyze_mod._compute_tp_win_rate_pct(
+        3, 0, 2, min_trades=10
+    ) is None
 
 
 def test_split_half_matches_time_midpoint() -> None:
@@ -326,7 +336,7 @@ def test_walk_forward_live_gate_ok(monkeypatch) -> None:
         return {
             "enabled": True,
             "has_recommended_variation": True,
-            "target_tp_win_rate_pct": "85",
+            "target_tp_win_rate_pct": "80",
             "best_current_signal": {
                 "enabled": True,
                 "predicted_side": "long",
@@ -342,7 +352,7 @@ def test_walk_forward_live_gate_ok(monkeypatch) -> None:
                     "resolved_tp_win_rate_pct": "90.00",
                     "meets_target": True,
                     "meets_min_tpsl_pct_profile": True,
-                    "trades_entered_last_24h_count": 6,
+                    "trades_entered_last_48h_count": 6,
                     "resolved_count": 10,
                     "tp_median_multiplier": "0.5",
                     "sl_median_multiplier": "0.35",
@@ -362,7 +372,7 @@ def test_walk_forward_live_gate_ok(monkeypatch) -> None:
     assert r["tp_move_pct"] == Decimal("3.1")
     assert r["sl_move_pct"] == Decimal("2.4")
     assert r["wf_gate_source"] == "ui_profile_recommendation"
-    assert r["wf_target_tp_win_rate_pct"] == "85"
+    assert r["wf_target_tp_win_rate_pct"] == "80"
     snap = r.get("wf_variation_snapshot")
     assert isinstance(snap, dict)
     assert snap.get("tp_median_multiplier") == "0.5"
@@ -389,7 +399,7 @@ def test_walk_forward_live_gate_grid_meets_target_fallback(monkeypatch) -> None:
             "enabled": True,
             "has_recommended_variation": False,
             "best_current_signal": None,
-            "target_tp_win_rate_pct": "85",
+            "target_tp_win_rate_pct": "80",
             "variations": [
                 {
                     "rank": 0,
@@ -398,7 +408,7 @@ def test_walk_forward_live_gate_grid_meets_target_fallback(monkeypatch) -> None:
                     "tp_median_multiplier": "0.65",
                     "sl_median_multiplier": "0.65",
                     "meets_target": True,
-                    "trades_entered_last_24h_count": 5,
+                    "trades_entered_last_48h_count": 5,
                     "meets_min_tpsl_pct_profile": False,
                     "resolved_count": 5,
                 }

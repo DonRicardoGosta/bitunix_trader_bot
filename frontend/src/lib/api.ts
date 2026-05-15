@@ -55,7 +55,7 @@ export interface OrderWalkForwardContext {
     resolved_tp_win_rate_pct?: string | number | null;
     meets_target?: boolean;
     meets_min_tpsl_pct_profile?: boolean;
-    trades_entered_last_24h_count?: number;
+    trades_entered_last_48h_count?: number;
     resolved_count?: number;
     tp_median_multiplier?: string | number | null;
     sl_median_multiplier?: string | number | null;
@@ -403,7 +403,7 @@ export interface TpslVariationRow {
   resolved_tp_win_rate_pct: string | null;
   meets_target: boolean;
   resolved_count: number;
-  trades_entered_last_24h_count: number;
+  trades_entered_last_48h_count: number;
   first_trade_tp_move_pct_raw: string | null;
   first_trade_sl_move_pct_raw: string | null;
   meets_min_tpsl_pct_profile: boolean;
@@ -418,7 +418,8 @@ export interface WalkForwardTpslVariations {
   min_resolved_trades: number;
   any_variation_meets_target: boolean;
   has_recommended_variation: boolean;
-  min_trades_last_24h_for_recommendation: number;
+  min_trades_last_48h_for_recommendation: number;
+  lookback_hours: number;
   variation_tp_move_pct_min: string;
   variation_tp_move_pct_max: string;
   variation_sl_move_pct_min: string;

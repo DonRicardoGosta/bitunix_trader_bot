@@ -166,8 +166,8 @@ export default function CoinAnalyzePage() {
             szekvenciális szimuláció <span className="font-medium text-foreground">több TP×medián / SL×medián</span>{" "}
             kombinációval fut; a legjobb TP/(TP+SL) arányú variáció mindig kinyitva, a többi becsukható.
             Céljel: legalább egy variáció{" "}
-            <span className="font-medium text-foreground">≥ 85% TP győzelem</span> a feloldott
-            trade-ek között. A lista végén: <span className="font-medium text-foreground">jelenlegi predikció</span>{" "}
+            <span className="font-medium text-foreground">≥ 80% TP győzelem</span> az összes
+            szimulált trade között (feloldatlan nem számít sikernek). A lista végén: <span className="font-medium text-foreground">jelenlegi predikció</span>{" "}
             a <span className="font-medium text-foreground">legjobb variáció</span> szorzóival.
           </p>
         </CardHeader>
@@ -521,19 +521,22 @@ function TpslVariationsSection({
         a szekvenciális szabállyal fut (50% kezdő train → trade →{" "}
         {block.variations[0]?.sequence.cooldown_minutes ?? "—"} perc cooldown → újra). Egy trade előretekintése legfeljebb a
         hátralévő gyertyák harmada (legalább 16 gyertya). A sorrend:{" "}
-        <span className="font-medium text-foreground">TP / (TP+SL)</span> csökkenő (feloldott trade: min.{" "}
-        {block.min_resolved_trades}). Cél: ≥{block.target_tp_win_rate_pct}% TP nyerés.
+        <span className="font-medium text-foreground">TP / összes trade</span> csökkenő (min.{" "}
+        {block.min_resolved_trades} trade). Cél: ≥{block.target_tp_win_rate_pct}% TP nyerés.
         {block.any_variation_meets_target ? (
           <span className="text-emerald-400 font-medium ml-1">Van olyan pont, ami eléri a célt.</span>
         ) : (
-          <span className="text-muted ml-1">Egyik rács-pont sem éri el a 85%-ot.</span>
+          <span className="text-muted ml-1">
+            Egyik rács-pont sem éri el a {block.target_tp_win_rate_pct}%-ot.
+          </span>
         )}{" "}
         <span className="block mt-1">
-          Olyan variáció nincs a listában, ahol az utolsó 24 órában pontosan egy belépés volt, és sem TP, sem SL nem
-          következett be. Legfeljebb <span className="font-medium text-foreground">egy ajánlott</span> konfiguráció van: a
-          legjobb TP/(TP+SL) % azok közül, ahol az utolsó 24 órában legalább{" "}
-          {block.min_trades_last_24h_for_recommendation} belépés történt, és az első belépés nyers TP/SL %% eléri a fenti
-          minimumot; a jelenlegi predikció csak ilyenkor a javasolt szorzókat mutatja.
+          Olyan variáció nincs a listában, ahol az utolsó {block.lookback_hours ?? 48} órában pontosan egy belépés volt,
+          és sem TP, sem SL nem következett be. Legfeljebb{" "}
+          <span className="font-medium text-foreground">egy ajánlott</span> konfiguráció van: a legjobb TP% azok közül,
+          ahol az utolsó {block.lookback_hours ?? 48} órában legalább{" "}
+          {block.min_trades_last_48h_for_recommendation} belépés történt, eléri a cél TP%-ot, és az első belépés nyers
+          TP/SL %% eléri a fenti minimumot; a jelenlegi predikció csak ilyenkor a javasolt szorzókat mutatja.
         </span>
       </p>
       {block.variations.map((v: TpslVariationRow, i: number) => {
@@ -547,10 +550,10 @@ function TpslVariationsSection({
             <span className="text-rose-400">SL: {s.sl_losses}</span>
             <span>feloldatlan: {s.no_result}</span>
             <span>
-              TP/(TP+SL):{" "}
+              TP/összes:{" "}
               <strong className="text-foreground">{v.resolved_tp_win_rate_pct ?? "—"}%</strong>
             </span>
-            <span>24h belépés: {v.trades_entered_last_24h_count}</span>
+            <span>48h belépés: {v.trades_entered_last_48h_count}</span>
             {v.first_trade_tp_move_pct_raw != null ? (
               <span>
                 1. belépés nyers: TP {v.first_trade_tp_move_pct_raw}% / SL {v.first_trade_sl_move_pct_raw ?? "—"}%
@@ -570,7 +573,7 @@ function TpslVariationsSection({
           </div>
         ) : (
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted pt-1">
-            <span>24h belépés: {v.trades_entered_last_24h_count}</span>
+            <span>48h belépés: {v.trades_entered_last_48h_count}</span>
             {v.first_trade_tp_move_pct_raw != null ? (
               <span>
                 1. belépés nyers: TP {v.first_trade_tp_move_pct_raw}% / SL {v.first_trade_sl_move_pct_raw ?? "—"}%
@@ -612,10 +615,10 @@ function TpslVariationsSection({
             >
               <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300/95">
                 {block.has_recommended_variation && v.is_recommended
-                  ? `Ajánlott konfig (≥${block.min_trades_last_24h_for_recommendation} belépés / utolsó 24h)`
+                  ? `Ajánlott konfig (≥${block.min_trades_last_48h_for_recommendation} belépés / utolsó ${block.lookback_hours ?? 48}h)`
                   : block.has_recommended_variation
                     ? "Legjobb TP% a listában — az ajánlott más sorban van (jelölve)"
-                    : "Legjobb TP% sorrend — nincs 24h aktivitás alapú ajánlás"}
+                    : `Legjobb TP% sorrend — nincs ${block.lookback_hours ?? 48}h aktivitás alapú ajánlás`}
               </div>
               {head}
               {stats}

@@ -423,7 +423,9 @@ def _variation_meets_min_tpsl_pct_profile(
     )
 
 
-_WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION = 5
+_WF_LOOKBACK_HOURS = 48
+_WF_MIN_TRADES_LAST_48H_FOR_RECOMMENDATION = 5
+_WF_TARGET_TP_WIN_RATE_PCT = Decimal("80")
 
 # Szekvenciális WF: egy trade ne fogyassza el az összes hátralévő gyertyát (TP/SL nélkül),
 # különben nincs hely következő belépésre cooldown után.
@@ -444,11 +446,25 @@ def _trade_forward_window_bars(
     return min(remaining_bars, chunk)
 
 
+def _compute_tp_win_rate_pct(
+    tp_wins: int,
+    sl_losses: int,
+    no_result: int,
+    *,
+    min_trades: int,
+) -> Decimal | None:
+    """TP nyerési %%: csak ``first_touch == tp`` számít győzelemnek; feloldatlan nem siker."""
+    total = tp_wins + sl_losses + no_result
+    if total < min_trades or total <= 0:
+        return None
+    return Decimal(tp_wins) / Decimal(total) * Decimal(100)
+
+
 def _exclude_variation_last_window_single_unresolved(
     klines: list[dict[str, Decimal]],
     trades: list[dict[str, Any]],
     *,
-    hours: int = 24,
+    hours: int = _WF_LOOKBACK_HOURS,
 ) -> bool:
     """Igaz, ha a válaszból el kell hagyni: utolsó ``hours`` órában pontosan 1 belépés, nincs TP/SL."""
     if not klines or not trades:
@@ -465,7 +481,7 @@ def _count_trades_with_entry_in_last_hours(
     klines: list[dict[str, Decimal]],
     trades: list[dict[str, Any]],
     *,
-    hours: int = 24,
+    hours: int = _WF_LOOKBACK_HOURS,
 ) -> int:
     """Hány trade belépése esik az utolsó gyertya ideje előtti ``hours`` órába (zárt intervallum)."""
     if not klines or not trades:
@@ -767,17 +783,18 @@ def build_walk_forward_tpsl_variations_payload(
     *,
     choppiness_max: Decimal,
     cooldown_minutes: int,
-    target_tp_win_rate_pct: Decimal = Decimal("85"),
+    target_tp_win_rate_pct: Decimal = _WF_TARGET_TP_WIN_RATE_PCT,
     min_resolved_trades: int = 2,
 ) -> dict[str, Any]:
     """Több TP/SL (medián×) kombináció; szimulációban TP/SL %% csak **felülről** vágva (≤300 / ≤150).
 
     A TP ≥30%% és SL ≥10%% a ``meets_min_tpsl_pct_profile`` mezőben szerepel (első belépés
     train-mediánja × szorzó); **ajánláshoz** kell ez is, különben a rács sorai különbözőek lennének,
-    de felfelé klipelés mind ugyanazt a 30/10-et adná. A sorrend: feloldott TP/(TP+SL) csökkenő.
-    Kiesnek a sorok, ha az utolsó 24 órában pontosan egy belépés volt és nincs TP/SL.
-    **Ajánlott**: első rendezett sor, ahol ≥ ``_WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION`` belépés
-    volt 24h-ban **és** ``meets_min_tpsl_pct_profile``; csak ekkor ``best_current_signal``.
+    de felfelé klipelés mind ugyanazt a 30/10-et adná. A sorrend: TP nyerési %% csökkenő
+    (TP / összes trade, feloldatlan nem számít sikernek).
+    Kiesnek a sorok, ha az utolsó 48 órában pontosan egy belépés volt és nincs TP/SL.
+    **Ajánlott**: első rendezett sor, ahol ≥ ``_WF_MIN_TRADES_LAST_48H_FOR_RECOMMENDATION`` belépés
+    volt 48h-ban, ``meets_target``, **és** ``meets_min_tpsl_pct_profile``; csak ekkor ``best_current_signal``.
     """
     pairs = _tpsl_variation_multiplier_pairs()
     rows_raw: list[dict[str, Any]] = []
@@ -793,10 +810,11 @@ def build_walk_forward_tpsl_variations_payload(
         summ = seq.get("summary")
         tp_w = int(summ["tp_wins"]) if summ else 0
         sl_l = int(summ["sl_losses"]) if summ else 0
-        resolved = tp_w + sl_l
-        rate: Decimal | None = None
-        if resolved >= min_resolved_trades and resolved > 0:
-            rate = Decimal(tp_w) / Decimal(resolved) * Decimal(100)
+        no_r = int(summ["no_result"]) if summ else 0
+        total_trades = tp_w + sl_l + no_r
+        rate = _compute_tp_win_rate_pct(
+            tp_w, sl_l, no_r, min_trades=min_resolved_trades
+        )
         meets = rate is not None and rate >= target_tp_win_rate_pct
         label = f"TP×{tp_m} med, SL×{sl_m} med"
         slim = {
@@ -810,10 +828,8 @@ def build_walk_forward_tpsl_variations_payload(
             "trades": seq["trades"],
             "summary": seq.get("summary"),
         }
-        n24 = _count_trades_with_entry_in_last_hours(klines, seq["trades"], hours=24)
-        if _exclude_variation_last_window_single_unresolved(
-            klines, seq["trades"], hours=24
-        ):
+        n48 = _count_trades_with_entry_in_last_hours(klines, seq["trades"])
+        if _exclude_variation_last_window_single_unresolved(klines, seq["trades"]):
             continue
         raw_tp_s: str | None = None
         raw_sl_s: str | None = None
@@ -835,8 +851,8 @@ def build_walk_forward_tpsl_variations_payload(
                     str(rate.quantize(Decimal("0.01"))) if rate is not None else None
                 ),
                 "meets_target": meets,
-                "resolved_count": resolved,
-                "trades_entered_last_24h_count": n24,
+                "resolved_count": total_trades,
+                "trades_entered_last_48h_count": n48,
                 "first_trade_tp_move_pct_raw": raw_tp_s,
                 "first_trade_sl_move_pct_raw": raw_sl_s,
                 "meets_min_tpsl_pct_profile": meets_profile,
@@ -864,9 +880,11 @@ def build_walk_forward_tpsl_variations_payload(
     rec_idx: int | None = None
     for i, r in enumerate(rows_raw):
         if (
-            int(r["trades_entered_last_24h_count"])
-            < _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION
+            int(r["trades_entered_last_48h_count"])
+            < _WF_MIN_TRADES_LAST_48H_FOR_RECOMMENDATION
         ):
+            continue
+        if not bool(r.get("meets_target")):
             continue
         if not bool(r.get("meets_min_tpsl_pct_profile")):
             continue
@@ -902,7 +920,8 @@ def build_walk_forward_tpsl_variations_payload(
         "min_resolved_trades": min_resolved_trades,
         "any_variation_meets_target": any_meets,
         "has_recommended_variation": has_recommended,
-        "min_trades_last_24h_for_recommendation": _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION,
+        "min_trades_last_48h_for_recommendation": _WF_MIN_TRADES_LAST_48H_FOR_RECOMMENDATION,
+        "lookback_hours": _WF_LOOKBACK_HOURS,
         "variation_tp_move_pct_min": str(_WF_VAR_TP_MOVE_PCT_MIN),
         "variation_tp_move_pct_max": str(_WF_VAR_TP_MOVE_PCT_MAX),
         "variation_sl_move_pct_min": str(_WF_VAR_SL_MOVE_PCT_MIN),
@@ -922,8 +941,8 @@ def wf_variation_snapshot_from_row(
         "resolved_tp_win_rate_pct": row.get("resolved_tp_win_rate_pct"),
         "meets_target": bool(row.get("meets_target")),
         "meets_min_tpsl_pct_profile": bool(row.get("meets_min_tpsl_pct_profile")),
-        "trades_entered_last_24h_count": int(
-            row.get("trades_entered_last_24h_count", 0) or 0
+        "trades_entered_last_48h_count": int(
+            row.get("trades_entered_last_48h_count", 0) or 0
         ),
         "resolved_count": int(row.get("resolved_count", 0) or 0),
         "tp_median_multiplier": row.get("tp_median_multiplier"),
@@ -941,9 +960,9 @@ def walk_forward_live_gate_from_klines(
     """Top signal / live: WF variációs rács + aktuális jel.
 
     Először a coin-analyze **profil-ajánlása** (``has_recommended_variation``): ≥5 belépés
-    / 24h és TP/SL nyers %% ≥ UI minimum (30/10). Ha nincs ilyen (kis medián → kis %%),
-    **fallback**: a rangsorban első sor, ahol ``meets_target`` (alapból ≥85% TP win) és
-    ≥5 belépés / 24h — ez egyezik a rács tetején látott „jó” variációval.
+    / 48h, ≥80% TP win (feloldatlan nem siker), TP/SL nyers %% ≥ UI minimum (30/10).
+    Ha nincs ilyen (kis medián → kis %%),
+    **fallback**: a rangsorban első sor, ahol ``meets_target`` és ≥5 belépés / 48h.
 
     Returns:
         ``ok``, ``reason``, siker esetén: ``side``, ``tp_move_pct``, ``sl_move_pct``,
@@ -992,8 +1011,8 @@ def walk_forward_live_gate_from_klines(
             key=lambda r: int(r.get("rank", 999)),
         )
         for row in rows:
-            if int(row.get("trades_entered_last_24h_count", 0)) < (
-                _WF_MIN_TRADES_LAST_24H_FOR_RECOMMENDATION
+            if int(row.get("trades_entered_last_48h_count", 0)) < (
+                _WF_MIN_TRADES_LAST_48H_FOR_RECOMMENDATION
             ):
                 continue
             if not row.get("meets_target"):

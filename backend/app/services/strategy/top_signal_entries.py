@@ -10,9 +10,9 @@ csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 * A **|24h % változás|** ≥ konfigurálható minimum.
 * **Walk-forward gate (opcionális):** ha ``STRATEGY_TOP_SIGNAL_ENTRIES_WF_GATE_ENABLED``,
   a kline lekérés a ``plan_kline_interval(WF_LOOKBACK)`` szerinti intervallum/limit
-  (alap 24h) alapján történik; minden jelöltre lefut a coin-analyze WF variációs
-  ajánlás. Csak akkor nyitunk, ha van **ajánlott** variáció (≥85% TP win cél,
-  profil + 24h aktivitás), a WF irány egyezik a kline belépővel, és a TP/SL
+  (alap 48h) alapján történik; minden jelöltre lefut a coin-analyze WF variációs
+  ajánlás. Csak akkor nyitunk, ha van **ajánlott** variáció (≥80% TP win cél,
+  profil + 48h aktivitás; feloldatlan trade nem számít sikernek), a WF irány egyezik a kline belépővel, és a TP/SL
   a WF ``best_current_signal`` százalékai alapján kerül számításra (nem
   kalibrációból).
 * A **utolsó lezárt gyertya** (a lista utolsó előtti eleme) **megerősíti** az

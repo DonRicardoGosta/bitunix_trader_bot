@@ -173,7 +173,7 @@ class TpslVariationRow(BaseModel):
     resolved_tp_win_rate_pct: str | None = None
     meets_target: bool = False
     resolved_count: int = Field(ge=0)
-    trades_entered_last_24h_count: int = Field(ge=0)
+    trades_entered_last_48h_count: int = Field(ge=0)
     first_trade_tp_move_pct_raw: str | None = None
     first_trade_sl_move_pct_raw: str | None = None
     meets_min_tpsl_pct_profile: bool = False
@@ -182,17 +182,18 @@ class TpslVariationRow(BaseModel):
 
 
 class WalkForwardTpslVariations(BaseModel):
-    """TP/SL variációk rácsa; cél: TP nyerési arány a feloldott (TP+SL) trade-ek között."""
+    """TP/SL variációk rácsa; cél: TP nyerési arány (feloldatlan trade nem számít sikernek)."""
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool
     disabled_reason: str | None = None
-    target_tp_win_rate_pct: str = "85"
+    target_tp_win_rate_pct: str = "80"
     min_resolved_trades: int = Field(default=2, ge=1, le=100)
     any_variation_meets_target: bool = False
     has_recommended_variation: bool = False
-    min_trades_last_24h_for_recommendation: int = Field(default=5, ge=1, le=100)
+    min_trades_last_48h_for_recommendation: int = Field(default=5, ge=1, le=100)
+    lookback_hours: int = Field(default=48, ge=1, le=168)
     variation_tp_move_pct_min: str = Field(
         default="30",
         description="Ajánlási profil: első belépés nyers TP%% legalább ennyi (nem szimulációs klipp).",
