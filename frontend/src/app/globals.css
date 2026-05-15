@@ -20,3 +20,16 @@ body {
 .num {
   @apply font-mono tabular-nums;
 }
+
+@keyframes route-loading-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.animate-route-loading-bar {
+  animation: route-loading-bar 1s ease-in-out infinite;
+}

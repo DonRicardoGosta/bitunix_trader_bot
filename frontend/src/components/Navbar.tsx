@@ -1,12 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Select } from "@/components/ui/input";
 import {
   useRefreshInterval,
   type RefreshIntervalSec,
 } from "@/contexts/RefreshIntervalContext";
 import { useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { useNavigationLoading } from "@/contexts/NavigationLoadingContext";
+import { RouteLoadingBar } from "@/components/RouteLoadingBar";
+import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/", label: "Dashboard" },
@@ -19,26 +23,43 @@ const links = [
 ];
 
 export function Navbar() {
+  const pathname = usePathname();
   const { intervalSec, setIntervalSec, options } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
+  const { isNavigating, pendingPath } = useNavigationLoading();
 
   return (
-    <header className="border-b border-border bg-bg-subtle/60 backdrop-blur sticky top-0 z-10">
+    <header className="relative border-b border-border bg-bg-subtle/60 backdrop-blur sticky top-0 z-10">
+      <RouteLoadingBar />
       <div className="mx-auto max-w-7xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <Link href="/" className="flex items-center gap-2">
           <span className="text-xl font-bold text-accent">⟡ Bitunix Trader</span>
         </Link>
         <div className="flex flex-wrap items-center gap-3">
           <nav className="flex items-center gap-2 text-sm">
-            {links.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="px-3 py-1.5 rounded-md text-slate-300 hover:bg-bg-card hover:text-slate-100 transition-colors"
-              >
-                {link.label}
-              </Link>
-            ))}
+            {links.map((link) => {
+              const active =
+                link.href === "/"
+                  ? pathname === "/"
+                  : pathname === link.href || pathname.startsWith(`${link.href}/`);
+              const pending = isNavigating && pendingPath === link.href;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className={cn(
+                    "px-3 py-1.5 rounded-md transition-colors",
+                    active && !pending
+                      ? "bg-bg-card text-slate-100"
+                      : "text-slate-300 hover:bg-bg-card hover:text-slate-100",
+                    pending && "bg-bg-card/60 text-accent animate-pulse",
+                  )}
+                  aria-current={active && !pending ? "page" : undefined}
+                >
+                  {pending ? `${link.label}…` : link.label}
+                </Link>
+              );
+            })}
           </nav>
           {!pushConnected ? (
             <div className="flex items-center gap-2 border-l border-border/60 pl-3">
