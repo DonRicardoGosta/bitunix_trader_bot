@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
+import { usePollingQuery } from "@/hooks/usePollingQuery";
 
 interface State {
   trading_enabled: boolean;
@@ -15,30 +15,24 @@ interface State {
 export function TradingGateBanner() {
   const { refreshIntervalMs } = useRefreshInterval();
   const calEpoch = useLiveEpoch("calibration");
-  const [state, setState] = useState<State | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
+  const { data: state } = usePollingQuery(
+    async (): Promise<State | null> => {
       try {
         const r = await api.calibrationLatest();
-        if (!cancelled)
-          setState({
-            trading_enabled: r.trading_enabled,
-            latest_status: r.latest?.status ?? null,
-            last_finished_at: r.latest_successful?.finished_at ?? null,
-          });
+        return {
+          trading_enabled: r.trading_enabled,
+          latest_status: r.latest?.status ?? null,
+          last_finished_at: r.latest_successful?.finished_at ?? null,
+        };
       } catch {
-        if (!cancelled) setState(null);
+        return null;
       }
-    }
-    void load();
-    const id = setInterval(load, refreshIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [refreshIntervalMs, calEpoch]);
+    },
+    {
+      intervalMs: refreshIntervalMs,
+      reloadKey: calEpoch,
+    },
+  );
 
   if (state === null) return null;
 

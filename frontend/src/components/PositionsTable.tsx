@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
+import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { cn, formatNumber } from "@/lib/utils";
 
 function num(v: string | null): number | null {
@@ -39,36 +40,15 @@ type SortKey =
 export function PositionsTable() {
   const { refreshIntervalMs } = useRefreshInterval();
   const posEpoch = useLiveEpoch("positions");
-  const [data, setData] = useState<NormalizedPositionsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error } = usePollingQuery(() => api.positionsNormalized(), {
+    intervalMs: refreshIntervalMs,
+    reloadKey: posEpoch,
+    errorMessage: "Hiba a pozíciók lekérésekor",
+  });
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("opened_desc");
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const r = await api.positionsNormalized();
-        if (!cancelled) {
-          setData(r);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled)
-          setError(
-            err instanceof Error ? err.message : "Hiba a pozíciók lekérésekor",
-          );
-      }
-    }
-    void load();
-    const id = setInterval(load, refreshIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [refreshIntervalMs, posEpoch]);
 
   const filtered = useMemo(() => {
     if (!data) return [] as NormalizedPosition[];

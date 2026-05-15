@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseNum(s: string | null | undefined): number | null {
@@ -17,42 +18,36 @@ export function OrdersTotalDbPnl() {
   const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
   const pnlEpoch = useLiveEpoch("orders_pnl");
-  const [error, setError] = useState<string | null>(null);
-  const [totalPnl, setTotalPnl] = useState<number | null>(null);
-  const [unrealized, setUnrealized] = useState<number | null>(null);
-  const [realized, setRealized] = useState<number | null>(null);
-  const [orderCount, setOrderCount] = useState<number | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const { data: pnlData, error } = usePollingQuery(
+    () => api.ordersPnlTotals(),
+    {
+      intervalMs: refreshIntervalMs,
+      reloadKey: pnlEpoch,
+      errorMessage: "PnL összesítés lekérése sikertelen",
+    },
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const r = await api.ordersPnlTotals();
-        if (cancelled) return;
-        const u = parseNum(r.unrealized_pnl_usdt) ?? 0;
-        const re = parseNum(r.realized_pnl_usdt) ?? 0;
-        const t = parseNum(r.total_pnl_usdt);
-        setUnrealized(u);
-        setRealized(re);
-        setTotalPnl(t ?? re + u);
-        setOrderCount(r.order_count);
-        setSyncError(r.sync_error);
-        setError(null);
-      } catch (err) {
-        if (!cancelled)
-          setError(
-            err instanceof Error ? err.message : "PnL összesítés lekérése sikertelen",
-          );
-      }
+  const { totalPnl, unrealized, realized, orderCount, syncError } = useMemo(() => {
+    if (!pnlData) {
+      return {
+        totalPnl: null,
+        unrealized: null,
+        realized: null,
+        orderCount: null,
+        syncError: null,
+      };
     }
-    void load();
-    const id = setInterval(load, refreshIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
+    const u = parseNum(pnlData.unrealized_pnl_usdt) ?? 0;
+    const re = parseNum(pnlData.realized_pnl_usdt) ?? 0;
+    const t = parseNum(pnlData.total_pnl_usdt);
+    return {
+      unrealized: u,
+      realized: re,
+      totalPnl: t ?? re + u,
+      orderCount: pnlData.order_count,
+      syncError: pnlData.sync_error,
     };
-  }, [refreshIntervalMs, pnlEpoch]);
+  }, [pnlData]);
 
   const tone =
     totalPnl == null ? "neutral" : totalPnl > 0 ? "positive" : totalPnl < 0 ? "negative" : "neutral";

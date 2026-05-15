@@ -5,6 +5,7 @@ import { api, type TickerInfo } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { backgroundAwareIntervalMs } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { usePollingQuery } from "@/hooks/usePollingQuery";
 
 interface Props {
   symbol: string;
@@ -12,8 +13,6 @@ interface Props {
 }
 
 export function MarketTicker({ symbol, refreshMs = 5000 }: Props) {
-  const [data, setData] = useState<TickerInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [documentHidden, setDocumentHidden] = useState(false);
   const pushConnected = useLivePushConnected();
   const marketEpoch = useLiveEpoch("market");
@@ -31,24 +30,11 @@ export function MarketTicker({ symbol, refreshMs = 5000 }: Props) {
     [refreshMs, documentHidden],
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const t = await api.ticker(symbol);
-        if (!cancelled) setData(t);
-      } catch (err) {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : "Hiba a ticker lekérésekor");
-      }
-    }
-    void load();
-    const id = setInterval(load, effectiveRefreshMs);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [symbol, effectiveRefreshMs, marketEpoch]);
+  const { data, error } = usePollingQuery(() => api.ticker(symbol), {
+    intervalMs: effectiveRefreshMs,
+    reloadKey: `${marketEpoch}:${symbol}`,
+    errorMessage: "Hiba a ticker lekérésekor",
+  });
 
   return (
     <Card>

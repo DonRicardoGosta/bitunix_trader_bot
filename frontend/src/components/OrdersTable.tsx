@@ -7,6 +7,7 @@ import { Pagination, pageSlice } from "@/components/ui/Pagination";
 import { api, type OrderRow } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
+import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseDecimal(value: string | null | undefined): number | null {
@@ -109,37 +110,20 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 export function OrdersTable() {
   const { refreshIntervalMs } = useRefreshInterval();
   const ordersEpoch = useLiveEpoch("orders");
-  const [rows, setRows] = useState<OrderRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: rows, error } = usePollingQuery(
+    () => api.orders({ limit: 500 }),
+    {
+      intervalMs: refreshIntervalMs,
+      reloadKey: ordersEpoch,
+      errorMessage: "Hiba a rendelések lekérésekor",
+    },
+  );
   const [search, setSearch] = useState("");
   const [lifecycle, setLifecycle] = useState<LifecycleFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [openSymbols, setOpenSymbols] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        // 500 elemig elmegyünk; ha még több kell, a backend offset-tel kérhető
-        const r = await api.orders({ limit: 500 });
-        if (!cancelled) {
-          setRows(r);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : "Hiba a rendelések lekérésekor");
-      }
-    }
-    void load();
-    const id = setInterval(load, refreshIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [refreshIntervalMs, ordersEpoch]);
 
   const filteredRows = useMemo(() => {
     if (!rows) return [];

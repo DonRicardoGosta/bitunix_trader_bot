@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { cn, formatNumber } from "@/lib/utils";
 
 function num(v: string | null | undefined): number | null {
@@ -45,31 +46,15 @@ export function DashboardOverview() {
   const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
   const dashEpoch = useLiveEpoch("dashboard");
-  const [data, setData] = useState<DashboardSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [lookback, setLookback] = useState(1);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const r = await api.dashboardSummary(lookback);
-        if (!cancelled) {
-          setData(r);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : "Hiba a dashboard lekérésekor");
-      }
-    }
-    void load();
-    const id = setInterval(load, refreshIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [lookback, refreshIntervalMs, dashEpoch]);
+  const { data, error } = usePollingQuery(
+    () => api.dashboardSummary(lookback),
+    {
+      intervalMs: refreshIntervalMs,
+      reloadKey: `${dashEpoch}:${lookback}`,
+      errorMessage: "Hiba a dashboard lekérésekor",
+    },
+  );
 
   const account = data?.exchange?.account ?? null;
   const open = data?.exchange?.open_positions;
