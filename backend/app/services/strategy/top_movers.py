@@ -57,6 +57,11 @@ from app.services.tpsl import (
     implied_tp_roi_pct_from_price_move_pct,
     is_risky_sl_roi,
 )
+from app.services.trading_pairs_meta import (
+    PairMeta as _PairMeta,
+    extract_bitunix_list as _extract_list,
+    index_trading_pairs as _index_trading_pairs,
+)
 from app.services.trading import TradingService
 
 
@@ -379,37 +384,7 @@ class TopMoversStrategy(Strategy):
 
         leverage = max(1, int(meta.max_leverage))
 
-        # 4) max leverage beállítása a Bitunixon
-        try:
-            lev_response = await ctx.client.change_leverage(
-                symbol=symbol,
-                leverage=leverage,
-                margin_coin=ctx.settings.bitunix_margin_coin,
-            )
-        except (BitunixAPIError, BitunixSignatureError) as exc:
-            out["placed"] = False
-            out["reason"] = "change_leverage_failed"
-            out["error"] = str(exc)
-            await audit.record(
-                ctx.session,
-                "strategy.top_movers.leverage_error",
-                level=AuditLevel.ERROR,
-                message=f"Leverage beállítás hiba {symbol}: {exc}",
-                payload=out,
-                strategy_name=self.name,
-            )
-            return out
-
-        await audit.record(
-            ctx.session,
-            "strategy.top_movers.leverage_set",
-            level=AuditLevel.INFO,
-            message=f"{symbol} leverage → {leverage}x",
-            payload={"symbol": symbol, "leverage": leverage, "response": lev_response},
-            strategy_name=self.name,
-        )
-
-        # 5) mennyiség
+        # 4) mennyiség (leverage + TP/SL: TradingService.prepare_open_entry_order)
         qty = compute_quantity(
             margin_usdt=margin_usdt,
             leverage=leverage,
@@ -647,22 +622,6 @@ class _Mover:
         return (self.last_price - self.low) / (self.high - self.low)
 
 
-class _PairMeta:
-    __slots__ = ("symbol", "max_leverage", "base_precision", "price_precision")
-
-    def __init__(
-        self,
-        symbol: str,
-        max_leverage: int,
-        base_precision: int,
-        price_precision: int,
-    ) -> None:
-        self.symbol = symbol
-        self.max_leverage = max_leverage
-        self.base_precision = base_precision
-        self.price_precision = price_precision
-
-
 def decide_direction(
     mover: _Mover,
     *,
@@ -772,60 +731,6 @@ def _rank_top_movers(raw: Any, *, top_n: int) -> list[_Mover]:
         )
     movers.sort(key=lambda m: abs(m.change_pct), reverse=True)
     return movers[:top_n]
-
-
-def _index_trading_pairs(raw: Any) -> dict[str, _PairMeta]:
-    items = _extract_list(raw)
-    out: dict[str, _PairMeta] = {}
-    for item in items:
-        symbol = item.get("symbol")
-        if not symbol:
-            continue
-        max_lev = item.get("maxLeverage") or item.get("max_leverage") or 1
-        try:
-            max_leverage = int(max_lev)
-        except (TypeError, ValueError):
-            max_leverage = 1
-        precision_raw = (
-            item.get("basePrecision")
-            or item.get("base_precision")
-            or item.get("qtyPrecision")
-            or 4
-        )
-        try:
-            base_precision = int(precision_raw)
-        except (TypeError, ValueError):
-            base_precision = 4
-        price_raw = (
-            item.get("pricePrecision")
-            or item.get("price_precision")
-            or item.get("quotePrecision")
-            or 4
-        )
-        try:
-            price_precision = int(price_raw)
-        except (TypeError, ValueError):
-            price_precision = 4
-        out[symbol] = _PairMeta(
-            symbol=symbol,
-            max_leverage=max_leverage,
-            base_precision=base_precision,
-            price_precision=price_precision,
-        )
-    return out
-
-
-def _extract_list(raw: Any) -> list[dict[str, Any]]:
-    """A Bitunix válaszok ``data`` mezője hol lista, hol dict – mindkettőt kezeli."""
-    if isinstance(raw, list):
-        return raw
-    if isinstance(raw, dict):
-        data = raw.get("data")
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict) and isinstance(data.get("list"), list):
-            return data["list"]
-    return []
 
 
 def _extract_available_usdt(raw: Any) -> Decimal:

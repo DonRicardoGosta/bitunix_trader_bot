@@ -15,7 +15,7 @@ class OrderRequest(BaseModel):
     rögzíti a take profit / stop loss triggert a belépő rendelésre.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     symbol: str = Field(..., examples=["BTCUSDT"])
     side: Literal["BUY", "SELL"]

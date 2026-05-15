@@ -48,14 +48,15 @@ export function OrderForm() {
       const res = await api.placeOrder({
         symbol: state.symbol.trim().toUpperCase(),
         side: state.side,
+        tradeSide: state.reduceOnly ? undefined : "OPEN",
         orderType: state.orderType,
         quantity: state.quantity,
         price:
           state.orderType === "LIMIT" && state.price ? state.price : undefined,
         leverage: Number(state.leverage),
         reduceOnly: state.reduceOnly,
-        tpPrice: state.tpPrice || undefined,
-        slPrice: state.slPrice || undefined,
+        tpPrice: state.reduceOnly ? undefined : state.tpPrice || undefined,
+        slPrice: state.reduceOnly ? undefined : state.slPrice || undefined,
       });
       setResult(res);
     } catch (err) {
@@ -157,6 +158,12 @@ export function OrderForm() {
           />
         </div>
       </div>
+
+      <p className="text-xs text-muted leading-relaxed">
+        Új pozíció (OPEN): a TP és SL a belépő rendeléssel együtt megy a tőzsdére
+        (egyetlen API hívás). Ha üresen hagyod, a backend a kalibráció / ROI alapján
+        számolja ki.
+      </p>
 
       <label className="flex items-center gap-2 text-sm">
         <input

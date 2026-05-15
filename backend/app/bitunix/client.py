@@ -324,6 +324,13 @@ class BitunixClient:
         if ts not in ("OPEN", "CLOSE"):
             raise ValueError(f"trade_side must be OPEN or CLOSE, got {trade_side!r}")
 
+        has_tp = tp_price is not None
+        has_sl = sl_price is not None
+        if ts == "OPEN" and has_tp != has_sl:
+            raise ValueError(
+                "OPEN rendelésnél tpPrice és slPrice együtt kötelező (atomi TP/SL)."
+            )
+
         body: dict[str, Any] = {
             "symbol": symbol,
             "side": side.upper(),

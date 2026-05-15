@@ -498,34 +498,6 @@ class TopSignalEntriesStrategy(Strategy):
             return out
 
         leverage = max(1, int(meta.max_leverage))
-        try:
-            lev_response = await ctx.client.change_leverage(
-                symbol=symbol,
-                leverage=leverage,
-                margin_coin=ctx.settings.bitunix_margin_coin,
-            )
-        except (BitunixAPIError, BitunixSignatureError) as exc:
-            out["placed"] = False
-            out["reason"] = "change_leverage_failed"
-            out["error"] = str(exc)
-            await audit.record(
-                ctx.session,
-                "strategy.top_signal_entries.leverage_error",
-                level=AuditLevel.ERROR,
-                message=f"Leverage hiba {symbol}: {exc}",
-                payload=out,
-                strategy_name=self.name,
-            )
-            return out
-
-        await audit.record(
-            ctx.session,
-            "strategy.top_signal_entries.leverage_set",
-            level=AuditLevel.INFO,
-            message=f"{symbol} leverage → {leverage}x",
-            payload={"symbol": symbol, "leverage": leverage, "response": lev_response},
-            strategy_name=self.name,
-        )
 
         qty = compute_quantity(
             margin_usdt=margin_usdt,

@@ -16,7 +16,7 @@ from app.schemas.coin_analyze import (
 )
 from app.schemas.trading import TickerInfo
 from app.services.coin_analyze import build_coin_analysis_payload, plan_kline_interval
-from app.services.strategy.top_movers import _index_trading_pairs
+from app.services.trading_pairs_meta import index_trading_pairs
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -85,7 +85,7 @@ async def list_trading_symbols(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
-    meta = _index_trading_pairs(raw)
+    meta = index_trading_pairs(raw)
     return [
         MarketSymbolRow(symbol=sym, max_leverage=m.max_leverage)
         for sym, m in sorted(meta.items(), key=lambda x: x[0])
@@ -104,7 +104,7 @@ async def coin_analyze(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
-    meta = _index_trading_pairs(raw_pairs)
+    meta = index_trading_pairs(raw_pairs)
     pair = meta.get(body.symbol)
     if pair is None:
         raise HTTPException(

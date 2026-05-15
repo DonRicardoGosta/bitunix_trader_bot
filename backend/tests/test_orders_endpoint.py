@@ -63,6 +63,9 @@ def test_place_order_dry_run_via_http() -> None:
         assert response.status_code == 201, response.text
         body = response.json()
         assert body["dry_run"] is True
+        echo = (body.get("raw") or {}).get("echo") or {}
+        assert echo.get("tpPrice") is not None
+        assert echo.get("slPrice") is not None
         assert body["status"] == "NEW"
         assert body["client_order_id"].startswith("bt-")
 

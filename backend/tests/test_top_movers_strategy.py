@@ -94,6 +94,14 @@ class FakeBitunixClient:
     async def get_trading_pairs(self) -> dict:
         return self._trading_pairs
 
+    async def get_ticker(self, symbol: str) -> dict:
+        data = self._tickers.get("data") or []
+        if isinstance(data, list):
+            for row in data:
+                if str(row.get("symbol", "")).upper() == symbol.upper():
+                    return {"data": [row]}
+        return {"data": [{"symbol": symbol, "lastPrice": "100"}]}
+
     async def get_account(self, margin_coin: str = "USDT") -> dict:
         return self._account
 
@@ -578,7 +586,6 @@ async def test_top_movers_writes_audit_events() -> None:
     events = {r.event for r in rows}
     assert "strategy.top_movers.ranked" in events
     assert "strategy.top_movers.margin_computed" in events
-    assert "strategy.top_movers.leverage_set" in events
     assert "strategy.top_movers.tpsl_set" in events
     assert "trade.order_placed" in events
     levels = {r.event: r.level for r in rows}
@@ -654,4 +661,4 @@ async def test_top_movers_skips_when_tp_margin_roi_below_config_min() -> None:
 
     assert result.placed_orders == []
     assert any(s.get("reason") == "tp_roi_below_min" for s in result.skipped)
-    assert fake.change_leverage_calls
+    assert fake.place_order_calls == []

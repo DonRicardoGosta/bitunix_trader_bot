@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel, Order, OrderSide, OrderStatus, OrderType
 from app.schemas.trading import OrderRequest, OrderResponse
+from app.services.entry_order_prep import OpenEntryPreparationError, prepare_open_entry_order
 from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 from app.services.order_enrichment import (
     PositionMatch,
@@ -66,6 +67,15 @@ class TradingService:
             entry_context: Stratégia-belépés összefoglaló (WF win rate, forrás stb.).
         """
         client_order_id = payload.client_order_id or _new_client_order_id()
+        settings = get_settings()
+
+        if payload.trade_side == "OPEN" and not payload.reduce_only:
+            payload = await prepare_open_entry_order(
+                client=self._client,
+                session=self._session,
+                payload=payload,
+                settings=settings,
+            )
 
         order = Order(
             client_order_id=client_order_id,

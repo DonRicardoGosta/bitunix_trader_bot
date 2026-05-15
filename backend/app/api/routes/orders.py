@@ -13,6 +13,7 @@ from app.config import Settings, get_settings
 from app.db.session import get_db
 from app.schemas.trading import OrderRequest, OrderResponse
 from app.services.calibration_runner import get_latest_successful_calibration
+from app.services.entry_order_prep import OpenEntryPreparationError
 from app.services.trading import TradingService
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -64,6 +65,11 @@ async def place_order(
             )
     try:
         return await service.place_order(payload)
+    except OpenEntryPreparationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     except BitunixSignatureError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
