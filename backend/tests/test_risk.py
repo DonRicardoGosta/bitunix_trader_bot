@@ -6,7 +6,19 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.risk import compute_margin, compute_quantity
+from app.schemas.trading import ORDER_REQUEST_MAX_LEVERAGE
+from app.services.risk import compute_margin, compute_quantity, effective_order_leverage
+
+
+def test_effective_order_leverage_clamps_above_order_request_max() -> None:
+    assert effective_order_leverage(200) == ORDER_REQUEST_MAX_LEVERAGE
+    assert effective_order_leverage(125) == 125
+    assert effective_order_leverage(50) == 50
+
+
+def test_effective_order_leverage_minimum_one() -> None:
+    assert effective_order_leverage(0) == 1
+    assert effective_order_leverage(-5) == 1
 
 
 def test_compute_margin_uses_1_percent_of_balance() -> None:

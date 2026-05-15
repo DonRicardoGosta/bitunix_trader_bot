@@ -8,6 +8,18 @@ from __future__ import annotations
 
 from decimal import ROUND_DOWN, Decimal
 
+from app.schemas.trading import ORDER_REQUEST_MAX_LEVERAGE
+
+
+def effective_order_leverage(max_leverage: int) -> int:
+    """Tőzsdei max leverage → ``OrderRequest``-kompatibilis érték (1…125).
+
+    A Bitunix ``trading_pairs`` válaszban egyes pároknál ``maxLeverage`` > 125
+    (pl. 200); a belső séma és API clamp miatt a stratégiák ezt itt vágják le.
+    """
+    pair_max = max(1, int(max_leverage))
+    return min(pair_max, ORDER_REQUEST_MAX_LEVERAGE)
+
 
 def compute_margin(
     available_balance: Decimal,

@@ -7,6 +7,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# OrderRequest és a Bitunix kliens közös felső határa (tőzsdei maxLeverage lehet magasabb).
+ORDER_REQUEST_MAX_LEVERAGE = 125
+
 
 class OrderRequest(BaseModel):
     """Új rendelés feladás bemenet.
@@ -29,7 +32,7 @@ class OrderRequest(BaseModel):
     order_type: Literal["MARKET", "LIMIT"] = Field(..., alias="orderType")
     quantity: Decimal = Field(..., gt=0)
     price: Decimal | None = Field(default=None, gt=0)
-    leverage: int = Field(default=1, ge=1, le=125)
+    leverage: int = Field(default=1, ge=1, le=ORDER_REQUEST_MAX_LEVERAGE)
     reduce_only: bool = Field(default=False, alias="reduceOnly")
     client_order_id: str | None = Field(default=None, alias="clientOrderId")
     tp_price: Decimal | None = Field(default=None, gt=0, alias="tpPrice")

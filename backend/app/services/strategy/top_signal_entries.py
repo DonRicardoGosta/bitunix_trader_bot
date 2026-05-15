@@ -43,7 +43,7 @@ from app.services.coin_analyze import (
     plan_kline_interval,
     walk_forward_live_gate_from_klines,
 )
-from app.services.risk import compute_margin, compute_quantity
+from app.services.risk import compute_margin, compute_quantity, effective_order_leverage
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.strategy.top_movers import (
     _extract_available_usdt,
@@ -497,7 +497,11 @@ class TopSignalEntriesStrategy(Strategy):
             )
             return out
 
-        leverage = max(1, int(meta.max_leverage))
+        pair_max_leverage = max(1, int(meta.max_leverage))
+        leverage = effective_order_leverage(pair_max_leverage)
+        if leverage < pair_max_leverage:
+            out["pair_max_leverage"] = pair_max_leverage
+            out["leverage_capped"] = True
 
         qty = compute_quantity(
             margin_usdt=margin_usdt,

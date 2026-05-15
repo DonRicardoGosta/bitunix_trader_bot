@@ -49,7 +49,7 @@ from app.db import audit
 from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
 from app.services.calibration_runner import get_active_calibration_result
-from app.services.risk import compute_margin, compute_quantity
+from app.services.risk import compute_margin, compute_quantity, effective_order_leverage
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.tpsl import (
     compute_tp_sl_prices_from_move_pct,
@@ -382,7 +382,11 @@ class TopMoversStrategy(Strategy):
             )
             return out
 
-        leverage = max(1, int(meta.max_leverage))
+        pair_max_leverage = max(1, int(meta.max_leverage))
+        leverage = effective_order_leverage(pair_max_leverage)
+        if leverage < pair_max_leverage:
+            out["pair_max_leverage"] = pair_max_leverage
+            out["leverage_capped"] = True
 
         # 4) mennyiség (leverage + TP/SL: TradingService.prepare_open_entry_order)
         qty = compute_quantity(

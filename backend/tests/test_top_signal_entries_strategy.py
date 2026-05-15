@@ -179,6 +179,7 @@ class _FakeClient:
         self._klines_by_symbol = klines_by_symbol
         self._positions_raw = positions_raw or {"data": []}
         self.place_order_calls: list[dict] = []
+        self.change_leverage_calls: list[dict] = []
         self.place_position_tp_sl_calls: list[dict] = []
         self._open_positions: dict[tuple[str, str], str] = {}
         self.get_klines_calls: list[str] = []
@@ -222,6 +223,7 @@ class _FakeClient:
         return self._klines_by_symbol.get(symbol, {"data": []})
 
     async def change_leverage(self, **kwargs) -> dict:
+        self.change_leverage_calls.append(kwargs)
         return {"dryRun": True, "echo": kwargs}
 
     async def place_order(self, **kwargs) -> dict:
@@ -342,3 +344,77 @@ async def test_top_signal_entries_places_long_and_short_with_signals() -> None:
             .all()
         )
     assert "strategy.top_signal_entries.order_placed" in rows
+
+
+def _highlev_klines_raw() -> dict:
+    return _ccc_klines_raw()
+
+
+@pytest.mark.asyncio
+async def test_top_signal_entries_caps_leverage_for_order_request() -> None:
+    """maxLeverage=200 a tőzsdén → belső rendelés legfeljebb 125 (OrderRequest)."""
+    await _seed_fresh_calibration()
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.commit()
+
+    tickers = {
+        "data": [
+            {
+                "symbol": "HIGHLEV",
+                "lastPrice": "150",
+                "open": "100",
+                "high": "150",
+                "low": "98",
+            },
+        ]
+    }
+    pairs = {
+        "data": [
+            {
+                "symbol": "HIGHLEV",
+                "maxLeverage": "200",
+                "basePrecision": "4",
+                "pricePrecision": "2",
+            },
+        ]
+    }
+    fake = _FakeClient(
+        tickers=tickers,
+        trading_pairs=pairs,
+        account={"data": {"available": "1000"}},
+        klines_by_symbol={"HIGHLEV": _highlev_klines_raw()},
+    )
+    base = get_settings()
+    settings = base.model_copy(
+        update={
+            "strategy_top_signal_entries_enabled": True,
+            "strategy_top_signal_entries_count": 1,
+            "strategy_top_signal_entries_scan_limit": 10,
+            "strategy_top_signal_entries_kline_lookahead": 10,
+        }
+    )
+    strategy = TopSignalEntriesStrategy()
+    async with AsyncSessionLocal() as session:
+        ctx = StrategyContext(session=session, client=fake, settings=settings, triggered_by="test")
+        result = await strategy.run(ctx)
+        await session.commit()
+
+    assert len(result.placed_orders) == 1
+    placed = result.placed_orders[0]
+    assert placed["symbol"] == "HIGHLEV"
+    assert placed["leverage"] == 125
+    assert placed.get("leverage_capped") is True
+    assert placed.get("pair_max_leverage") == 200
+    assert len(fake.place_order_calls) == 1
+    assert len(fake.change_leverage_calls) == 1
+    assert fake.change_leverage_calls[0]["leverage"] == 125
+    assert fake.change_leverage_calls[0]["symbol"] == "HIGHLEV"
+
+    async with AsyncSessionLocal() as session:
+        row = (
+            await session.execute(
+                sa.select(Order).where(Order.symbol == "HIGHLEV")
+            )
+        ).scalar_one()
+    assert row.leverage == 125
