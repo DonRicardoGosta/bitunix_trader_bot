@@ -20,6 +20,7 @@ import {
   isLookbackHours,
   lookbackLabel,
 } from "@/lib/lookback";
+import { RefreshIndicator } from "@/components/RefreshIndicator";
 import { cn, formatNumber } from "@/lib/utils";
 
 function num(v: string | null | undefined): number | null {
@@ -58,11 +59,12 @@ export function DashboardOverview() {
     24,
     isLookbackHours,
   );
-  const { data, error, isStale } = usePollingQuery(
+  const { data, error, isRefreshing } = usePollingQuery(
     () => api.dashboardSummary(lookbackHours),
     {
       intervalMs: refreshIntervalMs,
-      reloadKey: `${dashEpoch}:${lookbackHours}`,
+      reloadKey: dashEpoch,
+      staleKey: lookbackHours,
       errorMessage: "Hiba a dashboard lekérésekor",
     },
   );
@@ -88,15 +90,13 @@ export function DashboardOverview() {
   const usedMargin = num(open?.total_margin_usdt ?? null) ?? 0;
 
   return (
-    <div
-      className={cn(
-        "space-y-6 transition-opacity",
-        isStale && "opacity-70",
-      )}
-    >
+    <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Áttekintés</h1>
+          <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+            Áttekintés
+            <RefreshIndicator active={isRefreshing} />
+          </h1>
           <p className="text-muted text-sm mt-1">
             Élő számla- és tradinginformáció ·{" "}
             {pushConnected ? (
@@ -105,10 +105,13 @@ export function DashboardOverview() {
               <>frissül {intervalSec} mp-enként · </>
             )}
             <span className="text-xs">
-              ablak: {lookbackLabel(data.lookback_hours ?? lookbackHours)}
-              {isStale ? " · frissítés…" : ""}
-              {" · "}
-              {new Date(data.generated_at).toLocaleString("hu-HU")}
+              ablak: {lookbackLabel(data?.lookback_hours ?? lookbackHours)}
+              {data ? (
+                <>
+                  {" · "}
+                  {new Date(data.generated_at).toLocaleString("hu-HU")}
+                </>
+              ) : null}
             </span>
           </p>
         </div>

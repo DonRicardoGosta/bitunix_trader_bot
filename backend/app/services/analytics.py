@@ -27,6 +27,93 @@ def _bucket_start(dt: datetime, bucket_hours: int) -> datetime:
     return datetime.fromtimestamp(aligned, tz=UTC)
 
 
+def _iter_bucket_range(
+    since: datetime, end: datetime, bucket_hours: int
+) -> list[datetime]:
+    """Minden bucket kezdete a [since, end] ablakon belül (üres bucketekkel)."""
+    if end < since:
+        return []
+    step = timedelta(hours=max(1, bucket_hours))
+    start = _bucket_start(since, bucket_hours)
+    out: list[datetime] = []
+    cur = start
+    while cur <= end:
+        out.append(cur)
+        cur += step
+    return out
+
+
+def _positions_breakdown(
+    closed: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Szimbólum, oldal, top trade lista."""
+    per_symbol: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
+    by_side: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"count": 0, "wins": 0, "losses": 0}
+    )
+    trade_rows: list[tuple[Decimal, dict[str, Any]]] = []
+
+    for p in closed:
+        r = _dec(p.get("realized_pnl"))
+        if r is None:
+            continue
+        sym = p.get("symbol") or "?"
+        per_symbol[sym] += r
+        side = (p.get("side") or "?").upper()
+        by_side[side]["count"] += 1
+        if r > 0:
+            by_side[side]["wins"] += 1
+        elif r < 0:
+            by_side[side]["losses"] += 1
+        trade_rows.append((r, p))
+
+    per_symbol_list = sorted(
+        (
+            {"symbol": s, "realized_pnl_usdt": str(v), "count": 0}
+            for s, v in per_symbol.items()
+        ),
+        key=lambda x: Decimal(x["realized_pnl_usdt"]),
+        reverse=True,
+    )
+    sym_counts: dict[str, int] = defaultdict(int)
+    for p in closed:
+        if p.get("symbol"):
+            sym_counts[p["symbol"]] += 1
+    for row in per_symbol_list:
+        row["count"] = sym_counts.get(row["symbol"], 0)
+
+    trade_rows.sort(key=lambda x: x[0], reverse=True)
+    top_winners = [
+        {
+            "symbol": p.get("symbol"),
+            "side": p.get("side"),
+            "realized_pnl_usdt": str(r),
+            "closed_at": p.get("closed_at") or p.get("updated_at"),
+            "roi_pct": p.get("roi_pct"),
+        }
+        for r, p in trade_rows[:8]
+        if r > 0
+    ]
+    top_losers = [
+        {
+            "symbol": p.get("symbol"),
+            "side": p.get("side"),
+            "realized_pnl_usdt": str(r),
+            "closed_at": p.get("closed_at") or p.get("updated_at"),
+            "roi_pct": p.get("roi_pct"),
+        }
+        for r, p in reversed(trade_rows[-8:])
+        if r < 0
+    ][:8]
+
+    return {
+        "per_symbol": per_symbol_list[:12],
+        "by_side": dict(by_side),
+        "top_winners": top_winners,
+        "top_losers": top_losers,
+    }
+
+
 async def _fetch_closed_in_window(
     client: BitunixClient,
     *,
@@ -90,14 +177,21 @@ async def build_pnl_series(
     bucket_hours: int = 1,
 ) -> dict[str, Any]:
     """Lezárt pozíciók realized PnL idősora bucketenként."""
+    now = datetime.now(UTC)
+    since = now - timedelta(hours=max(1, lookback_hours))
+
     if client is None:
         return {
             "lookback_hours": lookback_hours,
             "bucket_hours": bucket_hours,
+            "window_start": since.isoformat(),
+            "window_end": now.isoformat(),
+            "positions_in_window": 0,
             "sync_error": "Bitunix API kulcs hiányzik.",
             "buckets": [],
             "cumulative": [],
             "kpis": _closed_kpis([]),
+            "breakdown": _positions_breakdown([]),
         }
 
     closed, sync_error = await _fetch_closed_in_window(
@@ -111,7 +205,7 @@ async def build_pnl_series(
         if r is None:
             continue
         ts = position_event_time(p)
-        if ts is None:
+        if ts is None or ts < since:
             continue
         series_points.append((ts, r))
         b = _bucket_start(ts, bucket_hours)
@@ -120,14 +214,22 @@ async def build_pnl_series(
     series_points.sort(key=lambda x: x[0])
     realized_pnls = [v for _, v in series_points]
 
+    bucket_starts = _iter_bucket_range(since, now, bucket_hours)
     buckets = [
         {
             "bucket_start": b.isoformat(),
-            "realized_pnl_usdt": str(v),
+            "realized_pnl_usdt": str(
+                bucket_map.get(b, Decimal(0)).quantize(
+                    Decimal("0.0001"), rounding=ROUND_HALF_UP
+                )
+            ),
         }
-        for b, v in sorted(bucket_map.items())
+        for b in bucket_starts
     ]
-    cumulative: list[dict[str, str]] = []
+
+    cumulative: list[dict[str, str]] = [
+        {"at": since.isoformat(), "cumulative_pnl_usdt": "0"}
+    ]
     running = Decimal(0)
     for ts, v in series_points:
         running += v
@@ -139,14 +241,50 @@ async def build_pnl_series(
                 ),
             }
         )
+    if len(cumulative) == 1:
+        cumulative.append(
+            {
+                "at": now.isoformat(),
+                "cumulative_pnl_usdt": "0",
+            }
+        )
 
     return {
         "lookback_hours": lookback_hours,
         "bucket_hours": bucket_hours,
+        "window_start": since.isoformat(),
+        "window_end": now.isoformat(),
+        "positions_in_window": len(closed),
         "sync_error": sync_error,
         "buckets": buckets,
-        "cumulative": cumulative[-500:],
+        "cumulative": cumulative,
         "kpis": _closed_kpis(realized_pnls),
+        "breakdown": _positions_breakdown(closed),
+    }
+
+
+async def build_analytics_summary(
+    session: AsyncSession,
+    client: BitunixClient | None,
+    *,
+    lookback_hours: int,
+    bucket_hours: int = 1,
+) -> dict[str, Any]:
+    """Egy válaszban: PnL idősor + DB rendelés/stratégia + bontások."""
+    pnl = await build_pnl_series(
+        client, lookback_hours=lookback_hours, bucket_hours=bucket_hours
+    )
+    orders = await build_orders_window_stats(session, lookback_hours=lookback_hours)
+    strategy = await build_strategy_runs_window_stats(
+        session, lookback_hours=lookback_hours
+    )
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "lookback_hours": lookback_hours,
+        "bucket_hours": bucket_hours,
+        "pnl": pnl,
+        "orders": orders,
+        "strategy": strategy,
     }
 
 

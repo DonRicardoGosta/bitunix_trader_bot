@@ -17,3 +17,11 @@ class VitestStubWebSocket {
 }
 
 vi.stubGlobal("WebSocket", VitestStubWebSocket as unknown as typeof WebSocket);
+
+class VitestResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+vi.stubGlobal("ResizeObserver", VitestResizeObserver);

@@ -5,6 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
 import { StatCard } from "@/components/ui/StatCard";
 import { PnlSeriesChart } from "@/components/PnlSeriesChart";
+import { AnalyticsBreakdown } from "@/components/AnalyticsBreakdown";
+import { AnalyticsDbPanels } from "@/components/AnalyticsDbPanels";
+import { RefreshIndicator } from "@/components/RefreshIndicator";
 import { api, type PnlSeriesResponse } from "@/lib/api";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import {
@@ -18,7 +21,7 @@ import {
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
-import { cn, formatNumber } from "@/lib/utils";
+import { formatNumber } from "@/lib/utils";
 
 const BUCKET_LABELS: Record<number, string> = {
   1: "1 óra",
@@ -33,12 +36,22 @@ function toneOf(n: number): "positive" | "negative" | "neutral" {
   return "neutral";
 }
 
+function formatWindow(iso?: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("hu-HU", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export default function AnalyticsPage() {
   const { refreshIntervalMs } = useRefreshInterval();
   const analyticsEpoch = useLiveEpoch("analytics");
   const [lookbackHours, setLookbackHours] = usePersistedState(
     STORAGE_KEYS.analyticsLookbackHours,
-    168,
+    24,
     isLookbackHours,
   );
   const [bucketHours, setBucketHours] = usePersistedState(
@@ -47,41 +60,56 @@ export default function AnalyticsPage() {
     isBucketHours,
   );
 
-  const { data, error, isStale } = usePollingQuery(
-    () => api.analyticsPnlSeries(lookbackHours, bucketHours),
+  const paramKey = `${lookbackHours}:${bucketHours}`;
+
+  const { data, error, isRefreshing } = usePollingQuery(
+    () => api.analyticsSummary(lookbackHours, bucketHours),
     {
       intervalMs: refreshIntervalMs,
-      reloadKey: `${analyticsEpoch}:${lookbackHours}:${bucketHours}`,
+      reloadKey: analyticsEpoch,
+      staleKey: paramKey,
       errorMessage: "Analytics betöltési hiba",
     },
   );
 
-  const kpis = data?.kpis;
+  const pnl = data?.pnl;
+  const kpis = pnl?.kpis;
   const realized = useMemo(
     () => (kpis ? Number(kpis.realized_pnl_usdt) : 0),
     [kpis],
   );
 
-  const chartKey = data
-    ? `${data.lookback_hours}:${data.bucket_hours}:${data.buckets.length}:${data.cumulative.length}`
+  const chartKey = pnl
+    ? `${pnl.lookback_hours}:${pnl.bucket_hours}:${pnl.buckets.length}:${pnl.window_end}`
     : "empty";
 
   return (
-    <div
-      className={cn(
-        "space-y-6 transition-opacity",
-        isStale && "opacity-70",
-      )}
-    >
+    <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Analytics</h1>
+          <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+            Analytics
+            <RefreshIndicator active={isRefreshing} />
+          </h1>
           <p className="text-muted text-sm mt-1">
             Lezárt pozíciók realized PnL
-            {data
-              ? ` · API ablak: ${lookbackLabel(data.lookback_hours)}, bucket ${data.bucket_hours}h`
-              : ` · ${lookbackLabel(lookbackHours)}`}
-            {isStale ? " · frissítés…" : ""}
+            {pnl ? (
+              <>
+                {" "}
+                · {lookbackLabel(pnl.lookback_hours)}, bucket {pnl.bucket_hours}h
+                {pnl.window_start && pnl.window_end ? (
+                  <>
+                    {" "}
+                    · {formatWindow(pnl.window_start)} – {formatWindow(pnl.window_end)}
+                  </>
+                ) : null}
+                {pnl.positions_in_window != null
+                  ? ` · ${pnl.positions_in_window} pozíció az ablakban`
+                  : ""}
+              </>
+            ) : (
+              ` · ${lookbackLabel(lookbackHours)}`
+            )}
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -92,7 +120,7 @@ export default function AnalyticsPage() {
             <Select
               id="an-lb"
               value={String(lookbackHours)}
-              onChange={(e) => setLookbackHours(Number(e.target.value) || 168)}
+              onChange={(e) => setLookbackHours(Number(e.target.value) || 24)}
             >
               {LOOKBACK_PRESETS.map((p) => (
                 <option key={p.hours} value={String(p.hours)}>
@@ -123,20 +151,22 @@ export default function AnalyticsPage() {
       {error && <p className="text-loss text-sm">{error}</p>}
       {!data && !error && <p className="text-muted text-sm">Betöltés…</p>}
 
-      {data && kpis && (
+      {data && pnl && kpis && (
         <>
-          <KpiRow data={data} realized={realized} />
+          <KpiRow pnl={pnl} realized={realized} />
           <Card>
             <CardHeader>
               <CardTitle>PnL idősor</CardTitle>
-              {data.sync_error && (
-                <span className="text-xs text-amber-400">{data.sync_error}</span>
+              {pnl.sync_error && (
+                <span className="text-xs text-amber-400">{pnl.sync_error}</span>
               )}
             </CardHeader>
             <CardContent>
-              <PnlSeriesChart key={chartKey} data={data} />
+              <PnlSeriesChart key={chartKey} data={pnl} />
             </CardContent>
           </Card>
+          <AnalyticsBreakdown pnl={pnl} />
+          <AnalyticsDbPanels orders={data.orders} strategy={data.strategy} />
         </>
       )}
     </div>
@@ -144,15 +174,15 @@ export default function AnalyticsPage() {
 }
 
 function KpiRow({
-  data,
+  pnl,
   realized,
 }: {
-  data: PnlSeriesResponse;
+  pnl: PnlSeriesResponse;
   realized: number;
 }) {
-  const k = data.kpis;
+  const k = pnl.kpis;
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+    <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-3">
       <StatCard
         label="Realized PnL"
         value={formatNumber(realized, { decimals: 4, sign: true })}
@@ -178,6 +208,18 @@ function KpiRow({
       <StatCard
         label="Max drawdown"
         value={formatNumber(k.max_drawdown_usdt, { decimals: 4 })}
+        unit="USDT"
+        tone="negative"
+      />
+      <StatCard
+        label="Átlag nyerő"
+        value={k.avg_win_usdt ?? "—"}
+        unit="USDT"
+        tone="positive"
+      />
+      <StatCard
+        label="Átlag vesztes"
+        value={k.avg_loss_usdt ?? "—"}
         unit="USDT"
         tone="negative"
       />

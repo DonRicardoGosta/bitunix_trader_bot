@@ -19,7 +19,20 @@ function num(v: string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function windowCaption(data: PnlSeriesResponse): string | null {
+  if (!data.window_start || !data.window_end) return null;
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleString("hu-HU", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+    });
+  return `${fmt(data.window_start)} – ${fmt(data.window_end)}`;
+}
+
 export function PnlSeriesChart({ data }: { data: PnlSeriesResponse }) {
+  const caption = windowCaption(data);
+
   const bucketData = data.buckets.map((b) => ({
     label: new Date(b.bucket_start).toLocaleString("hu-HU", {
       month: "short",
@@ -48,6 +61,15 @@ export function PnlSeriesChart({ data }: { data: PnlSeriesResponse }) {
   }
 
   return (
+    <div className="space-y-2">
+      {caption && (
+        <p className="text-xs text-muted">
+          Grafikon ablak: {caption}
+          {data.positions_in_window != null
+            ? ` · ${data.positions_in_window} lezárt pozíció`
+            : ""}
+        </p>
+      )}
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
       <div className="h-64">
         <h3 className="text-xs uppercase text-muted mb-2">Realized PnL / bucket</h3>
@@ -98,6 +120,7 @@ export function PnlSeriesChart({ data }: { data: PnlSeriesResponse }) {
           </AreaChart>
         </ResponsiveContainer>
       </div>
+    </div>
     </div>
   );
 }

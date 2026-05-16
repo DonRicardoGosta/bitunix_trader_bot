@@ -24,10 +24,12 @@ def parse_position_ts(iso: str | None) -> datetime | None:
 
 
 def position_event_time(position: dict[str, Any]) -> datetime | None:
-    """Lezárás ideje (ha nincs, nyitás — utolsó esély)."""
-    return parse_position_ts(position.get("updated_at")) or parse_position_ts(
-        position.get("opened_at")
-    )
+    """Lezárás ideje — előny: closed_at, majd updated_at; nyitás csak utolsó esély."""
+    for key in ("closed_at", "updated_at", "opened_at"):
+        ts = parse_position_ts(position.get(key))
+        if ts is not None:
+            return ts
+    return None
 
 
 def filter_positions_in_lookback(

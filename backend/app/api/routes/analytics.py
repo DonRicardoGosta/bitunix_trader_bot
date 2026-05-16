@@ -12,6 +12,7 @@ from app.bitunix.client import BitunixClient
 from app.config import Settings, get_settings
 from app.db.session import get_db
 from app.services.analytics import (
+    build_analytics_summary,
     build_orders_window_stats,
     build_pnl_series,
     build_strategy_runs_window_stats,
@@ -20,9 +21,29 @@ from app.services.analytics import (
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
+@router.get("/summary")
+async def analytics_summary(
+    lookback_hours: int = Query(24, ge=1, le=2160, description="Visszatekintés órában"),
+    bucket_hours: int = Query(1, ge=1, le=168, description="PnL bucket méret órában"),
+    session: AsyncSession = Depends(get_db),
+    client: BitunixClient = Depends(get_bitunix_client),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Teljes analytics csomag egy hívásban (PnL, DB, bontások)."""
+    bitunix = (
+        client if (settings.bitunix_api_key and settings.bitunix_api_secret) else None
+    )
+    return await build_analytics_summary(
+        session,
+        bitunix,
+        lookback_hours=lookback_hours,
+        bucket_hours=bucket_hours,
+    )
+
+
 @router.get("/pnl-series")
 async def pnl_series(
-    lookback_hours: int = Query(168, ge=1, le=2160, description="Visszatekintés órában"),
+    lookback_hours: int = Query(24, ge=1, le=2160, description="Visszatekintés órában"),
     bucket_hours: int = Query(1, ge=1, le=168, description="Bucket méret órában"),
     client: BitunixClient = Depends(get_bitunix_client),
     settings: Settings = Depends(get_settings),

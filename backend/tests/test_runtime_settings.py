@@ -75,6 +75,22 @@ def test_analytics_pnl_series_structure() -> None:
         assert body["lookback_hours"] == 24
         assert "buckets" in body
         assert "kpis" in body
+        assert "window_start" in body
+        assert "breakdown" in body
+
+
+def test_analytics_summary_structure() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/analytics/summary?lookback_hours=6&bucket_hours=1")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["lookback_hours"] == 6
+        assert body["bucket_hours"] == 1
+        assert "pnl" in body
+        assert "orders" in body
+        assert "strategy" in body
+        assert body["pnl"]["lookback_hours"] == 6
 
 
 def test_dashboard_lookback_hours() -> None:

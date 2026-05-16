@@ -329,9 +329,27 @@ export interface SettingsSnapshot {
   strategy_config: Record<string, string | number>;
 }
 
+export interface PnlBreakdownTrade {
+  symbol: string | null;
+  side: string | null;
+  realized_pnl_usdt: string;
+  closed_at: string | null;
+  roi_pct?: string | null;
+}
+
+export interface PnlSeriesBreakdown {
+  per_symbol: { symbol: string; realized_pnl_usdt: string; count: number }[];
+  by_side: Record<string, { count: number; wins: number; losses: number }>;
+  top_winners: PnlBreakdownTrade[];
+  top_losers: PnlBreakdownTrade[];
+}
+
 export interface PnlSeriesResponse {
   lookback_hours: number;
   bucket_hours: number;
+  window_start?: string;
+  window_end?: string;
+  positions_in_window?: number;
   sync_error: string | null;
   buckets: { bucket_start: string; realized_pnl_usdt: string }[];
   cumulative: { at: string; cumulative_pnl_usdt: string }[];
@@ -347,6 +365,28 @@ export interface PnlSeriesResponse {
     avg_win_usdt: string | null;
     avg_loss_usdt: string | null;
   };
+  breakdown?: PnlSeriesBreakdown;
+}
+
+export interface AnalyticsOrdersWindow {
+  lookback_hours: number;
+  total: number;
+  by_status: Record<string, number>;
+  by_strategy: { strategy: string; count: number }[];
+}
+
+export interface AnalyticsStrategyWindow {
+  lookback_hours: number;
+  by_status: Record<string, number>;
+}
+
+export interface AnalyticsSummaryResponse {
+  generated_at: string;
+  lookback_hours: number;
+  bucket_hours: number;
+  pnl: PnlSeriesResponse;
+  orders: AnalyticsOrdersWindow;
+  strategy: AnalyticsStrategyWindow;
 }
 
 export interface RuntimeSettingsPatch {
@@ -595,17 +635,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ paused }),
     }),
-  analyticsPnlSeries: (lookbackHours = 168, bucketHours = 6) =>
+  analyticsSummary: (lookbackHours = 24, bucketHours = 6) =>
+    request<AnalyticsSummaryResponse>(
+      `/api/analytics/summary?lookback_hours=${lookbackHours}&bucket_hours=${bucketHours}`,
+    ),
+  analyticsPnlSeries: (lookbackHours = 24, bucketHours = 6) =>
     request<PnlSeriesResponse>(
       `/api/analytics/pnl-series?lookback_hours=${lookbackHours}&bucket_hours=${bucketHours}`,
     ),
   analyticsOrdersWindow: (lookbackHours = 24) =>
-    request<{
-      lookback_hours: number;
-      total: number;
-      by_status: Record<string, number>;
-      by_strategy: { strategy: string; count: number }[];
-    }>(`/api/analytics/orders?lookback_hours=${lookbackHours}`),
+    request<AnalyticsOrdersWindow>(
+      `/api/analytics/orders?lookback_hours=${lookbackHours}`,
+    ),
   account: () => request<unknown>("/api/account"),
   strategies: () => request<StrategyInfo[]>("/api/strategies"),
   strategyRuns: (strategy?: string, limit = 50) =>
