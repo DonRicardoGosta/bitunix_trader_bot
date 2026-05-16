@@ -1,6 +1,6 @@
 """Top signal entries stratégia.
 
-A futures piac **top N** (alap: 200) abszolút 24h mozgású szimbólumát
+A futures piac **top N** (alap: 1000) abszolút 24h mozgású szimbólumát
 rangsoroljuk ugyanazzal a logikával, mint a ``top_movers``. Ezután csak az
 első ``kline_lookahead`` jelöltre kérünk **kline**-t (alap: 40, API terhelés
 csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
@@ -147,9 +147,10 @@ class TopSignalEntriesStrategy(Strategy):
             return result
 
         target_slots = max(1, int(settings.strategy_top_signal_entries_count))
+        scan_cap = max(1, int(settings.strategy_scan_limit_max))
         scan_limit = max(
             target_slots,
-            min(int(settings.strategy_top_signal_entries_scan_limit), 200),
+            min(int(settings.strategy_top_signal_entries_scan_limit), scan_cap),
         )
         lookahead = max(
             target_slots,
