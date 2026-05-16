@@ -182,46 +182,53 @@ function KpiRow({
 }) {
   const k = pnl.kpis;
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
       <StatCard
         label="Realized PnL"
         value={formatNumber(realized, { decimals: 4, sign: true })}
         unit="USDT"
         tone={toneOf(realized)}
+        wrapValue
       />
       <StatCard
         label="Win rate"
         value={k.win_rate_pct ?? "—"}
         unit={k.win_rate_pct ? "%" : ""}
+        wrapValue
       />
       <StatCard label="Pozíciók" value={String(k.count)} unit="db" />
       <StatCard
         label="Profit factor"
         value={k.profit_factor ?? "—"}
         hint="gross win / gross loss"
+        wrapValue
       />
       <StatCard
         label="Expectancy"
         value={k.expectancy_usdt ?? "—"}
         unit="USDT / trade"
+        wrapValue
       />
       <StatCard
         label="Max drawdown"
         value={formatNumber(k.max_drawdown_usdt, { decimals: 4 })}
         unit="USDT"
         tone="negative"
+        wrapValue
       />
       <StatCard
         label="Átlag nyerő"
         value={k.avg_win_usdt ?? "—"}
         unit="USDT"
         tone="positive"
+        wrapValue
       />
       <StatCard
         label="Átlag vesztes"
         value={k.avg_loss_usdt ?? "—"}
         unit="USDT"
         tone="negative"
+        wrapValue
       />
     </div>
   );

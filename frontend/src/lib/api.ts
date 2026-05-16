@@ -94,6 +94,7 @@ export interface OrderRow {
 
 /** GET /api/orders/pnl-totals — összes saját DB rendelés PnL összesítője */
 export interface OrdersPnlTotals {
+  lookback_hours?: number;
   order_count: number;
   realized_pnl_usdt: string;
   unrealized_pnl_usdt: string;
@@ -598,15 +599,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  orders: (params?: { limit?: number; offset?: number; symbol?: string }) => {
+  orders: (params?: {
+    limit?: number;
+    offset?: number;
+    symbol?: string;
+    lookbackHours?: number;
+  }) => {
     const usp = new URLSearchParams();
     if (params?.limit != null) usp.set("limit", String(params.limit));
     if (params?.offset != null) usp.set("offset", String(params.offset));
     if (params?.symbol) usp.set("symbol", params.symbol);
+    if (params?.lookbackHours != null) {
+      usp.set("lookback_hours", String(params.lookbackHours));
+    }
     const qs = usp.toString();
     return request<OrderRow[]>(`/api/orders${qs ? `?${qs}` : ""}`);
   },
-  ordersPnlTotals: () => request<OrdersPnlTotals>("/api/orders/pnl-totals"),
+  ordersPnlTotals: (lookbackHours = 6) =>
+    request<OrdersPnlTotals>(
+      `/api/orders/pnl-totals?lookback_hours=${lookbackHours}`,
+    ),
   placeOrder: (input: PlaceOrderInput) =>
     request<PlaceOrderResult>("/api/orders", {
       method: "POST",

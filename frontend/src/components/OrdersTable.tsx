@@ -107,14 +107,15 @@ type SortKey = "recent" | "pnl_desc" | "pnl_asc" | "count_desc" | "symbol_asc";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
-export function OrdersTable() {
+export function OrdersTable({ lookbackHours = 6 }: { lookbackHours?: number }) {
   const { refreshIntervalMs } = useRefreshInterval();
   const ordersEpoch = useLiveEpoch("orders");
   const { data: rows, error } = usePollingQuery(
-    () => api.orders({ limit: 500 }),
+    () => api.orders({ limit: 500, lookbackHours }),
     {
       intervalMs: refreshIntervalMs,
       reloadKey: ordersEpoch,
+      staleKey: lookbackHours,
       errorMessage: "Hiba a rendelések lekérésekor",
     },
   );

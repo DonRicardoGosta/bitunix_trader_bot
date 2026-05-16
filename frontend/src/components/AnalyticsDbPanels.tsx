@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AnalyticsOrdersWindow, AnalyticsStrategyWindow } from "@/lib/api";
+import { CHART_TOOLTIP_STYLE } from "@/lib/chartTheme";
 
 export function AnalyticsDbPanels({
   orders,
@@ -53,13 +54,7 @@ export function AnalyticsDbPanels({
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#94a3b8" />
                   <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" allowDecimals={false} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#1e293b",
-                      border: "1px solid #334155",
-                      fontSize: 12,
-                    }}
-                  />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} />
                   <Bar dataKey="count" fill="#38bdf8" radius={[2, 2, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -110,13 +105,7 @@ export function AnalyticsDbPanels({
                     tick={{ fontSize: 9 }}
                     stroke="#94a3b8"
                   />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#1e293b",
-                      border: "1px solid #334155",
-                      fontSize: 12,
-                    }}
-                  />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} />
                   <Bar dataKey="count" fill="#a78bfa" radius={[0, 2, 2, 0]} />
                 </BarChart>
               </ResponsiveContainer>

@@ -1,11 +1,52 @@
+"use client";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select } from "@/components/ui/input";
 import { OrdersTable } from "@/components/OrdersTable";
 import { OrdersTotalDbPnl } from "@/components/OrdersTotalDbPnl";
+import { usePersistedState } from "@/hooks/usePersistedState";
+import {
+  LOOKBACK_PRESETS,
+  STORAGE_KEYS,
+  isLookbackHours,
+  lookbackLabel,
+} from "@/lib/lookback";
 
 export default function OrdersPage() {
+  const [lookbackHours, setLookbackHours] = usePersistedState(
+    STORAGE_KEYS.ordersLookbackHours,
+    6,
+    isLookbackHours,
+  );
+
   return (
     <div className="space-y-6">
-      <OrdersTotalDbPnl />
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100">Rendelések</h1>
+          <p className="text-muted text-sm mt-1">
+            Saját DB napló + Bitunix szinkron · ablak: {lookbackLabel(lookbackHours)}
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs uppercase text-muted mb-1" htmlFor="ord-lb">
+            Visszatekintés
+          </label>
+          <Select
+            id="ord-lb"
+            value={String(lookbackHours)}
+            onChange={(e) => setLookbackHours(Number(e.target.value) || 6)}
+          >
+            {LOOKBACK_PRESETS.map((p) => (
+              <option key={p.hours} value={String(p.hours)}>
+                {p.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </header>
+
+      <OrdersTotalDbPnl lookbackHours={lookbackHours} />
 
       <Card>
         <CardHeader>
@@ -25,7 +66,7 @@ export default function OrdersPage() {
           </p>
         </CardHeader>
         <CardContent>
-          <OrdersTable />
+          <OrdersTable lookbackHours={lookbackHours} />
         </CardContent>
       </Card>
     </div>

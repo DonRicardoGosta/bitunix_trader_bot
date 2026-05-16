@@ -94,6 +94,17 @@ def test_place_order_dry_run_via_http() -> None:
         assert dbg_row["exchange"]["debug"]["history_row_found"] is False
 
 
+def test_list_orders_lookback_hours_param() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/orders?lookback_hours=6&limit=10")
+        assert r.status_code == 200, r.text
+        assert isinstance(r.json(), list)
+
+        r_bad = client.get("/api/orders?lookback_hours=0")
+        assert r_bad.status_code == 422
+
+
 def test_list_orders_supports_pagination_and_symbol_filter() -> None:
     """``limit`` / ``offset`` / ``symbol`` paraméterek alapszintű ellenőrzése."""
     app = create_app()
@@ -121,10 +132,12 @@ def test_orders_pnl_totals_endpoint_shape() -> None:
         assert r.status_code == 200, r.text
         body = r.json()
         assert body.keys() >= {
+            "lookback_hours",
             "order_count",
             "realized_pnl_usdt",
             "unrealized_pnl_usdt",
             "total_pnl_usdt",
             "sync_error",
         }
+        assert body["lookback_hours"] == 6
         assert isinstance(body["order_count"], int)

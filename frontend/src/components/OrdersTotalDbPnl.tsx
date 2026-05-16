@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
+import { lookbackLabel } from "@/lib/lookback";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseNum(s: string | null | undefined): number | null {
@@ -14,15 +15,16 @@ function parseNum(s: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export function OrdersTotalDbPnl() {
+export function OrdersTotalDbPnl({ lookbackHours = 6 }: { lookbackHours?: number }) {
   const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
   const pnlEpoch = useLiveEpoch("orders_pnl");
   const { data: pnlData, error } = usePollingQuery(
-    () => api.ordersPnlTotals(),
+    () => api.ordersPnlTotals(lookbackHours),
     {
       intervalMs: refreshIntervalMs,
       reloadKey: pnlEpoch,
+      staleKey: lookbackHours,
       errorMessage: "PnL összesítés lekérése sikertelen",
     },
   );
@@ -63,9 +65,9 @@ export function OrdersTotalDbPnl() {
       <CardHeader>
         <CardTitle>Összesített PnL (saját rendelésnapló)</CardTitle>
         <span className="text-xs text-muted">
-          A Postgres <code className="text-[11px]">orders</code> tábla összes sora: soronkénti
-          realizált + nem realizált (Bitunix szinkron, mint a táblázatnál) — nyitott és lezárt
-          együtt ·{" "}
+          A Postgres <code className="text-[11px]">orders</code> tábla sorai ({lookbackLabel(lookbackHours)}):
+          soronkénti realizált + nem realizált (Bitunix szinkron, mint a táblázatnál) — nyitott és
+          lezárt együtt ·{" "}
           {pushConnected ? (
             <>élő WebSocket push</>
           ) : (

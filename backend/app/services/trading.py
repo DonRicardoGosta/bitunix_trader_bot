@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -190,6 +191,7 @@ class TradingService:
         *,
         offset: int = 0,
         symbol: str | None = None,
+        lookback_hours: int = 6,
         debug_sync: bool = False,
     ) -> list[dict[str, Any]]:
         """Legutóbbi rendelések DB-ből, Bitunix history + nyitott pozíció szinkronnal.
@@ -198,9 +200,15 @@ class TradingService:
             limit: Maximális visszaadott sorok száma.
             offset: Kihagyott sorok száma (paginálás).
             symbol: Opcionális szimbólum szűrő (case-insensitive).
+            lookback_hours: Csak ennyi óra visszamenő ``created_at`` (alap 6).
             debug_sync: Ha true, hibakereső metaadat is jön.
         """
-        stmt = select(Order).order_by(Order.created_at.desc())
+        since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
+        stmt = (
+            select(Order)
+            .where(Order.created_at >= since)
+            .order_by(Order.created_at.desc())
+        )
         if symbol:
             stmt = stmt.where(Order.symbol == symbol.upper())
         stmt = stmt.offset(offset).limit(limit)
@@ -208,15 +216,20 @@ class TradingService:
         orders = list(result.scalars().all())
         return await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
 
-    async def orders_pnl_totals(self) -> dict[str, Any]:
-        """Összesített PnL (USDT) a saját ``orders`` tábla összes sorára.
+    async def orders_pnl_totals(self, *, lookback_hours: int = 6) -> dict[str, Any]:
+        """Összesített PnL (USDT) a saját ``orders`` tábla soraira az ablakban.
 
         Ugyanaz a Bitunix szinkron és enrichment, mint a rendeléslistánál;
         az összeg a soronkénti ``realized_pnl_usdt`` + ``unrealized_pnl_usdt``
         összege (ahol a mező ki van töltve) — nyitott és lezárt trade-ek
         együtt, a naplózott saját rendelések alapján.
         """
-        stmt = select(Order).order_by(Order.created_at.desc())
+        since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
+        stmt = (
+            select(Order)
+            .where(Order.created_at >= since)
+            .order_by(Order.created_at.desc())
+        )
         result = await self._session.execute(stmt)
         orders = list(result.scalars().all())
         rows = await self._enriched_order_api_rows(orders, debug_sync=False)
@@ -235,6 +248,7 @@ class TradingService:
             ex0 = rows[0].get("exchange") or {}
             sync_error = ex0.get("sync_error")
         return {
+            "lookback_hours": lookback_hours,
             "order_count": len(rows),
             "realized_pnl_usdt": str(total_r),
             "unrealized_pnl_usdt": str(total_u),

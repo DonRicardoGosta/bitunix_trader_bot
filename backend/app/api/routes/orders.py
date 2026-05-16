@@ -21,6 +21,7 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 
 @router.get("/pnl-totals")
 async def orders_pnl_totals(
+    lookback_hours: int = Query(6, ge=1, le=2160, description="Visszatekintés órában"),
     service: TradingService = Depends(get_trading_service),
 ) -> dict[str, Any]:
     """Összesített PnL (USDT) a saját ``orders`` tábla összes sorára.
@@ -29,7 +30,7 @@ async def orders_pnl_totals(
     (Bitunix history + nyitott pozíció); az összeg a realized + unrealized
     mezők összege minden naplózott rendelésre.
     """
-    return await service.orders_pnl_totals()
+    return await service.orders_pnl_totals(lookback_hours=lookback_hours)
 
 
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
@@ -87,6 +88,7 @@ async def list_orders(
             "(PnL/ROI számítás hibakereséséhez; ne oszd meg nyilvánosan)."
         ),
     ),
+    lookback_hours: int = Query(6, ge=1, le=2160, description="Visszatekintés órában"),
     service: TradingService = Depends(get_trading_service),
 ) -> list[dict[str, Any]]:
     """Legutóbbi rendelések (saját DB + Bitunix history / nyitott pozíció)."""
@@ -94,5 +96,6 @@ async def list_orders(
         limit=limit,
         offset=offset,
         symbol=symbol,
+        lookback_hours=lookback_hours,
         debug_sync=debug_sync,
     )

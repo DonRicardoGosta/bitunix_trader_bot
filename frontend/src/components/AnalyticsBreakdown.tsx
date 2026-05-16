@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { PnlSeriesBreakdown, PnlSeriesResponse } from "@/lib/api";
+import { CHART_TOOLTIP_STYLE } from "@/lib/chartTheme";
 import { formatNumber } from "@/lib/utils";
 
 function num(v: string | null | undefined): number {
@@ -64,11 +65,7 @@ export function AnalyticsBreakdown({ pnl }: { pnl: PnlSeriesResponse }) {
                     stroke="#94a3b8"
                   />
                   <Tooltip
-                    contentStyle={{
-                      background: "#1e293b",
-                      border: "1px solid #334155",
-                      fontSize: 12,
-                    }}
+                    {...CHART_TOOLTIP_STYLE}
                     formatter={(v: number, _n, item) => {
                       const payload = item?.payload as { count?: number };
                       return [
@@ -115,13 +112,7 @@ export function AnalyticsBreakdown({ pnl }: { pnl: PnlSeriesResponse }) {
                       <Cell key={d.name} fill={d.fill} />
                     ))}
                   </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      background: "#1e293b",
-                      border: "1px solid #334155",
-                      fontSize: 12,
-                    }}
-                  />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} />
                 </PieChart>
               </ResponsiveContainer>
             </div>

@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import type { PnlSeriesResponse } from "@/lib/api";
+import { CHART_TOOLTIP_STYLE } from "@/lib/chartTheme";
 import { formatNumber } from "@/lib/utils";
 
 function num(v: string | null | undefined): number {
@@ -79,11 +80,7 @@ export function PnlSeriesChart({ data }: { data: PnlSeriesResponse }) {
             <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#94a3b8" />
             <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
             <Tooltip
-              contentStyle={{
-                background: "#1e293b",
-                border: "1px solid #334155",
-                fontSize: 12,
-              }}
+              {...CHART_TOOLTIP_STYLE}
               formatter={(v: number) => [
                 formatNumber(v, { decimals: 4, sign: true }),
                 "PnL",
@@ -101,11 +98,7 @@ export function PnlSeriesChart({ data }: { data: PnlSeriesResponse }) {
             <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#94a3b8" />
             <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
             <Tooltip
-              contentStyle={{
-                background: "#1e293b",
-                border: "1px solid #334155",
-                fontSize: 12,
-              }}
+              {...CHART_TOOLTIP_STYLE}
               formatter={(v: number) => [
                 formatNumber(v, { decimals: 4, sign: true }),
                 "Összesen",
