@@ -4,8 +4,9 @@ import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
-import { useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
+import { RefreshIndicator } from "@/components/RefreshIndicator";
 import { lookbackLabel } from "@/lib/lookback";
 import { cn, formatNumber } from "@/lib/utils";
 
@@ -15,13 +16,18 @@ function parseNum(s: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+const ORDERS_PNL_RELOAD_DEBOUNCE_MS = 1500;
+
 export function OrdersTotalDbPnl({ lookbackHours = 6 }: { lookbackHours?: number }) {
   const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
-  const { data: pnlData, error } = usePollingQuery(
+  const pnlEpoch = useLiveEpoch("orders_pnl");
+  const { data: pnlData, error, isRefreshing } = usePollingQuery(
     () => api.ordersPnlTotals(lookbackHours),
     {
       intervalMs: refreshIntervalMs,
+      reloadKey: pnlEpoch,
+      reloadDebounceMs: ORDERS_PNL_RELOAD_DEBOUNCE_MS,
       staleKey: lookbackHours,
       errorMessage: "PnL összesítés lekérése sikertelen",
     },
@@ -61,7 +67,10 @@ export function OrdersTotalDbPnl({ lookbackHours = 6 }: { lookbackHours?: number
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Összesített PnL (saját rendelésnapló)</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          Összesített PnL (saját rendelésnapló)
+          <RefreshIndicator active={isRefreshing} />
+        </CardTitle>
         <span className="text-xs text-muted">
           A Postgres <code className="text-[11px]">orders</code> tábla sorai ({lookbackLabel(lookbackHours)}):
           soronkénti realizált + nem realizált (Bitunix szinkron, mint a táblázatnál) — nyitott és

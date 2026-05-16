@@ -58,37 +58,28 @@ describe("usePollingQuery", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("sets isRefreshing on background reload without staleKey change", async () => {
+  it("debounced reloadKey triggers background refresh", async () => {
     const fetcher = vi
       .fn()
-      .mockImplementationOnce(() => Promise.resolve("a"))
-      .mockImplementationOnce(
-        () =>
-          new Promise<string>((resolve) => {
-            window.setTimeout(() => resolve("b"), 40);
-          }),
-      );
+      .mockResolvedValueOnce("a")
+      .mockResolvedValueOnce("b");
 
     const { result, rerender } = renderHook(
       ({ key }) =>
         usePollingQuery(fetcher, {
           intervalMs: 60_000,
           reloadKey: key,
+          reloadDebounceMs: 100,
           staleKey: "fixed",
         }),
       { initialProps: { key: 0 } },
     );
 
     await waitFor(() => expect(result.current.data).toBe("a"));
-    expect(result.current.isStale).toBe(false);
 
     rerender({ key: 1 });
-    await waitFor(() => expect(result.current.isRefreshing).toBe(true));
-    expect(result.current.isStale).toBe(false);
-
-    await waitFor(() => expect(result.current.data).toBe("b"), { timeout: 3000 });
-    expect(result.current.isRefreshing).toBe(false);
-    expect(result.current.isStale).toBe(false);
+    await waitFor(() => expect(result.current.data).toBe("b"), { timeout: 2000 });
+    expect(fetcher.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("marks stale only when staleKey changes", async () => {

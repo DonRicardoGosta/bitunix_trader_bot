@@ -26,10 +26,9 @@ def _clean_live_bus() -> None:
     clear_subscribers_for_tests()
 
 
-def test_live_ui_tick_skips_slow_order_topics() -> None:
-    assert "orders" in DEFAULT_INVALIDATION_TOPICS
-    assert "orders" not in LIVE_UI_TICK_TOPICS
-    assert "orders_pnl" not in LIVE_UI_TICK_TOPICS
+def test_live_ui_tick_includes_orders_topics() -> None:
+    assert "orders" in LIVE_UI_TICK_TOPICS
+    assert LIVE_UI_TICK_TOPICS == DEFAULT_INVALIDATION_TOPICS
 
 
 def test_build_invalidate_message_json() -> None:

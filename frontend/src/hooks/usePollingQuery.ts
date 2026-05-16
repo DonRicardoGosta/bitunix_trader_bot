@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from "react";
 
 type Options = {
   intervalMs: number;
-  /** WebSocket invalidáció / külső jel – azonnali újratöltés. */
+  /** WebSocket invalidáció / külső jel – debounce után újratöltés. */
   reloadKey?: unknown;
-  /**
-   * Ha megadva: „stale” csak ennek változásakor (pl. lookback), nem interval/WS miatt.
-   */
+  /** reloadKey változás után ennyi ms (alap 0). Lassú végpontoknál 1500–3000 ajánlott. */
+  reloadDebounceMs?: number;
+  /** Ha megadva: „stale” csak ennek változásakor (pl. lookback). */
   staleKey?: unknown;
   errorMessage?: string;
 };
@@ -29,6 +29,7 @@ export function usePollingQuery<T>(
   const {
     intervalMs,
     reloadKey,
+    reloadDebounceMs = 0,
     staleKey,
     errorMessage = "Hiba a betöltéskor",
   } = options;
@@ -43,6 +44,8 @@ export function usePollingQuery<T>(
   const hasDataRef = useRef(false);
   hasDataRef.current = data !== null;
   const prevStaleKeyRef = useRef(staleKey);
+  const loadRef = useRef<(() => void) | null>(null);
+  const prevReloadKeyRef = useRef(reloadKey);
 
   useEffect(() => {
     if (staleKey !== undefined && staleKey !== prevStaleKeyRef.current) {
@@ -86,14 +89,29 @@ export function usePollingQuery<T>(
       }
     }
 
+    loadRef.current = () => {
+      void load();
+    };
+
     void load();
     const id =
       intervalMs > 0 ? window.setInterval(() => void load(), intervalMs) : undefined;
     return () => {
       active = false;
+      loadRef.current = null;
       if (id !== undefined) window.clearInterval(id);
     };
-  }, [intervalMs, reloadKey, staleKey, errorMessage]);
+  }, [intervalMs, staleKey, errorMessage]);
+
+  useEffect(() => {
+    if (reloadKey === undefined) return;
+    if (prevReloadKeyRef.current === reloadKey) return;
+    prevReloadKeyRef.current = reloadKey;
+
+    const delay = Math.max(0, reloadDebounceMs);
+    const id = window.setTimeout(() => loadRef.current?.(), delay);
+    return () => window.clearTimeout(id);
+  }, [reloadKey, reloadDebounceMs]);
 
   return {
     data,

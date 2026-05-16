@@ -25,10 +25,8 @@ DEFAULT_INVALIDATION_TOPICS: tuple[str, ...] = (
     "analytics",
 )
 
-# Időzített tick: ne invalidálja a lassú orders végpontokat (Bitunix enrichment).
-LIVE_UI_TICK_TOPICS: tuple[str, ...] = tuple(
-    t for t in DEFAULT_INVALIDATION_TOPICS if t not in ("orders", "orders_pnl")
-)
+# Időzített tick (a kliens debounce-olja a lassú orders fetch-et).
+LIVE_UI_TICK_TOPICS: tuple[str, ...] = DEFAULT_INVALIDATION_TOPICS
 
 _th_lock = threading.Lock()
 _clients: set[Any] = set()

@@ -6,6 +6,7 @@ import { Input, Select } from "@/components/ui/input";
 import { Pagination, pageSlice } from "@/components/ui/Pagination";
 import { api, type OrderRow } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
+import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { cn, formatNumber } from "@/lib/utils";
 
@@ -106,12 +107,17 @@ type SortKey = "recent" | "pnl_desc" | "pnl_asc" | "count_desc" | "symbol_asc";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
+const ORDERS_RELOAD_DEBOUNCE_MS = 1500;
+
 export function OrdersTable({ lookbackHours = 6 }: { lookbackHours?: number }) {
   const { refreshIntervalMs } = useRefreshInterval();
+  const ordersEpoch = useLiveEpoch("orders");
   const { data: rows, error } = usePollingQuery(
     () => api.orders({ limit: 200, lookbackHours }),
     {
       intervalMs: refreshIntervalMs,
+      reloadKey: ordersEpoch,
+      reloadDebounceMs: ORDERS_RELOAD_DEBOUNCE_MS,
       staleKey: lookbackHours,
       errorMessage: "Hiba a rendelések lekérésekor",
     },
