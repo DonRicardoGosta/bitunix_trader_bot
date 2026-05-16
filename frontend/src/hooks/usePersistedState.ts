@@ -39,3 +39,49 @@ export function usePersistedState(
 
   return [value, setPersisted];
 }
+
+/** localStorage-ba mentett string állapot (CSR only). */
+function readStoredString<T extends string>(
+  storageKey: string,
+  defaultValue: T,
+  isValid: (v: string) => v is T,
+): T {
+  if (typeof window === "undefined") return defaultValue;
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw != null && isValid(raw)) return raw;
+  } catch {
+    /* ignore */
+  }
+  return defaultValue;
+}
+
+export function usePersistedStringState<T extends string>(
+  storageKey: string,
+  defaultValue: T,
+  isValid: (v: string) => v is T,
+): [T, (value: T) => void] {
+  const [value, setValue] = useState<T>(() =>
+    readStoredString(storageKey, defaultValue, isValid),
+  );
+
+  useEffect(() => {
+    const stored = readStoredString(storageKey, defaultValue, isValid);
+    if (stored !== value) setValue(stored);
+  }, [storageKey, defaultValue, isValid, value]);
+
+  const setPersisted = useCallback(
+    (next: T) => {
+      if (!isValid(next)) return;
+      setValue(next);
+      try {
+        localStorage.setItem(storageKey, next);
+      } catch {
+        /* ignore */
+      }
+    },
+    [storageKey, isValid],
+  );
+
+  return [value, setPersisted];
+}

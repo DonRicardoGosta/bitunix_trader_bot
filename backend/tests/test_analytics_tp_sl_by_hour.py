@@ -37,6 +37,28 @@ def test_tp_sl_timing_aggregates_hour_and_weekday() -> None:
     assert mon["sl_count"] == 1
 
 
+def test_tp_sl_timing_weekday_hour_aggregates_same_weekday_instances() -> None:
+    """Két külön hétfő ugyanabban az órában → egy bucketben összeadódik."""
+    mon1 = datetime(2026, 5, 11, 8, 0, tzinfo=UTC)  # Hétfő 10:00 Budapest
+    mon2 = datetime(2026, 5, 18, 8, 0, tzinfo=UTC)  # következő hétfő, ugyanaz az óra
+    rows = [
+        {"symbol": "A", "realized_pnl": "10", "closed_at": mon1.isoformat()},
+        {"symbol": "B", "realized_pnl": "3", "closed_at": mon2.isoformat()},
+        {
+            "symbol": "C",
+            "realized_pnl": "-1",
+            "closed_at": (mon1 + timedelta(hours=2)).isoformat(),
+        },
+    ]
+    out = _tp_sl_timing_stats(rows)
+    mon_block = next(b for b in out["by_weekday_hour"] if b["weekday"] == 0)
+    hour10 = next(h for h in mon_block["by_hour"] if h["hour"] == 10)
+    hour12 = next(h for h in mon_block["by_hour"] if h["hour"] == 12)
+    assert hour10["tp_count"] == 2
+    assert hour10["sl_count"] == 0
+    assert hour12["sl_count"] == 1
+
+
 def test_tp_sl_timing_skips_zero_pnl() -> None:
     rows = [
         {
