@@ -272,6 +272,7 @@ async def build_pnl_series(
         return {
             "lookback_hours": lookback_hours,
             "window_custom": window.custom,
+            "window_end_live": window.end_live,
             "bucket_hours": bucket_hours,
             "window_start": since.isoformat(),
             "window_end": until.isoformat(),
@@ -340,6 +341,7 @@ async def build_pnl_series(
     return {
         "lookback_hours": lookback_hours,
         "window_custom": window.custom,
+        "window_end_live": window.end_live,
         "bucket_hours": bucket_hours,
         "window_start": since.isoformat(),
         "window_end": until.isoformat(),
@@ -368,6 +370,7 @@ async def build_analytics_summary(
         "generated_at": datetime.now(UTC).isoformat(),
         "lookback_hours": window.lookback_hours,
         "window_custom": window.custom,
+        "window_end_live": window.end_live,
         "window_start": window.since.isoformat(),
         "window_end": window.until.isoformat(),
         "bucket_hours": bucket_hours,
@@ -410,6 +413,7 @@ async def build_orders_window_stats(
     return {
         "lookback_hours": window.lookback_hours,
         "window_custom": window.custom,
+        "window_end_live": window.end_live,
         "window_start": since.isoformat(),
         "window_end": until.isoformat(),
         "total": int(total),
@@ -433,6 +437,7 @@ async def build_strategy_runs_window_stats(
     return {
         "lookback_hours": window.lookback_hours,
         "window_custom": window.custom,
+        "window_end_live": window.end_live,
         "window_start": since.isoformat(),
         "window_end": until.isoformat(),
         "by_status": by_status,

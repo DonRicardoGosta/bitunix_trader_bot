@@ -93,7 +93,7 @@ def test_analytics_summary_structure() -> None:
         assert body["pnl"]["lookback_hours"] == 6
 
 
-def test_analytics_summary_custom_window() -> None:
+def test_analytics_summary_custom_window_fixed() -> None:
     app = create_app()
     with TestClient(app) as client:
         r = client.get(
@@ -105,9 +105,25 @@ def test_analytics_summary_custom_window() -> None:
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["window_custom"] is True
+        assert body["window_end_live"] is False
         assert body["pnl"]["window_custom"] is True
         assert "2026-05-01" in body["window_start"]
         assert "2026-05-10" in body["window_end"]
+
+
+def test_analytics_summary_custom_window_live_end() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get(
+            "/api/analytics/summary"
+            "?window_start=2026-05-01T10:00:00%2B00:00"
+            "&bucket_hours=6"
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["window_custom"] is True
+        assert body["window_end_live"] is True
+        assert body["pnl"]["window_end_live"] is True
 
 
 def test_dashboard_lookback_hours() -> None:

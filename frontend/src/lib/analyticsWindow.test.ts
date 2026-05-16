@@ -14,18 +14,22 @@ describe("analyticsWindow", () => {
     expect(new Date(back!).getTime()).toBe(new Date(iso).getTime());
   });
 
-  it("builds distinct cache keys for custom vs preset", () => {
-    const a = analyticsQueryCacheKey({
-      mode: "preset",
-      lookbackHours: 24,
-      bucketHours: 6,
-    });
-    const b = analyticsQueryCacheKey({
+  it("builds live cache key without fixed end", () => {
+    const live = analyticsQueryCacheKey({
       mode: "custom",
       windowStart: "2026-05-01T00:00:00.000Z",
+      endLive: true,
+      bucketHours: 6,
+    });
+    const fixed = analyticsQueryCacheKey({
+      mode: "custom",
+      windowStart: "2026-05-01T00:00:00.000Z",
+      endLive: false,
       windowEnd: "2026-05-02T00:00:00.000Z",
       bucketHours: 6,
     });
-    expect(a).not.toBe(b);
+    expect(live).toContain(":live:");
+    expect(live).not.toContain("2026-05-02");
+    expect(fixed).toContain("2026-05-02");
   });
 });

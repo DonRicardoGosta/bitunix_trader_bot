@@ -390,6 +390,7 @@ export interface TpSlTimingStats {
 export interface PnlSeriesResponse {
   lookback_hours: number;
   window_custom?: boolean;
+  window_end_live?: boolean;
   bucket_hours: number;
   window_start?: string;
   window_end?: string;
@@ -429,6 +430,7 @@ export interface AnalyticsSummaryResponse {
   generated_at: string;
   lookback_hours: number;
   window_custom?: boolean;
+  window_end_live?: boolean;
   window_start?: string;
   window_end?: string;
   bucket_hours: number;
@@ -439,7 +441,7 @@ export interface AnalyticsSummaryResponse {
 
 export type AnalyticsSummaryQuery =
   | { lookbackHours: number; bucketHours?: number }
-  | { windowStart: string; windowEnd: string; bucketHours?: number };
+  | { windowStart: string; windowEnd?: string; bucketHours?: number };
 
 export interface RuntimeSettingsPatch {
   trading_paused?: boolean;
@@ -712,9 +714,11 @@ export const api = {
     const bucketHours = query.bucketHours ?? 6;
     const usp = new URLSearchParams();
     usp.set("bucket_hours", String(bucketHours));
-    if ("windowStart" in query && query.windowStart && query.windowEnd) {
+    if ("windowStart" in query && query.windowStart) {
       usp.set("window_start", query.windowStart);
-      usp.set("window_end", query.windowEnd);
+      if (query.windowEnd) {
+        usp.set("window_end", query.windowEnd);
+      }
     } else {
       const hours = "lookbackHours" in query ? query.lookbackHours : 24;
       usp.set("lookback_hours", String(hours));
@@ -725,9 +729,11 @@ export const api = {
     const bucketHours = query.bucketHours ?? 6;
     const usp = new URLSearchParams();
     usp.set("bucket_hours", String(bucketHours));
-    if ("windowStart" in query && query.windowStart && query.windowEnd) {
+    if ("windowStart" in query && query.windowStart) {
       usp.set("window_start", query.windowStart);
-      usp.set("window_end", query.windowEnd);
+      if (query.windowEnd) {
+        usp.set("window_end", query.windowEnd);
+      }
     } else {
       const hours = "lookbackHours" in query ? query.lookbackHours : 24;
       usp.set("lookback_hours", String(hours));

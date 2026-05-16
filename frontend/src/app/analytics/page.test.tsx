@@ -85,15 +85,12 @@ describe("AnalyticsPage", () => {
     expect(screen.getByText("PnL szimbólumonként")).toBeInTheDocument();
   });
 
-  it("requests custom window when Egyedi is selected", async () => {
+  it("requests live custom window with start only", async () => {
     localStorage.setItem("bitunix_ui_analytics_lookback_select", "custom");
+    localStorage.setItem("bitunix_ui_analytics_custom_end_mode", "live");
     localStorage.setItem(
       "bitunix_ui_analytics_custom_start",
       "2026-05-01T08:00:00.000Z",
-    );
-    localStorage.setItem(
-      "bitunix_ui_analytics_custom_end",
-      "2026-05-02T20:00:00.000Z",
     );
 
     const fetchMock = vi.fn().mockResolvedValue({
@@ -101,13 +98,15 @@ describe("AnalyticsPage", () => {
       json: async () => ({
         ...summary(24),
         window_custom: true,
+        window_end_live: true,
         window_start: "2026-05-01T08:00:00.000Z",
-        window_end: "2026-05-02T20:00:00.000Z",
+        window_end: new Date().toISOString(),
         pnl: {
           ...summary(24).pnl,
           window_custom: true,
+          window_end_live: true,
           window_start: "2026-05-01T08:00:00.000Z",
-          window_end: "2026-05-02T20:00:00.000Z",
+          window_end: new Date().toISOString(),
         },
       }),
     });
@@ -122,7 +121,7 @@ describe("AnalyticsPage", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const url = String(fetchMock.mock.calls[0][0]);
     expect(url).toContain("window_start=");
-    expect(url).toContain("window_end=");
+    expect(url).not.toContain("window_end=");
     expect(url).not.toContain("lookback_hours=");
   });
 });

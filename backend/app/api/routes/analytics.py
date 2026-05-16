@@ -31,7 +31,8 @@ def _resolved_window(
         None, description="Egyedi ablak kezdete (ISO 8601, UTC vagy offset)"
     ),
     window_end: datetime | None = Query(
-        None, description="Egyedi ablak vége (ISO 8601); nem lehet a jövőben"
+        None,
+        description="Egyedi ablak vége (ISO 8601). Ha nincs megadva: most (élő ablak).",
     ),
 ) -> ResolvedAnalyticsWindow:
     try:

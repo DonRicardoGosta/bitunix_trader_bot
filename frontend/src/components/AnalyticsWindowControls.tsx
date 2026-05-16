@@ -5,11 +5,13 @@ import { Input, Select } from "@/components/ui/input";
 import {
   ANALYTICS_LOOKBACK_CUSTOM,
   type AnalyticsQueryParams,
+  type CustomEndMode,
   analyticsQueryCacheKey,
   datetimeLocalValueToIso,
-  defaultCustomRangeIso,
+  defaultCustomStartIso,
   isoToDatetimeLocalValue,
   isAnalyticsLookbackSelectValue,
+  isCustomEndMode,
   isValidIsoTimestamp,
 } from "@/lib/analyticsWindow";
 import { LOOKBACK_PRESETS, STORAGE_KEYS } from "@/lib/lookback";
@@ -21,7 +23,6 @@ export function useAnalyticsWindowQuery(bucketHours: number): {
   isCustom: boolean;
   controls: React.ReactNode;
 } {
-  const defaults = useMemo(() => defaultCustomRangeIso(), []);
   const [lookbackSelect, setLookbackSelect] = usePersistedStringState(
     STORAGE_KEYS.analyticsLookbackSelect,
     "24",
@@ -29,39 +30,47 @@ export function useAnalyticsWindowQuery(bucketHours: number): {
   );
   const [customStartIso, setCustomStartIso] = usePersistedStringState(
     STORAGE_KEYS.analyticsCustomWindowStart,
-    defaults.start,
+    defaultCustomStartIso(),
     isValidIsoTimestamp,
+  );
+  const [endMode, setEndMode] = usePersistedStringState<CustomEndMode>(
+    STORAGE_KEYS.analyticsCustomEndMode,
+    "live",
+    isCustomEndMode,
   );
   const [customEndIso, setCustomEndIso] = usePersistedStringState(
     STORAGE_KEYS.analyticsCustomWindowEnd,
-    defaults.end,
+    new Date().toISOString(),
     isValidIsoTimestamp,
   );
 
   const isCustom = lookbackSelect === ANALYTICS_LOOKBACK_CUSTOM;
+  const endLive = endMode === "live";
 
   useEffect(() => {
     if (!isCustom) return;
-    if (!isValidIsoTimestamp(customStartIso) || !isValidIsoTimestamp(customEndIso)) {
-      const d = defaultCustomRangeIso();
-      setCustomStartIso(d.start);
-      setCustomEndIso(d.end);
+    if (!isValidIsoTimestamp(customStartIso)) {
+      setCustomStartIso(defaultCustomStartIso());
     }
-  }, [isCustom, customStartIso, customEndIso, setCustomStartIso, setCustomEndIso]);
+    if (!endLive && !isValidIsoTimestamp(customEndIso)) {
+      setCustomEndIso(new Date().toISOString());
+    }
+  }, [isCustom, customStartIso, customEndIso, endLive, setCustomStartIso, setCustomEndIso]);
 
   const params: AnalyticsQueryParams = useMemo(() => {
     if (isCustom) {
       return {
         mode: "custom",
         windowStart: customStartIso,
-        windowEnd: customEndIso,
+        endLive,
+        windowEnd: endLive ? undefined : customEndIso,
         bucketHours,
       };
     }
     const h = Number(lookbackSelect);
     const lookbackHours = LOOKBACK_PRESETS.some((p) => p.hours === h) ? h : 24;
     return { mode: "preset", lookbackHours, bucketHours };
-  }, [isCustom, customStartIso, customEndIso, lookbackSelect, bucketHours]);
+  }, [isCustom, customStartIso, endLive, customEndIso, lookbackSelect, bucketHours]);
 
   const cacheKey = analyticsQueryCacheKey(params);
 
@@ -115,17 +124,38 @@ export function useAnalyticsWindowQuery(bucketHours: number): {
             />
           </div>
           <div>
-            <label className="block text-xs uppercase text-muted mb-1" htmlFor="an-custom-end">
+            <label className="block text-xs uppercase text-muted mb-1" htmlFor="an-custom-end-mode">
               Vége
             </label>
-            <Input
-              id="an-custom-end"
-              type="datetime-local"
-              value={isoToDatetimeLocalValue(customEndIso)}
-              onChange={(e) => onEndLocal(e.target.value)}
-              className="min-w-[12.5rem]"
-            />
+            <Select
+              id="an-custom-end-mode"
+              value={endMode}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (isCustomEndMode(v)) setEndMode(v);
+              }}
+            >
+              <option value="live">Most (élő)</option>
+              <option value="fixed">Fix időpont</option>
+            </Select>
           </div>
+          {!endLive ? (
+            <div>
+              <label
+                className="block text-xs uppercase text-muted mb-1"
+                htmlFor="an-custom-end"
+              >
+                Vége időpontja
+              </label>
+              <Input
+                id="an-custom-end"
+                type="datetime-local"
+                value={isoToDatetimeLocalValue(customEndIso)}
+                onChange={(e) => onEndLocal(e.target.value)}
+                className="min-w-[12.5rem]"
+              />
+            </div>
+          ) : null}
         </>
       ) : null}
     </>
@@ -133,5 +163,3 @@ export function useAnalyticsWindowQuery(bucketHours: number): {
 
   return { params, cacheKey, isCustom, controls };
 }
-
-// fix div typo - should be div

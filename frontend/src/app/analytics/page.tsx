@@ -12,7 +12,10 @@ import { useAnalyticsWindowQuery } from "@/components/AnalyticsWindowControls";
 import { RefreshIndicator } from "@/components/RefreshIndicator";
 import { api, type PnlSeriesResponse } from "@/lib/api";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { formatAnalyticsWindowDescription } from "@/lib/analyticsWindow";
+import {
+  formatAnalyticsWindowDescription,
+  formatCustomWindowRangeLabel,
+} from "@/lib/analyticsWindow";
 import { BUCKET_HOURS_OPTIONS, STORAGE_KEYS, isBucketHours } from "@/lib/lookback";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
@@ -46,7 +49,7 @@ function toApiQuery(params: ReturnType<typeof useAnalyticsWindowQuery>["params"]
   if (params.mode === "custom") {
     return {
       windowStart: params.windowStart,
-      windowEnd: params.windowEnd,
+      ...(params.endLive ? {} : { windowEnd: params.windowEnd }),
       bucketHours: params.bucketHours,
     };
   }
@@ -108,10 +111,16 @@ export default function AnalyticsPage() {
               <>
                 {" "}
                 · {windowDesc}, bucket {pnl.bucket_hours}h
-                {pnl.window_start && pnl.window_end ? (
+                {pnl.window_start ? (
                   <>
                     {" "}
-                    · {formatWindow(pnl.window_start)} – {formatWindow(pnl.window_end)}
+                    ·{" "}
+                    {formatCustomWindowRangeLabel(
+                      pnl.window_start,
+                      pnl.window_end,
+                      pnl.window_end_live,
+                    ) ??
+                      `${formatWindow(pnl.window_start)} – ${pnl.window_end_live ? "most" : formatWindow(pnl.window_end)}`}
                   </>
                 ) : null}
                 {pnl.positions_in_window != null

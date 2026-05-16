@@ -21,6 +21,7 @@ export const STORAGE_KEYS = {
   analyticsLookbackHours: "bitunix_ui_analytics_lookback_hours",
   analyticsLookbackSelect: "bitunix_ui_analytics_lookback_select",
   analyticsCustomWindowStart: "bitunix_ui_analytics_custom_start",
+  analyticsCustomEndMode: "bitunix_ui_analytics_custom_end_mode",
   analyticsCustomWindowEnd: "bitunix_ui_analytics_custom_end",
   analyticsBucketHours: "bitunix_ui_analytics_bucket_hours",
   analyticsTpSlViewMode: "bitunix_ui_analytics_tpsl_view_mode",
