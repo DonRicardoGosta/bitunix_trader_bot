@@ -23,13 +23,29 @@ def parse_position_ts(iso: str | None) -> datetime | None:
         return None
 
 
+def position_open_time(position: dict[str, Any]) -> datetime | None:
+    """Nyitás ideje — előny: opened_at (normalizált history)."""
+    return parse_position_ts(position.get("opened_at"))
+
+
 def position_event_time(position: dict[str, Any]) -> datetime | None:
     """Lezárás ideje — előny: closed_at, majd updated_at; nyitás csak utolsó esély."""
-    for key in ("closed_at", "updated_at", "opened_at"):
+    for key in ("closed_at", "updated_at"):
         ts = parse_position_ts(position.get(key))
         if ts is not None:
             return ts
     return None
+
+
+def trade_hold_duration_seconds(position: dict[str, Any]) -> int | None:
+    """Pozíció nyitás–lezárás tartama másodpercben, ha mindkét idő ismert."""
+    opened = position_open_time(position)
+    closed = position_event_time(position)
+    if opened is None or closed is None:
+        return None
+    if closed <= opened:
+        return None
+    return int((closed - opened).total_seconds())
 
 
 def filter_positions_in_window(

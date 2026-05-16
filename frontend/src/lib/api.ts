@@ -387,6 +387,34 @@ export interface TpSlTimingStats {
   total_sl: number;
 }
 
+export interface TradeDurationSide {
+  count: number;
+  avg_duration_sec: number | null;
+}
+
+export interface TradeDurationBucket {
+  wins: TradeDurationSide;
+  losses: TradeDurationSide;
+}
+
+export interface TradeHoldDurationByWeekday extends TradeDurationBucket {
+  weekday: number;
+  label: string;
+}
+
+export interface TradeHoldDurationByHour extends TradeDurationBucket {
+  hour: number;
+}
+
+export interface TradeHoldDurationStats {
+  timezone: string;
+  classification_note: string;
+  skipped_no_duration: number;
+  summary: TradeDurationBucket;
+  by_weekday: TradeHoldDurationByWeekday[];
+  by_hour: TradeHoldDurationByHour[];
+}
+
 export interface PnlSeriesResponse {
   lookback_hours: number;
   window_custom?: boolean;
@@ -399,6 +427,7 @@ export interface PnlSeriesResponse {
   buckets: { bucket_start: string; realized_pnl_usdt: string }[];
   cumulative: { at: string; cumulative_pnl_usdt: string }[];
   tp_sl_timing?: TpSlTimingStats;
+  trade_hold_duration?: TradeHoldDurationStats;
   kpis: {
     count: number;
     realized_pnl_usdt: string;

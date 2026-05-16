@@ -6,6 +6,7 @@ import { Select } from "@/components/ui/input";
 import { StatCard } from "@/components/ui/StatCard";
 import { PnlSeriesChart } from "@/components/PnlSeriesChart";
 import { TpSlTimingTables } from "@/components/TpSlTimingTables";
+import { TradeHoldDurationPanel } from "@/components/TradeHoldDurationPanel";
 import { AnalyticsBreakdown } from "@/components/AnalyticsBreakdown";
 import { AnalyticsDbPanels } from "@/components/AnalyticsDbPanels";
 import { useAnalyticsWindowQuery } from "@/components/AnalyticsWindowControls";
@@ -176,6 +177,19 @@ export default function AnalyticsPage() {
               </CardHeader>
               <CardContent>
                 <TpSlTimingTables data={pnl.tp_sl_timing} />
+              </CardContent>
+            </Card>
+          ) : null}
+          {pnl.trade_hold_duration ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Trade tartam</CardTitle>
+                <span className="text-xs text-muted">
+                  Átlagos nyitás–lezárás idő nyertes / vesztes trade-enként · {windowDesc}
+                </span>
+              </CardHeader>
+              <CardContent>
+                <TradeHoldDurationPanel data={pnl.trade_hold_duration} />
               </CardContent>
             </Card>
           ) : null}
