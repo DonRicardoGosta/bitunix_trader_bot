@@ -119,8 +119,15 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
       stoppedRef.current = true;
-      wsRef.current?.close();
+      const ws = wsRef.current;
       wsRef.current = null;
+      if (ws) {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          ws.onopen = () => ws.close();
+        } else {
+          ws.close();
+        }
+      }
       setPushConnected(false);
     };
   }, []);

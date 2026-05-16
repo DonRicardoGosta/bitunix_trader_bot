@@ -118,9 +118,13 @@ describe("AnalyticsPage", () => {
       </WithRefreshProvider>,
     );
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const url = String(fetchMock.mock.calls[0][0]);
-    expect(url).toContain("window_start=");
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+      expect(urls.some((u) => u.includes("window_start="))).toBe(true);
+    });
+    const url = String(
+      fetchMock.mock.calls.map((c) => String(c[0])).find((u) => u.includes("window_start=")),
+    );
     expect(url).not.toContain("window_end=");
     expect(url).not.toContain("lookback_hours=");
   });

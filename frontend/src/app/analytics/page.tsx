@@ -12,6 +12,7 @@ import { AnalyticsDbPanels } from "@/components/AnalyticsDbPanels";
 import { useAnalyticsWindowQuery } from "@/components/AnalyticsWindowControls";
 import { RefreshIndicator } from "@/components/RefreshIndicator";
 import { api, type PnlSeriesResponse } from "@/lib/api";
+import { useClientHydrated } from "@/hooks/useClientHydrated";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import {
   formatAnalyticsWindowDescription,
@@ -60,6 +61,7 @@ function toApiQuery(params: ReturnType<typeof useAnalyticsWindowQuery>["params"]
 export default function AnalyticsPage() {
   const { refreshIntervalMs } = useRefreshInterval();
   const analyticsEpoch = useLiveEpoch("analytics");
+  const hydrated = useClientHydrated();
   const [bucketHours, setBucketHours] = usePersistedState(
     STORAGE_KEYS.analyticsBucketHours,
     6,
@@ -90,9 +92,11 @@ export default function AnalyticsPage() {
 
   const windowDesc = pnl
     ? formatAnalyticsWindowDescription(pnl)
-    : windowParams.mode === "custom"
-      ? "egyedi ablak"
-      : `${windowParams.mode === "preset" ? windowParams.lookbackHours : 24} óra`;
+    : hydrated
+      ? windowParams.mode === "custom"
+        ? "egyedi ablak"
+        : `${windowParams.mode === "preset" ? windowParams.lookbackHours : 24} óra`
+      : "24 óra";
 
   return (
     <div className="space-y-6">

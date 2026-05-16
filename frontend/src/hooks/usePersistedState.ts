@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * localStorage-ba mentett állapot (CSR only).
@@ -12,21 +12,23 @@ export function usePersistedState(
   isValid: (n: number) => boolean,
 ): [number, (value: number) => void] {
   const [value, setValue] = useState(defaultValue);
+  const isValidRef = useRef(isValid);
+  isValidRef.current = isValid;
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey);
       if (raw == null) return;
       const n = Number(raw);
-      if (isValid(n)) setValue(n);
+      if (isValidRef.current(n)) setValue(n);
     } catch {
       /* ignore */
     }
-  }, [storageKey, isValid]);
+  }, [storageKey]);
 
   const setPersisted = useCallback(
     (next: number) => {
-      if (!isValid(next)) return;
+      if (!isValidRef.current(next)) return;
       setValue(next);
       try {
         localStorage.setItem(storageKey, String(next));
@@ -34,45 +36,35 @@ export function usePersistedState(
         /* ignore */
       }
     },
-    [storageKey, isValid],
+    [storageKey],
   );
 
   return [value, setPersisted];
 }
 
 /** localStorage-ba mentett string állapot (CSR only). */
-function readStoredString<T extends string>(
-  storageKey: string,
-  defaultValue: T,
-  isValid: (v: string) => v is T,
-): T {
-  if (typeof window === "undefined") return defaultValue;
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (raw != null && isValid(raw)) return raw;
-  } catch {
-    /* ignore */
-  }
-  return defaultValue;
-}
-
 export function usePersistedStringState<T extends string>(
   storageKey: string,
   defaultValue: T,
   isValid: (v: string) => v is T,
 ): [T, (value: T) => void] {
-  const [value, setValue] = useState<T>(() =>
-    readStoredString(storageKey, defaultValue, isValid),
-  );
+  const [value, setValue] = useState<T>(defaultValue);
+  const isValidRef = useRef(isValid);
+  isValidRef.current = isValid;
 
   useEffect(() => {
-    const stored = readStoredString(storageKey, defaultValue, isValid);
-    if (stored !== value) setValue(stored);
-  }, [storageKey, defaultValue, isValid, value]);
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw == null) return;
+      if (isValidRef.current(raw)) setValue(raw as T);
+    } catch {
+      /* ignore */
+    }
+  }, [storageKey]);
 
   const setPersisted = useCallback(
     (next: T) => {
-      if (!isValid(next)) return;
+      if (!isValidRef.current(next)) return;
       setValue(next);
       try {
         localStorage.setItem(storageKey, next);
@@ -80,7 +72,7 @@ export function usePersistedStringState<T extends string>(
         /* ignore */
       }
     },
-    [storageKey, isValid],
+    [storageKey],
   );
 
   return [value, setPersisted];
