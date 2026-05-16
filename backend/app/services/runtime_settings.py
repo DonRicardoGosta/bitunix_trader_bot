@@ -11,6 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db.models import AppRuntimeSetting
+from app.services.trading_blackout import (
+    get_trading_blackout_schedule,
+    is_new_position_open_blocked,
+)
 
 # UI-ból módosítható kulcsok (bool).
 RUNTIME_BOOL_KEYS: frozenset[str] = frozenset(
@@ -118,6 +122,8 @@ async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
     for name in _STRATEGY_ENV_MAP:
         strategies[name] = await is_strategy_enabled(session, settings, name)
 
+    blocked, block_reason = await is_new_position_open_blocked(session)
+
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "env": {
@@ -140,7 +146,10 @@ async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
             ),
             "live_trading": settings.bitunix_live_trading,
             "strategies": strategies,
+            "new_position_open_allowed": not blocked,
+            "new_position_block_reason": block_reason,
         },
+        "trading_blackout": await get_trading_blackout_schedule(session),
         "runtime_overrides": await _list_overrides(session),
         "strategy_config": {
             "interval_seconds": settings.strategy_interval_seconds,

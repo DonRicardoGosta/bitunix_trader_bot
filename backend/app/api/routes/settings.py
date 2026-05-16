@@ -9,6 +9,11 @@ from app.db import audit
 from app.db.models import AuditLevel
 from app.db.session import get_db
 from app.schemas.settings import RuntimeSettingsPatch, TradingPauseBody
+from app.schemas.trading_blackout import TradingBlackoutScheduleBody
+from app.services.trading_blackout import (
+    get_trading_blackout_schedule,
+    set_trading_blackout_schedule,
+)
 from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 from app.services.runtime_settings import (
     apply_settings_patch,
@@ -78,3 +83,37 @@ async def set_trading_pause(
         ("settings", "calibration", "dashboard", "strategies")
     )
     return {"trading_paused": body.paused}
+
+
+@router.get("/trading-blackout")
+async def get_trading_blackout(
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Heti tiltási ütemezés (új pozíció nyitás)."""
+    return await get_trading_blackout_schedule(session)
+
+
+@router.put("/trading-blackout")
+async def put_trading_blackout(
+    body: TradingBlackoutScheduleBody,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Heti tiltási ütemezés mentése."""
+    try:
+        saved = await set_trading_blackout_schedule(session, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    await audit.record(
+        session,
+        "settings.trading_blackout",
+        level=AuditLevel.INFO,
+        message="Trading blackout ütemezés frissítve.",
+        payload={"timezone": saved.get("timezone")},
+    )
+    await session.commit()
+    await publish_invalidate((*DEFAULT_INVALIDATION_TOPICS, "settings"))
+    snap = await build_settings_snapshot(session)
+    return {"schedule": saved, "snapshot": snap}
