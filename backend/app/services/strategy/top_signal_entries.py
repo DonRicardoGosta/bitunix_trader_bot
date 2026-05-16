@@ -39,6 +39,10 @@ from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
 from app.services.calibration import parse_klines
 from app.services.calibration_runner import get_active_calibration_result
+from app.services.runtime_settings import (
+    effective_require_calibration,
+    is_strategy_enabled,
+)
 from app.services.coin_analyze import (
     plan_kline_interval,
     walk_forward_live_gate_from_klines,
@@ -115,7 +119,7 @@ class TopSignalEntriesStrategy(Strategy):
         result = StrategyResult()
         settings = ctx.settings
 
-        if not settings.strategy_top_signal_entries_enabled:
+        if not await is_strategy_enabled(ctx.session, settings, self.name):
             await audit.record(
                 ctx.session,
                 "strategy.skipped",
@@ -127,7 +131,8 @@ class TopSignalEntriesStrategy(Strategy):
             return result
 
         calibration = await get_active_calibration_result(ctx.session)
-        if settings.require_calibration_for_trading and calibration is None:
+        require_cal = await effective_require_calibration(ctx.session, settings)
+        if require_cal and calibration is None:
             await audit.record(
                 ctx.session,
                 "strategy.top_signal_entries.calibration_missing",

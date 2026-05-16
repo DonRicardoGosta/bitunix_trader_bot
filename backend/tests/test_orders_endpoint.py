@@ -94,6 +94,26 @@ def test_place_order_dry_run_via_http() -> None:
         assert dbg_row["exchange"]["debug"]["history_row_found"] is False
 
 
+def test_list_orders_lifecycle_closed_filter() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/orders?lifecycle=closed&limit=50")
+        assert r.status_code == 200, r.text
+        for row in r.json():
+            assert row["exchange"]["lifecycle"] == "closed"
+
+
+def test_list_orders_lookback_hours_param() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/orders?lookback_hours=6&limit=10")
+        assert r.status_code == 200, r.text
+        assert isinstance(r.json(), list)
+
+        r_bad = client.get("/api/orders?lookback_hours=0")
+        assert r_bad.status_code == 422
+
+
 def test_list_orders_supports_pagination_and_symbol_filter() -> None:
     """``limit`` / ``offset`` / ``symbol`` paraméterek alapszintű ellenőrzése."""
     app = create_app()
@@ -127,4 +147,9 @@ def test_orders_pnl_totals_endpoint_shape() -> None:
             "total_pnl_usdt",
             "sync_error",
         }
+        assert body.get("lookback_hours") is None
         assert isinstance(body["order_count"], int)
+
+        r_lb = client.get("/api/orders/pnl-totals?lookback_hours=24&lifecycle=closed")
+        assert r_lb.status_code == 200
+        assert r_lb.json()["lookback_hours"] == 24

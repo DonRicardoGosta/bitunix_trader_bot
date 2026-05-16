@@ -21,7 +21,12 @@ DEFAULT_INVALIDATION_TOPICS: tuple[str, ...] = (
     "strategies",
     "events",
     "market",
+    "settings",
+    "analytics",
 )
+
+# Időzített tick (a kliens debounce-olja a lassú orders fetch-et).
+LIVE_UI_TICK_TOPICS: tuple[str, ...] = DEFAULT_INVALIDATION_TOPICS
 
 _th_lock = threading.Lock()
 _clients: set[Any] = set()

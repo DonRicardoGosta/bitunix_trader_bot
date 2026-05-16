@@ -30,6 +30,7 @@ def test_dashboard_summary_returns_structure() -> None:
         body = r.json()
         for key in ("orders", "events", "strategy", "exchange", "generated_at"):
             assert key in body
+        assert body["lookback_hours"] == 168
         assert body["lookback_days"] == 7
         # Az exchange ág akkor is megjön, ha nincs élő Bitunix kapcsolat
         assert "open_positions" in body["exchange"]
@@ -42,4 +43,6 @@ def test_dashboard_summary_validates_lookback() -> None:
         r = client.get("/api/dashboard/summary?lookback_days=0")
         assert r.status_code == 422
         r = client.get("/api/dashboard/summary?lookback_days=200")
+        assert r.status_code == 422
+        r = client.get("/api/dashboard/summary?lookback_hours=0")
         assert r.status_code == 422

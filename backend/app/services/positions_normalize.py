@@ -73,8 +73,12 @@ def normalize_position_row(row: dict[str, Any]) -> dict[str, Any]:
     margin_mode = _pick(row, ("marginMode", "margin_mode"))
     position_mode = _pick(row, ("positionMode", "position_mode"))
     liq = _dec(_pick(row, ("liqPrice", "liquidationPrice")))
-    opened_ms = _pick(row, ("ctime", "openTime", "createTime"))
-    updated_ms = _pick(row, ("mtime", "updateTime"))
+    opened_ms = _pick(row, ("ctime", "openTime", "createTime", "open_time", "createdAt"))
+    closed_ms = _pick(
+        row,
+        ("closeTime", "close_time", "uTime", "utime", "endTime", "end_time"),
+    )
+    updated_ms = _pick(row, ("mtime", "updateTime")) or closed_ms
     symbol = (_pick(row, ("symbol", "symbolName")) or "").upper() or None
 
     roi_pct: Decimal | None = None
@@ -102,6 +106,7 @@ def normalize_position_row(row: dict[str, Any]) -> dict[str, Any]:
         "margin_mode": margin_mode,
         "position_mode": position_mode,
         "opened_at": _ms_iso(opened_ms),
+        "closed_at": _ms_iso(closed_ms),
         "updated_at": _ms_iso(updated_ms),
     }
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -43,6 +44,23 @@ from app.services.order_enrichment import (
     parse_open_symbols_from_positions,
     pick_trade_augment,
 )
+
+
+def clear_orders_enrichment_cache() -> None:
+    """Kompatibilitás tesztekkel / place_order után (nincs in-memory cache)."""
+    return None
+
+
+def _filter_rows_by_lifecycle(
+    rows: list[dict[str, Any]], lifecycle: str | None
+) -> list[dict[str, Any]]:
+    if not lifecycle:
+        return rows
+    return [
+        r
+        for r in rows
+        if (r.get("exchange") or {}).get("lifecycle") == lifecycle
+    ]
 
 
 def _new_client_order_id() -> str:
@@ -174,6 +192,7 @@ class TradingService:
             strategy_name=strategy_name,
         )
         await self._session.commit()
+        clear_orders_enrichment_cache()
         await publish_invalidate(DEFAULT_INVALIDATION_TOPICS)
 
         return OrderResponse(
@@ -190,6 +209,8 @@ class TradingService:
         *,
         offset: int = 0,
         symbol: str | None = None,
+        lookback_hours: int | None = None,
+        lifecycle: str | None = None,
         debug_sync: bool = False,
     ) -> list[dict[str, Any]]:
         """Legutóbbi rendelések DB-ből, Bitunix history + nyitott pozíció szinkronnal.
@@ -198,28 +219,42 @@ class TradingService:
             limit: Maximális visszaadott sorok száma.
             offset: Kihagyott sorok száma (paginálás).
             symbol: Opcionális szimbólum szűrő (case-insensitive).
+            lookback_hours: Ha megadva: csak ennyi óra visszamenő ``created_at``.
+            lifecycle: Pl. ``closed`` – csak az adott életciklusú sorok.
             debug_sync: Ha true, hibakereső metaadat is jön.
         """
         stmt = select(Order).order_by(Order.created_at.desc())
+        if lookback_hours is not None:
+            since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
+            stmt = stmt.where(Order.created_at >= since)
         if symbol:
             stmt = stmt.where(Order.symbol == symbol.upper())
         stmt = stmt.offset(offset).limit(limit)
         result = await self._session.execute(stmt)
         orders = list(result.scalars().all())
-        return await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
+        rows = await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
+        filtered = _filter_rows_by_lifecycle(rows, lifecycle)
+        if lifecycle:
+            return filtered[offset : offset + limit] if offset else filtered[:limit]
+        return filtered
 
-    async def orders_pnl_totals(self) -> dict[str, Any]:
-        """Összesített PnL (USDT) a saját ``orders`` tábla összes sorára.
+    async def orders_pnl_totals(
+        self, *, lookback_hours: int | None = None, lifecycle: str | None = None
+    ) -> dict[str, Any]:
+        """Összesített PnL (USDT) a saját ``orders`` tábla soraira.
 
         Ugyanaz a Bitunix szinkron és enrichment, mint a rendeléslistánál;
         az összeg a soronkénti ``realized_pnl_usdt`` + ``unrealized_pnl_usdt``
-        összege (ahol a mező ki van töltve) — nyitott és lezárt trade-ek
-        együtt, a naplózott saját rendelések alapján.
+        összege (ahol a mező ki van töltve).
         """
         stmt = select(Order).order_by(Order.created_at.desc())
+        if lookback_hours is not None:
+            since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
+            stmt = stmt.where(Order.created_at >= since)
         result = await self._session.execute(stmt)
         orders = list(result.scalars().all())
         rows = await self._enriched_order_api_rows(orders, debug_sync=False)
+        rows = _filter_rows_by_lifecycle(rows, lifecycle)
         total_r = Decimal(0)
         total_u = Decimal(0)
         for row in rows:
@@ -235,6 +270,8 @@ class TradingService:
             ex0 = rows[0].get("exchange") or {}
             sync_error = ex0.get("sync_error")
         return {
+            "lookback_hours": lookback_hours,
+            "lifecycle_filter": lifecycle,
             "order_count": len(rows),
             "realized_pnl_usdt": str(total_r),
             "unrealized_pnl_usdt": str(total_u),

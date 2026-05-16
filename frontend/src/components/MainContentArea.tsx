@@ -9,7 +9,7 @@ export function MainContentArea({ children }: { children: ReactNode }) {
   const { isNavigating } = useNavigationLoading();
 
   return (
-    <main className="relative mx-auto max-w-7xl px-4 py-6">
+    <main className="relative mx-auto max-w-[90rem] px-4 py-6">
       {isNavigating ? (
         <div className="absolute inset-0 z-[1] px-4 py-6 pointer-events-none">
           <PageLoadingSkeleton />

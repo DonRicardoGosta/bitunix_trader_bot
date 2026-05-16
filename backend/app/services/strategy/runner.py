@@ -12,6 +12,12 @@ from app.bitunix.error_reporting import format_strategy_run_error, structured_ex
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
 from app.config import get_settings
 from app.db import audit
+from app.services.runtime_settings import (
+    is_strategy_enabled,
+    is_strategy_runner_paused,
+    is_trading_paused,
+)
+from app.services.trading_gate import is_trading_allowed
 from app.db.models import AuditLevel, StrategyRun, StrategyRunStatus
 from app.db.session import AsyncSessionLocal
 from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
@@ -30,6 +36,32 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
     """
     settings = get_settings()
     strategy: Strategy = get_strategy(name)
+
+    async with AsyncSessionLocal() as session:
+        if await is_trading_paused(session):
+            return {
+                "run_id": None,
+                "status": "NO_OP",
+                "error": None,
+                "failure": None,
+                "details": {"reason": "trading_paused"},
+            }
+        if not await is_strategy_enabled(session, settings, name):
+            return {
+                "run_id": None,
+                "status": "NO_OP",
+                "error": None,
+                "failure": None,
+                "details": {"reason": "strategy_disabled"},
+            }
+        if not await is_trading_allowed(session, settings):
+            return {
+                "run_id": None,
+                "status": "NO_OP",
+                "error": None,
+                "failure": None,
+                "details": {"reason": "trading_gate_closed"},
+            }
 
     async with AsyncSessionLocal() as session:
         run = StrategyRun(
@@ -176,6 +208,14 @@ class StrategyRunner:
     async def _loop(self) -> None:
         try:
             while not self._stop.is_set():
+                settings = get_settings()
+                async with AsyncSessionLocal() as session:
+                    if await is_strategy_runner_paused(session, settings):
+                        with contextlib.suppress(TimeoutError):
+                            await asyncio.wait_for(
+                                self._stop.wait(), timeout=self._interval
+                            )
+                        continue
                 for name in list(STRATEGIES.keys()):
                     try:
                         await run_strategy(name, triggered_by="scheduler")

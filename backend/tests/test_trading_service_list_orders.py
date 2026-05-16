@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+
+# A list_orders alap lookback 6 óra; a seedelt tesztadatok régebbiek lehetnek.
+_TEST_LOOKBACK_H = 2160
 from decimal import Decimal
 from typing import Any
 
@@ -18,7 +21,7 @@ import sqlalchemy as sa
 from app.db.base import Base
 from app.db.models import Order, OrderSide, OrderStatus, OrderType
 from app.db.session import AsyncSessionLocal, engine
-from app.services.trading import TradingService
+from app.services.trading import TradingService, clear_orders_enrichment_cache
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -81,6 +84,7 @@ class _FakeClient:
 
 async def _seed_orders(rows: list[dict[str, Any]]) -> None:
     """Tesztrekordok beszúrása az ``orders`` táblába megadott ``created_at``-tel."""
+    clear_orders_enrichment_cache()
     async with AsyncSessionLocal() as session:
         await session.execute(sa.delete(Order))
         for row in rows:
@@ -138,7 +142,7 @@ async def test_list_orders_uses_open_position_realized_and_unrealized() -> None:
     )
     async with AsyncSessionLocal() as session:
         svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
-        rows = await svc.list_orders()
+        rows = await svc.list_orders(lookback_hours=_TEST_LOOKBACK_H)
     assert len(rows) == 1
     ex = rows[0]["exchange"]
     assert ex["lifecycle"] == "open"
@@ -184,7 +188,7 @@ async def test_list_orders_uses_history_position_realized_for_closed() -> None:
     )
     async with AsyncSessionLocal() as session:
         svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
-        rows = await svc.list_orders()
+        rows = await svc.list_orders(lookback_hours=_TEST_LOOKBACK_H)
     ex = rows[0]["exchange"]
     assert ex["lifecycle"] == "closed"
     assert ex["realized_pnl_usdt"] == "0.017014866"
@@ -231,7 +235,7 @@ async def test_list_orders_no_position_match_falls_back_to_hist_orders() -> None
     )
     async with AsyncSessionLocal() as session:
         svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
-        rows = await svc.list_orders()
+        rows = await svc.list_orders(lookback_hours=_TEST_LOOKBACK_H)
     ex = rows[0]["exchange"]
     assert ex["realized_pnl_usdt"] == "100"
     # margin = 1*60000/10 = 6000 → ROI = 100/6000*100 = 1.6667 → "1.67"
@@ -265,7 +269,7 @@ async def test_list_orders_handles_position_history_api_error() -> None:
     fake = _ErrClient()
     async with AsyncSessionLocal() as session:
         svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
-        rows = await svc.list_orders()
+        rows = await svc.list_orders(lookback_hours=_TEST_LOOKBACK_H)
     # Hiba esetén nem dőlünk el; a sync_error mező mutatja a problémát.
     assert len(rows) == 1
     assert rows[0]["exchange"]["sync_error"] is None or "history" in rows[0]["exchange"]["sync_error"].lower()
@@ -333,8 +337,8 @@ async def test_orders_pnl_totals_matches_sum_of_list_orders_rows() -> None:
     )
     async with AsyncSessionLocal() as session:
         svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
-        totals = await svc.orders_pnl_totals()
-        rows = await svc.list_orders(limit=100)
+        totals = await svc.orders_pnl_totals(lookback_hours=_TEST_LOOKBACK_H)
+        rows = await svc.list_orders(limit=100, lookback_hours=_TEST_LOOKBACK_H)
     assert len(rows) == 2
     sum_r = sum(
         Decimal(str(r["exchange"].get("realized_pnl_usdt") or "0")) for r in rows
@@ -371,6 +375,6 @@ async def test_list_orders_includes_entry_context_from_db() -> None:
     fake = _FakeClient()
     async with AsyncSessionLocal() as session:
         svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
-        rows = await svc.list_orders(limit=10)
+        rows = await svc.list_orders(limit=10, lookback_hours=_TEST_LOOKBACK_H)
     assert len(rows) == 1
     assert rows[0]["entry_context"] == ctx

@@ -49,6 +49,10 @@ from app.db import audit
 from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
 from app.services.calibration_runner import get_active_calibration_result
+from app.services.runtime_settings import (
+    effective_require_calibration,
+    is_strategy_enabled,
+)
 from app.services.risk import compute_margin, compute_quantity, effective_order_leverage
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.tpsl import (
@@ -74,7 +78,7 @@ class TopMoversStrategy(Strategy):
         result = StrategyResult()
         settings = ctx.settings
 
-        if not settings.strategy_top_movers_enabled:
+        if not await is_strategy_enabled(ctx.session, settings, self.name):
             await audit.record(
                 ctx.session,
                 "strategy.skipped",
@@ -87,7 +91,8 @@ class TopMoversStrategy(Strategy):
 
         # GATE: kell-e friss kalibráció?
         calibration = await get_active_calibration_result(ctx.session)
-        if settings.require_calibration_for_trading and calibration is None:
+        require_cal = await effective_require_calibration(ctx.session, settings)
+        if require_cal and calibration is None:
             await audit.record(
                 ctx.session,
                 "strategy.top_movers.calibration_missing",

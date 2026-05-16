@@ -15,6 +15,8 @@ export interface StatCardProps {
   className?: string;
   /** Loader állapot */
   loading?: boolean;
+  /** Hosszú számok tördelése (ne vágja le truncate) */
+  wrapValue?: boolean;
 }
 
 const toneClass: Record<NonNullable<StatCardProps["tone"]>, string> = {
@@ -33,6 +35,7 @@ export function StatCard({
   icon,
   className,
   loading,
+  wrapValue = false,
 }: StatCardProps) {
   return (
     <div
@@ -52,18 +55,20 @@ export function StatCard({
         </div>
         <div
           className={cn(
-            "mt-1 flex items-baseline gap-1.5 font-semibold tabular-nums",
-            "text-2xl",
+            "mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 font-semibold tabular-nums",
+            wrapValue ? "text-lg sm:text-xl" : "text-2xl",
             toneClass[tone],
           )}
         >
           {loading ? (
             <span className="inline-block h-6 w-20 rounded bg-bg-subtle animate-pulse" />
           ) : (
-            <span className="num truncate">{value}</span>
+            <span className={cn("num", wrapValue ? "break-all" : "truncate")}>
+              {value}
+            </span>
           )}
           {unit ? (
-            <span className="text-xs font-normal text-muted">{unit}</span>
+            <span className="text-xs font-normal text-muted shrink-0">{unit}</span>
           ) : null}
         </div>
         {hint ? (

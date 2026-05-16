@@ -22,6 +22,8 @@ export const LIVE_TOPICS = [
   "strategies",
   "events",
   "market",
+  "settings",
+  "analytics",
 ] as const;
 
 export type LiveTopic = (typeof LIVE_TOPICS)[number];

@@ -225,7 +225,7 @@ def test_orders_endpoint_blocked_without_calibration() -> None:
             },
         )
         assert r.status_code == 409
-        assert "Trading is locked" in r.json()["detail"]
+        assert "Trading zárolva" in r.json()["detail"]
 
 
 def test_orders_endpoint_allowed_with_fresh_calibration() -> None:

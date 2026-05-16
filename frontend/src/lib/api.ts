@@ -94,6 +94,7 @@ export interface OrderRow {
 
 /** GET /api/orders/pnl-totals — összes saját DB rendelés PnL összesítője */
 export interface OrdersPnlTotals {
+  lookback_hours?: number;
   order_count: number;
   realized_pnl_usdt: string;
   unrealized_pnl_usdt: string;
@@ -230,10 +231,12 @@ export interface NormalizedPositionsResponse {
 
 export interface DashboardSummary {
   generated_at: string;
+  lookback_hours: number;
   lookback_days: number;
   orders: {
     total: number;
     last_24h: number;
+    in_lookback_window?: number | null;
     by_status: Record<string, number>;
     top_symbols_30d: { symbol: string; count: number }[];
     by_strategy_30d: { strategy: string; count: number }[];
@@ -285,6 +288,7 @@ export interface DashboardSummary {
       items: NormalizedPosition[];
     };
     closed_positions: {
+      lookback_hours?: number;
       lookback_days: number;
       count: number;
       realized_pnl_usdt: string;
@@ -293,11 +297,105 @@ export interface DashboardSummary {
       losses: number;
       avg_win_usdt: string | null;
       avg_loss_usdt: string | null;
+      profit_factor?: string | null;
+      expectancy_usdt?: string | null;
+      max_drawdown_usdt?: string | null;
       top_winners: NormalizedPosition[];
       top_losers: NormalizedPosition[];
       per_symbol: { symbol: string; realized_pnl_usdt: string }[];
     };
   };
+}
+
+export interface SettingsSnapshot {
+  generated_at: string;
+  env: {
+    app_env: string;
+    bitunix_live_trading: boolean;
+    strategy_runner_enabled: boolean;
+    calibration_enabled: boolean;
+    require_calibration_for_trading: boolean;
+    strategy_top_movers_enabled: boolean;
+    strategy_top_signal_entries_enabled: boolean;
+  };
+  effective: {
+    trading_paused: boolean;
+    require_calibration_for_trading: boolean;
+    strategy_runner_paused: boolean;
+    strategy_runner_active: boolean;
+    live_trading: boolean;
+    strategies: Record<string, boolean>;
+  };
+  runtime_overrides: Record<string, boolean>;
+  strategy_config: Record<string, string | number>;
+}
+
+export interface PnlBreakdownTrade {
+  symbol: string | null;
+  side: string | null;
+  realized_pnl_usdt: string;
+  closed_at: string | null;
+  roi_pct?: string | null;
+}
+
+export interface PnlSeriesBreakdown {
+  per_symbol: { symbol: string; realized_pnl_usdt: string; count: number }[];
+  by_side: Record<string, { count: number; wins: number; losses: number }>;
+  top_winners: PnlBreakdownTrade[];
+  top_losers: PnlBreakdownTrade[];
+}
+
+export interface PnlSeriesResponse {
+  lookback_hours: number;
+  bucket_hours: number;
+  window_start?: string;
+  window_end?: string;
+  positions_in_window?: number;
+  sync_error: string | null;
+  buckets: { bucket_start: string; realized_pnl_usdt: string }[];
+  cumulative: { at: string; cumulative_pnl_usdt: string }[];
+  kpis: {
+    count: number;
+    realized_pnl_usdt: string;
+    wins: number;
+    losses: number;
+    win_rate_pct: string | null;
+    profit_factor: string | null;
+    expectancy_usdt: string | null;
+    max_drawdown_usdt: string;
+    avg_win_usdt: string | null;
+    avg_loss_usdt: string | null;
+  };
+  breakdown?: PnlSeriesBreakdown;
+}
+
+export interface AnalyticsOrdersWindow {
+  lookback_hours: number;
+  total: number;
+  by_status: Record<string, number>;
+  by_strategy: { strategy: string; count: number }[];
+}
+
+export interface AnalyticsStrategyWindow {
+  lookback_hours: number;
+  by_status: Record<string, number>;
+}
+
+export interface AnalyticsSummaryResponse {
+  generated_at: string;
+  lookback_hours: number;
+  bucket_hours: number;
+  pnl: PnlSeriesResponse;
+  orders: AnalyticsOrdersWindow;
+  strategy: AnalyticsStrategyWindow;
+}
+
+export interface RuntimeSettingsPatch {
+  trading_paused?: boolean;
+  require_calibration_for_trading?: boolean;
+  strategy_runner_paused?: boolean;
+  strategy_top_movers_enabled?: boolean;
+  strategy_top_signal_entries_enabled?: boolean;
 }
 
 export interface MarketSymbolRow {
@@ -501,15 +599,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  orders: (params?: { limit?: number; offset?: number; symbol?: string }) => {
+  orders: (params?: {
+    limit?: number;
+    offset?: number;
+    symbol?: string;
+    lookbackHours?: number;
+    lifecycle?: string;
+  }) => {
     const usp = new URLSearchParams();
     if (params?.limit != null) usp.set("limit", String(params.limit));
     if (params?.offset != null) usp.set("offset", String(params.offset));
     if (params?.symbol) usp.set("symbol", params.symbol);
+    if (params?.lookbackHours != null) {
+      usp.set("lookback_hours", String(params.lookbackHours));
+    }
+    if (params?.lifecycle) usp.set("lifecycle", params.lifecycle);
     const qs = usp.toString();
     return request<OrderRow[]>(`/api/orders${qs ? `?${qs}` : ""}`);
   },
-  ordersPnlTotals: () => request<OrdersPnlTotals>("/api/orders/pnl-totals"),
+  ordersPnlTotals: (lookbackHours = 6, lifecycle?: string) => {
+    const usp = new URLSearchParams();
+    usp.set("lookback_hours", String(lookbackHours));
+    if (lifecycle) usp.set("lifecycle", lifecycle);
+    const qs = usp.toString();
+    return request<OrdersPnlTotals>(`/api/orders/pnl-totals${qs ? `?${qs}` : ""}`);
+  },
   placeOrder: (input: PlaceOrderInput) =>
     request<PlaceOrderResult>("/api/orders", {
       method: "POST",
@@ -523,9 +637,32 @@ export const api = {
     request<NormalizedPositionsResponse>(
       `/api/positions/normalized${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`,
     ),
-  dashboardSummary: (lookbackDays = 7) =>
+  dashboardSummary: (lookbackHours = 168) =>
     request<DashboardSummary>(
-      `/api/dashboard/summary?lookback_days=${lookbackDays}`,
+      `/api/dashboard/summary?lookback_hours=${lookbackHours}`,
+    ),
+  settingsSnapshot: () => request<SettingsSnapshot>("/api/settings"),
+  patchSettings: (body: RuntimeSettingsPatch) =>
+    request<{ applied: Record<string, boolean>; snapshot: SettingsSnapshot }>(
+      "/api/settings",
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  setTradingPause: (paused: boolean) =>
+    request<{ trading_paused: boolean }>("/api/settings/trading-pause", {
+      method: "POST",
+      body: JSON.stringify({ paused }),
+    }),
+  analyticsSummary: (lookbackHours = 24, bucketHours = 6) =>
+    request<AnalyticsSummaryResponse>(
+      `/api/analytics/summary?lookback_hours=${lookbackHours}&bucket_hours=${bucketHours}`,
+    ),
+  analyticsPnlSeries: (lookbackHours = 24, bucketHours = 6) =>
+    request<PnlSeriesResponse>(
+      `/api/analytics/pnl-series?lookback_hours=${lookbackHours}&bucket_hours=${bucketHours}`,
+    ),
+  analyticsOrdersWindow: (lookbackHours = 24) =>
+    request<AnalyticsOrdersWindow>(
+      `/api/analytics/orders?lookback_hours=${lookbackHours}`,
     ),
   account: () => request<unknown>("/api/account"),
   strategies: () => request<StrategyInfo[]>("/api/strategies"),
@@ -541,6 +678,8 @@ export const api = {
   calibrationLatest: () =>
     request<{
       trading_enabled: boolean;
+      trading_paused?: boolean;
+      calibration_gate_open?: boolean;
       require_calibration_for_trading: boolean;
       max_age_minutes: number;
       now: string;

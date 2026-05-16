@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.api.routes import (
     account,
+    analytics,
     calibration,
     dashboard,
     events,
@@ -27,13 +28,14 @@ from app.api.routes import (
     market,
     orders,
     positions,
+    settings as settings_routes,
     strategies,
 )
 from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel
 from app.services.calibration_runner import CalibrationRunner
-from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
+from app.services.live_bus import LIVE_UI_TICK_TOPICS, publish_invalidate
 from app.services.live_bus import subscriber_count as live_subscriber_count
 from app.services.strategy.runner import StrategyRunner
 
@@ -50,7 +52,7 @@ async def _live_ui_push_tick(stop: asyncio.Event) -> None:
             pass
         if live_subscriber_count() == 0:
             continue
-        await publish_invalidate(DEFAULT_INVALIDATION_TOPICS)
+        await publish_invalidate(LIVE_UI_TICK_TOPICS)
 
 
 @asynccontextmanager
@@ -152,6 +154,8 @@ def create_app() -> FastAPI:
     app.include_router(events.router, prefix="/api")
     app.include_router(calibration.router, prefix="/api")
     app.include_router(dashboard.router, prefix="/api")
+    app.include_router(analytics.router, prefix="/api")
+    app.include_router(settings_routes.router, prefix="/api")
     app.include_router(live.router, prefix="/api")
 
     return app
