@@ -28,7 +28,6 @@ export function OrdersTotalDbPnl({
     {
       intervalMs: refreshIntervalMs,
       reloadKey: pnlEpoch,
-      reloadDebounceMs: 1500,
       staleKey: `${lookbackHours}:${refreshIntervalMs}`,
       errorMessage: "PnL összesítés lekérése sikertelen",
     },

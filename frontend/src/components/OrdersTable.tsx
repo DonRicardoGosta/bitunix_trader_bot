@@ -123,7 +123,6 @@ export function OrdersTable({
     {
       intervalMs: refreshIntervalMs,
       reloadKey: ordersEpoch,
-      reloadDebounceMs: 1500,
       staleKey: `${lookbackHours}:${refreshIntervalMs}`,
       errorMessage: "Hiba a rendelések lekérésekor",
     },
