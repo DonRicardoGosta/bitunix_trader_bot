@@ -19,6 +19,9 @@ export function lookbackLabel(hours: number): string {
 export const STORAGE_KEYS = {
   dashboardLookbackHours: "bitunix_ui_dash_lookback_hours",
   analyticsLookbackHours: "bitunix_ui_analytics_lookback_hours",
+  analyticsLookbackSelect: "bitunix_ui_analytics_lookback_select",
+  analyticsCustomWindowStart: "bitunix_ui_analytics_custom_start",
+  analyticsCustomWindowEnd: "bitunix_ui_analytics_custom_end",
   analyticsBucketHours: "bitunix_ui_analytics_bucket_hours",
   analyticsTpSlViewMode: "bitunix_ui_analytics_tpsl_view_mode",
   analyticsTpSlWeekday: "bitunix_ui_analytics_tpsl_weekday",

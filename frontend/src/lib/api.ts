@@ -389,6 +389,7 @@ export interface TpSlTimingStats {
 
 export interface PnlSeriesResponse {
   lookback_hours: number;
+  window_custom?: boolean;
   bucket_hours: number;
   window_start?: string;
   window_end?: string;
@@ -427,11 +428,18 @@ export interface AnalyticsStrategyWindow {
 export interface AnalyticsSummaryResponse {
   generated_at: string;
   lookback_hours: number;
+  window_custom?: boolean;
+  window_start?: string;
+  window_end?: string;
   bucket_hours: number;
   pnl: PnlSeriesResponse;
   orders: AnalyticsOrdersWindow;
   strategy: AnalyticsStrategyWindow;
 }
+
+export type AnalyticsSummaryQuery =
+  | { lookbackHours: number; bucketHours?: number }
+  | { windowStart: string; windowEnd: string; bucketHours?: number };
 
 export interface RuntimeSettingsPatch {
   trading_paused?: boolean;
@@ -700,14 +708,32 @@ export const api = {
       "/api/settings/trading-blackout",
       { method: "PUT", body: JSON.stringify(schedule) },
     ),
-  analyticsSummary: (lookbackHours = 24, bucketHours = 6) =>
-    request<AnalyticsSummaryResponse>(
-      `/api/analytics/summary?lookback_hours=${lookbackHours}&bucket_hours=${bucketHours}`,
-    ),
-  analyticsPnlSeries: (lookbackHours = 24, bucketHours = 6) =>
-    request<PnlSeriesResponse>(
-      `/api/analytics/pnl-series?lookback_hours=${lookbackHours}&bucket_hours=${bucketHours}`,
-    ),
+  analyticsSummary: (query: AnalyticsSummaryQuery = { lookbackHours: 24, bucketHours: 6 }) => {
+    const bucketHours = query.bucketHours ?? 6;
+    const usp = new URLSearchParams();
+    usp.set("bucket_hours", String(bucketHours));
+    if ("windowStart" in query && query.windowStart && query.windowEnd) {
+      usp.set("window_start", query.windowStart);
+      usp.set("window_end", query.windowEnd);
+    } else {
+      const hours = "lookbackHours" in query ? query.lookbackHours : 24;
+      usp.set("lookback_hours", String(hours));
+    }
+    return request<AnalyticsSummaryResponse>(`/api/analytics/summary?${usp.toString()}`);
+  },
+  analyticsPnlSeries: (query: AnalyticsSummaryQuery = { lookbackHours: 24, bucketHours: 6 }) => {
+    const bucketHours = query.bucketHours ?? 6;
+    const usp = new URLSearchParams();
+    usp.set("bucket_hours", String(bucketHours));
+    if ("windowStart" in query && query.windowStart && query.windowEnd) {
+      usp.set("window_start", query.windowStart);
+      usp.set("window_end", query.windowEnd);
+    } else {
+      const hours = "lookbackHours" in query ? query.lookbackHours : 24;
+      usp.set("lookback_hours", String(hours));
+    }
+    return request<PnlSeriesResponse>(`/api/analytics/pnl-series?${usp.toString()}`);
+  },
   analyticsOrdersWindow: (lookbackHours = 24) =>
     request<AnalyticsOrdersWindow>(
       `/api/analytics/orders?lookback_hours=${lookbackHours}`,

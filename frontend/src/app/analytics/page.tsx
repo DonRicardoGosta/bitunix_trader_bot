@@ -8,17 +8,12 @@ import { PnlSeriesChart } from "@/components/PnlSeriesChart";
 import { TpSlTimingTables } from "@/components/TpSlTimingTables";
 import { AnalyticsBreakdown } from "@/components/AnalyticsBreakdown";
 import { AnalyticsDbPanels } from "@/components/AnalyticsDbPanels";
+import { useAnalyticsWindowQuery } from "@/components/AnalyticsWindowControls";
 import { RefreshIndicator } from "@/components/RefreshIndicator";
 import { api, type PnlSeriesResponse } from "@/lib/api";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import {
-  BUCKET_HOURS_OPTIONS,
-  LOOKBACK_PRESETS,
-  STORAGE_KEYS,
-  isBucketHours,
-  isLookbackHours,
-  lookbackLabel,
-} from "@/lib/lookback";
+import { formatAnalyticsWindowDescription } from "@/lib/analyticsWindow";
+import { BUCKET_HOURS_OPTIONS, STORAGE_KEYS, isBucketHours } from "@/lib/lookback";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
@@ -47,24 +42,33 @@ function formatWindow(iso?: string): string {
   });
 }
 
+function toApiQuery(params: ReturnType<typeof useAnalyticsWindowQuery>["params"]) {
+  if (params.mode === "custom") {
+    return {
+      windowStart: params.windowStart,
+      windowEnd: params.windowEnd,
+      bucketHours: params.bucketHours,
+    };
+  }
+  return { lookbackHours: params.lookbackHours, bucketHours: params.bucketHours };
+}
+
 export default function AnalyticsPage() {
   const { refreshIntervalMs } = useRefreshInterval();
   const analyticsEpoch = useLiveEpoch("analytics");
-  const [lookbackHours, setLookbackHours] = usePersistedState(
-    STORAGE_KEYS.analyticsLookbackHours,
-    24,
-    isLookbackHours,
-  );
   const [bucketHours, setBucketHours] = usePersistedState(
     STORAGE_KEYS.analyticsBucketHours,
     6,
     isBucketHours,
   );
 
-  const paramKey = `${lookbackHours}:${bucketHours}`;
+  const { params: windowParams, cacheKey: windowCacheKey, controls: windowControls } =
+    useAnalyticsWindowQuery(bucketHours);
+
+  const paramKey = `${windowCacheKey}:${bucketHours}`;
 
   const { data, error, isRefreshing } = usePollingQuery(
-    () => api.analyticsSummary(lookbackHours, bucketHours),
+    () => api.analyticsSummary(toApiQuery(windowParams)),
     {
       intervalMs: refreshIntervalMs,
       reloadKey: analyticsEpoch,
@@ -80,8 +84,14 @@ export default function AnalyticsPage() {
     [kpis],
   );
 
+  const windowDesc = pnl
+    ? formatAnalyticsWindowDescription(pnl)
+    : windowParams.mode === "custom"
+      ? "egyedi ablak"
+      : `${windowParams.mode === "preset" ? windowParams.lookbackHours : 24} óra`;
+
   const chartKey = pnl
-    ? `${pnl.lookback_hours}:${pnl.bucket_hours}:${pnl.buckets.length}:${pnl.window_end}`
+    ? `${pnl.window_custom ? "c" : "p"}:${pnl.window_start}:${pnl.window_end}:${pnl.bucket_hours}:${pnl.buckets.length}`
     : "empty";
 
   return (
@@ -97,7 +107,7 @@ export default function AnalyticsPage() {
             {pnl ? (
               <>
                 {" "}
-                · {lookbackLabel(pnl.lookback_hours)}, bucket {pnl.bucket_hours}h
+                · {windowDesc}, bucket {pnl.bucket_hours}h
                 {pnl.window_start && pnl.window_end ? (
                   <>
                     {" "}
@@ -109,27 +119,12 @@ export default function AnalyticsPage() {
                   : ""}
               </>
             ) : (
-              ` · ${lookbackLabel(lookbackHours)}`
+              ` · ${windowDesc}`
             )}
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
-          <div>
-            <label className="block text-xs uppercase text-muted mb-1" htmlFor="an-lb">
-              Ablak
-            </label>
-            <Select
-              id="an-lb"
-              value={String(lookbackHours)}
-              onChange={(e) => setLookbackHours(Number(e.target.value) || 24)}
-            >
-              {LOOKBACK_PRESETS.map((p) => (
-                <option key={p.hours} value={String(p.hours)}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
-          </div>
+          {windowControls}
           <div>
             <label className="block text-xs uppercase text-muted mb-1" htmlFor="an-bk">
               Bucket
@@ -171,8 +166,7 @@ export default function AnalyticsPage() {
               <CardHeader>
                 <CardTitle>TP / SL idő szerint</CardTitle>
                 <span className="text-xs text-muted">
-                  TP/SL bontás órákra, napokra vagy nap+óra nézetben (ugyanazon hét nap minden
-                  előfordulása összeadva) · {lookbackLabel(pnl.lookback_hours)}
+                  TP/SL bontás órákra, napokra vagy nap+óra nézetben · {windowDesc}
                 </span>
               </CardHeader>
               <CardContent>

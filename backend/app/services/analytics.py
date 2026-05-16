@@ -26,8 +26,10 @@ from app.bitunix.client import BitunixClient
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
 from app.db.models import Order, StrategyRun
 from app.services.dashboard import _dec, _q2
+from app.services.analytics_window import ResolvedAnalyticsWindow, resolve_analytics_window
 from app.services.position_history import (
     fetch_closed_positions_in_lookback,
+    fetch_closed_positions_in_window,
     position_event_time,
 )
 
@@ -126,13 +128,16 @@ def _positions_breakdown(
     }
 
 
-async def _fetch_closed_in_window(
+async def _fetch_closed_for_window(
     client: BitunixClient,
-    *,
-    lookback_hours: int,
+    window: ResolvedAnalyticsWindow,
 ) -> tuple[list[dict[str, Any]], str | None]:
+    if window.custom:
+        return await fetch_closed_positions_in_window(
+            client, since=window.since, until=window.until
+        )
     return await fetch_closed_positions_in_lookback(
-        client, lookback_hours=lookback_hours
+        client, lookback_hours=window.lookback_hours
     )
 
 
@@ -255,19 +260,21 @@ def _closed_kpis(realized_pnls: list[Decimal]) -> dict[str, Any]:
 async def build_pnl_series(
     client: BitunixClient | None,
     *,
-    lookback_hours: int,
+    window: ResolvedAnalyticsWindow,
     bucket_hours: int = 1,
 ) -> dict[str, Any]:
     """Lezárt pozíciók realized PnL idősora bucketenként."""
-    now = datetime.now(UTC)
-    since = now - timedelta(hours=max(1, lookback_hours))
+    since = window.since
+    until = window.until
+    lookback_hours = window.lookback_hours
 
     if client is None:
         return {
             "lookback_hours": lookback_hours,
+            "window_custom": window.custom,
             "bucket_hours": bucket_hours,
             "window_start": since.isoformat(),
-            "window_end": now.isoformat(),
+            "window_end": until.isoformat(),
             "positions_in_window": 0,
             "sync_error": "Bitunix API kulcs hiányzik.",
             "buckets": [],
@@ -277,9 +284,7 @@ async def build_pnl_series(
             "tp_sl_timing": _tp_sl_timing_stats([]),
         }
 
-    closed, sync_error = await _fetch_closed_in_window(
-        client, lookback_hours=lookback_hours
-    )
+    closed, sync_error = await _fetch_closed_for_window(client, window)
     bucket_map: dict[datetime, Decimal] = defaultdict(lambda: Decimal(0))
     series_points: list[tuple[datetime, Decimal]] = []
 
@@ -288,7 +293,7 @@ async def build_pnl_series(
         if r is None:
             continue
         ts = position_event_time(p)
-        if ts is None or ts < since:
+        if ts is None or ts < since or ts > until:
             continue
         series_points.append((ts, r))
         b = _bucket_start(ts, bucket_hours)
@@ -297,7 +302,7 @@ async def build_pnl_series(
     series_points.sort(key=lambda x: x[0])
     realized_pnls = [v for _, v in series_points]
 
-    bucket_starts = _iter_bucket_range(since, now, bucket_hours)
+    bucket_starts = _iter_bucket_range(since, until, bucket_hours)
     buckets = [
         {
             "bucket_start": b.isoformat(),
@@ -327,16 +332,17 @@ async def build_pnl_series(
     if len(cumulative) == 1:
         cumulative.append(
             {
-                "at": now.isoformat(),
+                "at": until.isoformat(),
                 "cumulative_pnl_usdt": "0",
             }
         )
 
     return {
         "lookback_hours": lookback_hours,
+        "window_custom": window.custom,
         "bucket_hours": bucket_hours,
         "window_start": since.isoformat(),
-        "window_end": now.isoformat(),
+        "window_end": until.isoformat(),
         "positions_in_window": len(closed),
         "sync_error": sync_error,
         "buckets": buckets,
@@ -351,20 +357,19 @@ async def build_analytics_summary(
     session: AsyncSession,
     client: BitunixClient | None,
     *,
-    lookback_hours: int,
+    window: ResolvedAnalyticsWindow,
     bucket_hours: int = 1,
 ) -> dict[str, Any]:
     """Egy válaszban: PnL idősor + DB rendelés/stratégia + bontások."""
-    pnl = await build_pnl_series(
-        client, lookback_hours=lookback_hours, bucket_hours=bucket_hours
-    )
-    orders = await build_orders_window_stats(session, lookback_hours=lookback_hours)
-    strategy = await build_strategy_runs_window_stats(
-        session, lookback_hours=lookback_hours
-    )
+    pnl = await build_pnl_series(client, window=window, bucket_hours=bucket_hours)
+    orders = await build_orders_window_stats(session, window=window)
+    strategy = await build_strategy_runs_window_stats(session, window=window)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
-        "lookback_hours": lookback_hours,
+        "lookback_hours": window.lookback_hours,
+        "window_custom": window.custom,
+        "window_start": window.since.isoformat(),
+        "window_end": window.until.isoformat(),
         "bucket_hours": bucket_hours,
         "pnl": pnl,
         "orders": orders,
@@ -373,20 +378,20 @@ async def build_analytics_summary(
 
 
 async def build_orders_window_stats(
-    session: AsyncSession, *, lookback_hours: int
+    session: AsyncSession, *, window: ResolvedAnalyticsWindow
 ) -> dict[str, Any]:
-    since = datetime.now(UTC) - timedelta(hours=lookback_hours)
+    since, until = window.since, window.until
     total = (
         await session.execute(
             sa.select(sa.func.count())
             .select_from(Order)
-            .where(Order.created_at >= since)
+            .where(Order.created_at >= since, Order.created_at <= until)
         )
     ).scalar_one()
     rows = (
         await session.execute(
             sa.select(Order.status, sa.func.count())
-            .where(Order.created_at >= since)
+            .where(Order.created_at >= since, Order.created_at <= until)
             .group_by(Order.status)
         )
     ).all()
@@ -394,7 +399,7 @@ async def build_orders_window_stats(
     strat_rows = (
         await session.execute(
             sa.select(Order.strategy_name, sa.func.count())
-            .where(Order.created_at >= since)
+            .where(Order.created_at >= since, Order.created_at <= until)
             .group_by(Order.strategy_name)
             .order_by(sa.func.count().desc())
         )
@@ -403,7 +408,10 @@ async def build_orders_window_stats(
         {"strategy": s or "(manuális)", "count": int(c)} for s, c in strat_rows
     ]
     return {
-        "lookback_hours": lookback_hours,
+        "lookback_hours": window.lookback_hours,
+        "window_custom": window.custom,
+        "window_start": since.isoformat(),
+        "window_end": until.isoformat(),
         "total": int(total),
         "by_status": by_status,
         "by_strategy": by_strategy,
@@ -411,15 +419,21 @@ async def build_orders_window_stats(
 
 
 async def build_strategy_runs_window_stats(
-    session: AsyncSession, *, lookback_hours: int
+    session: AsyncSession, *, window: ResolvedAnalyticsWindow
 ) -> dict[str, Any]:
-    since = datetime.now(UTC) - timedelta(hours=lookback_hours)
+    since, until = window.since, window.until
     rows = (
         await session.execute(
             sa.select(StrategyRun.status, sa.func.count())
-            .where(StrategyRun.started_at >= since)
+            .where(StrategyRun.started_at >= since, StrategyRun.started_at <= until)
             .group_by(StrategyRun.status)
         )
     ).all()
     by_status = {st.value if hasattr(st, "value") else str(st): int(c) for st, c in rows}
-    return {"lookback_hours": lookback_hours, "by_status": by_status}
+    return {
+        "lookback_hours": window.lookback_hours,
+        "window_custom": window.custom,
+        "window_start": since.isoformat(),
+        "window_end": until.isoformat(),
+        "by_status": by_status,
+    }

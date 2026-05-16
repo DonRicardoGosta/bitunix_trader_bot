@@ -32,17 +32,27 @@ def position_event_time(position: dict[str, Any]) -> datetime | None:
     return None
 
 
+def filter_positions_in_window(
+    positions: list[dict[str, Any]], *, since: datetime, until: datetime
+) -> list[dict[str, Any]]:
+    """Csak [since, until] között lezárt pozíciók — ismeretlen időbélyeg kiesik."""
+    since_u = since.astimezone(UTC) if since.tzinfo else since.replace(tzinfo=UTC)
+    until_u = until.astimezone(UTC) if until.tzinfo else until.replace(tzinfo=UTC)
+    out: list[dict[str, Any]] = []
+    for p in positions:
+        ts = position_event_time(p)
+        if ts is not None and since_u <= ts <= until_u:
+            out.append(p)
+    return out
+
+
 def filter_positions_in_lookback(
     positions: list[dict[str, Any]], *, lookback_hours: int
 ) -> list[dict[str, Any]]:
     """Csak az ablakon belüli pozíciók — ismeretlen időbélyeg kiesik."""
-    since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
-    out: list[dict[str, Any]] = []
-    for p in positions:
-        ts = position_event_time(p)
-        if ts is not None and ts >= since:
-            out.append(p)
-    return out
+    until = datetime.now(UTC)
+    since = until - timedelta(hours=max(1, lookback_hours))
+    return filter_positions_in_window(positions, since=since, until=until)
 
 
 def history_pages_for_lookback(lookback_hours: int) -> int:
@@ -54,18 +64,25 @@ def history_pages_for_lookback(lookback_hours: int) -> int:
     return 8
 
 
-async def fetch_closed_positions_in_lookback(
+def history_pages_for_span_hours(span_hours: float) -> int:
+    return history_pages_for_lookback(max(1, int(span_hours) or 1))
+
+
+async def fetch_closed_positions_in_window(
     client: BitunixClient,
     *,
-    lookback_hours: int,
+    since: datetime,
+    until: datetime,
     history_page_size: int = 100,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """Bitunix history + szigorú szerveroldali szűrés az ablakra."""
+    """Bitunix history + szűrés explicit kezdet/vég között."""
     sync_error: str | None = None
-    since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
-    start_ms = int(since.timestamp() * 1000)
-    end_ms = int(datetime.now(UTC).timestamp() * 1000)
-    pages = history_pages_for_lookback(lookback_hours)
+    since_u = since.astimezone(UTC) if since.tzinfo else since.replace(tzinfo=UTC)
+    until_u = until.astimezone(UTC) if until.tzinfo else until.replace(tzinfo=UTC)
+    start_ms = int(since_u.timestamp() * 1000)
+    end_ms = int(until_u.timestamp() * 1000)
+    span_h = max(1 / 60, (until_u - since_u).total_seconds() / 3600)
+    pages = history_pages_for_span_hours(span_h)
     raw_all: list[dict[str, Any]] = []
 
     for page in range(pages):
@@ -87,4 +104,18 @@ async def fetch_closed_positions_in_lookback(
             sync_error = str(exc)[:500]
             break
 
-    return filter_positions_in_lookback(raw_all, lookback_hours=lookback_hours), sync_error
+    return filter_positions_in_window(raw_all, since=since_u, until=until_u), sync_error
+
+
+async def fetch_closed_positions_in_lookback(
+    client: BitunixClient,
+    *,
+    lookback_hours: int,
+    history_page_size: int = 100,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Bitunix history + szigorú szerveroldali szűrés az ablakra."""
+    until = datetime.now(UTC)
+    since = until - timedelta(hours=max(1, lookback_hours))
+    return await fetch_closed_positions_in_window(
+        client, since=since, until=until, history_page_size=history_page_size
+    )
