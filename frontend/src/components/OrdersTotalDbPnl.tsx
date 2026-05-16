@@ -3,10 +3,10 @@
 import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { RefreshIndicator } from "@/components/RefreshIndicator";
-import { ordersLookbackLabel } from "@/lib/ordersPage";
-import { ORDERS_LIFECYCLE_CLOSED } from "@/lib/ordersPage";
+import { lookbackLabel } from "@/lib/lookback";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseNum(s: string | null | undefined): number | null {
@@ -16,20 +16,19 @@ function parseNum(s: string | null | undefined): number | null {
 }
 
 export function OrdersTotalDbPnl({
-  lookbackHours = 0,
+  lookbackHours = 6,
   refreshIntervalMs,
 }: {
   lookbackHours?: number;
   refreshIntervalMs: number;
 }) {
+  const pnlEpoch = useLiveEpoch("orders_pnl");
   const { data: pnlData, error, isRefreshing } = usePollingQuery(
-    () =>
-      api.ordersPnlTotals(
-        lookbackHours != null && lookbackHours > 0 ? lookbackHours : undefined,
-        ORDERS_LIFECYCLE_CLOSED,
-      ),
+    () => api.ordersPnlTotals(lookbackHours),
     {
       intervalMs: refreshIntervalMs,
+      reloadKey: pnlEpoch,
+      reloadDebounceMs: 1500,
       staleKey: `${lookbackHours}:${refreshIntervalMs}`,
       errorMessage: "PnL összesítés lekérése sikertelen",
     },
@@ -70,12 +69,13 @@ export function OrdersTotalDbPnl({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          Összesített realized PnL (lezárt trade-ek)
+          Összesített PnL (saját rendelésnapló)
           <RefreshIndicator active={isRefreshing} />
         </CardTitle>
         <span className="text-xs text-muted">
-          Csak lezárt trade-ek az ablakban ({ordersLookbackLabel(lookbackHours)}) — Bitunix szinkron,
-          realizált PnL összesen
+          A Postgres <code className="text-[11px]">orders</code> tábla sorai az ablakban (
+          {lookbackLabel(lookbackHours)}): realizált + nem realizált (Bitunix szinkron, mint a
+          táblázatnál) — nyitott és lezárt együtt
         </span>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -98,6 +98,12 @@ export function OrdersTotalDbPnl({
                 Realizált (össz. sorok):{" "}
                 <span className="num text-slate-200">
                   {formatNumber(realized ?? 0, { decimals: 4, sign: true })}
+                </span>
+              </span>
+              <span>
+                Nem realizált (össz. sorok):{" "}
+                <span className="num text-slate-200">
+                  {formatNumber(unrealized ?? 0, { decimals: 4, sign: true })}
                 </span>
               </span>
               {orderCount != null ? (

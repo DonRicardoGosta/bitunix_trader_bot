@@ -6,21 +6,23 @@ import { Select } from "@/components/ui/input";
 import { OrdersTable } from "@/components/OrdersTable";
 import { OrdersTotalDbPnl } from "@/components/OrdersTotalDbPnl";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { STORAGE_KEYS } from "@/lib/lookback";
 import {
-  ORDERS_LOOKBACK_PRESETS,
+  LOOKBACK_PRESETS,
+  STORAGE_KEYS,
+  isLookbackHours,
+  lookbackLabel,
+} from "@/lib/lookback";
+import {
   ORDERS_REFRESH_INTERVAL_OPTIONS,
-  isOrdersLookbackHours,
   isOrdersRefreshIntervalSec,
-  ordersLookbackLabel,
   ordersRefreshLabel,
 } from "@/lib/ordersPage";
 
 export default function OrdersPage() {
   const [lookbackHours, setLookbackHours] = usePersistedState(
     STORAGE_KEYS.ordersLookbackHours,
-    0,
-    isOrdersLookbackHours,
+    6,
+    isLookbackHours,
   );
   const [refreshIntervalSec, setRefreshIntervalSec] = usePersistedState(
     STORAGE_KEYS.ordersRefreshIntervalSec,
@@ -39,7 +41,7 @@ export default function OrdersPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Rendelések</h1>
           <p className="text-muted text-sm mt-1">
-            Csak lezárt trade-ek · ablak: {ordersLookbackLabel(lookbackHours)} · frissítés:{" "}
+            Ablak: {lookbackLabel(lookbackHours)} · frissítés:{" "}
             {ordersRefreshLabel(refreshIntervalSec)}
           </p>
         </div>
@@ -69,9 +71,9 @@ export default function OrdersPage() {
             <Select
               id="ord-lb"
               value={String(lookbackHours)}
-              onChange={(e) => setLookbackHours(Number(e.target.value))}
+              onChange={(e) => setLookbackHours(Number(e.target.value) || 6)}
             >
-              {ORDERS_LOOKBACK_PRESETS.map((p) => (
+              {LOOKBACK_PRESETS.map((p) => (
                 <option key={p.hours} value={String(p.hours)}>
                   {p.label}
                 </option>
@@ -88,18 +90,19 @@ export default function OrdersPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Lezárt trade-ek</CardTitle>
+          <CardTitle>Rendelés napló</CardTitle>
           <span className="text-xs text-muted">
-            forrás: saját Postgres napló + Bitunix lezárt pozíció / history
+            forrás: saját Postgres napló + Bitunix history / nyitott pozíció
           </span>
           <p className="text-xs text-muted mt-2 max-w-3xl leading-relaxed">
             Ha a realizált PnL vagy az ROI üres: nyisd meg böngészőben a backend JSON-t:{" "}
             <code className="rounded bg-bg-card px-1 py-0.5 text-[11px]">
-              /api/orders?lifecycle=closed&amp;debug_sync=1
+              /api/orders?lookback_hours={lookbackHours}&amp;debug_sync=1
             </code>{" "}
             — másold be a chatbe <strong>egy érintett sor</strong> teljes{" "}
             <code className="rounded bg-bg-card px-1 py-0.5 text-[11px]">exchange.debug</code>{" "}
-            objektumát (API kulcsot / secretet ne küldj).
+            objektumát, és ha van, a tábla feletti sárga „Bitunix szinkron” üzenetet is (API
+            kulcsot / secretet ne küldj).
           </p>
         </CardHeader>
         <CardContent>

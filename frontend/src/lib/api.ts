@@ -617,11 +617,9 @@ export const api = {
     const qs = usp.toString();
     return request<OrderRow[]>(`/api/orders${qs ? `?${qs}` : ""}`);
   },
-  ordersPnlTotals: (lookbackHours?: number, lifecycle?: string) => {
+  ordersPnlTotals: (lookbackHours = 6, lifecycle?: string) => {
     const usp = new URLSearchParams();
-    if (lookbackHours != null && lookbackHours > 0) {
-      usp.set("lookback_hours", String(lookbackHours));
-    }
+    usp.set("lookback_hours", String(lookbackHours));
     if (lifecycle) usp.set("lifecycle", lifecycle);
     const qs = usp.toString();
     return request<OrdersPnlTotals>(`/api/orders/pnl-totals${qs ? `?${qs}` : ""}`);
