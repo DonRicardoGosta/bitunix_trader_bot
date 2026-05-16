@@ -107,9 +107,10 @@ class TopMoversStrategy(Strategy):
             return result
 
         target_slots = max(1, int(settings.strategy_top_movers_count))
+        scan_cap = max(1, int(settings.strategy_scan_limit_max))
         scan_limit = max(
             target_slots,
-            min(int(settings.strategy_top_movers_scan_limit), 200),
+            min(int(settings.strategy_top_movers_scan_limit), scan_cap),
         )
         cooldown_minutes = int(settings.strategy_top_movers_cooldown_minutes)
         pct_of_balance = Decimal(settings.strategy_margin_pct_of_balance)
