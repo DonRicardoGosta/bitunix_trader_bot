@@ -14,20 +14,10 @@ from app.bitunix.client import BitunixClient
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
 from app.db.models import Order, StrategyRun
 from app.services.dashboard import _dec, _q2
-from app.services.order_enrichment import extract_history_position_rows
-from app.services.positions_normalize import normalize_position_row
-
-
-def _parse_iso(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        return dt
-    except ValueError:
-        return None
+from app.services.position_history import (
+    fetch_closed_positions_in_lookback,
+    position_event_time,
+)
 
 
 def _bucket_start(dt: datetime, bucket_hours: int) -> datetime:
@@ -41,37 +31,10 @@ async def _fetch_closed_in_window(
     client: BitunixClient,
     *,
     lookback_hours: int,
-    history_pages: int = 5,
-    history_page_size: int = 100,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    sync_error: str | None = None
-    since = datetime.now(UTC) - timedelta(hours=lookback_hours)
-    start_ms = int(since.timestamp() * 1000)
-    closed: list[dict[str, Any]] = []
-    for page in range(history_pages):
-        try:
-            raw_h = await client.get_history_positions(
-                limit=history_page_size,
-                skip=page * history_page_size,
-                start_time_ms=start_ms,
-            )
-            rows = extract_history_position_rows(raw_h)
-            if not rows:
-                break
-            for r in rows:
-                closed.append(normalize_position_row(r))
-            if len(rows) < history_page_size:
-                break
-        except (BitunixAPIError, BitunixSignatureError) as exc:
-            sync_error = str(exc)[:500]
-            break
-    # Szűrés updated_at / opened_at alapján az ablakra
-    filtered: list[dict[str, Any]] = []
-    for p in closed:
-        ts = _parse_iso(p.get("updated_at")) or _parse_iso(p.get("opened_at"))
-        if ts is None or ts >= since:
-            filtered.append(p)
-    return filtered, sync_error
+    return await fetch_closed_positions_in_lookback(
+        client, lookback_hours=lookback_hours
+    )
 
 
 def _closed_kpis(realized_pnls: list[Decimal]) -> dict[str, Any]:
@@ -147,7 +110,7 @@ async def build_pnl_series(
         r = _dec(p.get("realized_pnl"))
         if r is None:
             continue
-        ts = _parse_iso(p.get("updated_at")) or _parse_iso(p.get("opened_at"))
+        ts = position_event_time(p)
         if ts is None:
             continue
         series_points.append((ts, r))

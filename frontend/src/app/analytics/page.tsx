@@ -1,23 +1,31 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
 import { StatCard } from "@/components/ui/StatCard";
 import { PnlSeriesChart } from "@/components/PnlSeriesChart";
 import { api, type PnlSeriesResponse } from "@/lib/api";
-import { LOOKBACK_PRESETS, lookbackLabel } from "@/lib/lookback";
+import { usePersistedState } from "@/hooks/usePersistedState";
+import {
+  BUCKET_HOURS_OPTIONS,
+  LOOKBACK_PRESETS,
+  STORAGE_KEYS,
+  isBucketHours,
+  isLookbackHours,
+  lookbackLabel,
+} from "@/lib/lookback";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
-import { formatNumber } from "@/lib/utils";
+import { cn, formatNumber } from "@/lib/utils";
 
-const BUCKET_OPTIONS = [
-  { label: "1 óra", hours: 1 },
-  { label: "6 óra", hours: 6 },
-  { label: "12 óra", hours: 12 },
-  { label: "24 óra", hours: 24 },
-] as const;
+const BUCKET_LABELS: Record<number, string> = {
+  1: "1 óra",
+  6: "6 óra",
+  12: "12 óra",
+  24: "24 óra",
+};
 
 function toneOf(n: number): "positive" | "negative" | "neutral" {
   if (n > 0) return "positive";
@@ -28,10 +36,18 @@ function toneOf(n: number): "positive" | "negative" | "neutral" {
 export default function AnalyticsPage() {
   const { refreshIntervalMs } = useRefreshInterval();
   const analyticsEpoch = useLiveEpoch("analytics");
-  const [lookbackHours, setLookbackHours] = useState(168);
-  const [bucketHours, setBucketHours] = useState(6);
+  const [lookbackHours, setLookbackHours] = usePersistedState(
+    STORAGE_KEYS.analyticsLookbackHours,
+    168,
+    isLookbackHours,
+  );
+  const [bucketHours, setBucketHours] = usePersistedState(
+    STORAGE_KEYS.analyticsBucketHours,
+    6,
+    isBucketHours,
+  );
 
-  const { data, error } = usePollingQuery(
+  const { data, error, isStale } = usePollingQuery(
     () => api.analyticsPnlSeries(lookbackHours, bucketHours),
     {
       intervalMs: refreshIntervalMs,
@@ -46,13 +62,26 @@ export default function AnalyticsPage() {
     [kpis],
   );
 
+  const chartKey = data
+    ? `${data.lookback_hours}:${data.bucket_hours}:${data.buckets.length}:${data.cumulative.length}`
+    : "empty";
+
   return (
-    <div className="space-y-6">
+    <div
+      className={cn(
+        "space-y-6 transition-opacity",
+        isStale && "opacity-70",
+      )}
+    >
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Analytics</h1>
           <p className="text-muted text-sm mt-1">
-            Lezárt pozíciók realized PnL — {lookbackLabel(lookbackHours)}
+            Lezárt pozíciók realized PnL
+            {data
+              ? ` · API ablak: ${lookbackLabel(data.lookback_hours)}, bucket ${data.bucket_hours}h`
+              : ` · ${lookbackLabel(lookbackHours)}`}
+            {isStale ? " · frissítés…" : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -62,11 +91,11 @@ export default function AnalyticsPage() {
             </label>
             <Select
               id="an-lb"
-              value={lookbackHours}
+              value={String(lookbackHours)}
               onChange={(e) => setLookbackHours(Number(e.target.value) || 168)}
             >
               {LOOKBACK_PRESETS.map((p) => (
-                <option key={p.hours} value={p.hours}>
+                <option key={p.hours} value={String(p.hours)}>
                   {p.label}
                 </option>
               ))}
@@ -78,12 +107,12 @@ export default function AnalyticsPage() {
             </label>
             <Select
               id="an-bk"
-              value={bucketHours}
+              value={String(bucketHours)}
               onChange={(e) => setBucketHours(Number(e.target.value) || 6)}
             >
-              {BUCKET_OPTIONS.map((p) => (
-                <option key={p.hours} value={p.hours}>
-                  {p.label}
+              {BUCKET_HOURS_OPTIONS.map((h) => (
+                <option key={h} value={String(h)}>
+                  {BUCKET_LABELS[h] ?? `${h} óra`}
                 </option>
               ))}
             </Select>
@@ -105,7 +134,7 @@ export default function AnalyticsPage() {
               )}
             </CardHeader>
             <CardContent>
-              <PnlSeriesChart data={data} />
+              <PnlSeriesChart key={chartKey} data={data} />
             </CardContent>
           </Card>
         </>

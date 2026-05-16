@@ -13,7 +13,13 @@ import {
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
-import { LOOKBACK_PRESETS, lookbackLabel } from "@/lib/lookback";
+import { usePersistedState } from "@/hooks/usePersistedState";
+import {
+  LOOKBACK_PRESETS,
+  STORAGE_KEYS,
+  isLookbackHours,
+  lookbackLabel,
+} from "@/lib/lookback";
 import { cn, formatNumber } from "@/lib/utils";
 
 function num(v: string | null | undefined): number | null {
@@ -47,8 +53,12 @@ export function DashboardOverview() {
   const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
   const dashEpoch = useLiveEpoch("dashboard");
-  const [lookbackHours, setLookbackHours] = useState(24);
-  const { data, error } = usePollingQuery(
+  const [lookbackHours, setLookbackHours] = usePersistedState(
+    STORAGE_KEYS.dashboardLookbackHours,
+    24,
+    isLookbackHours,
+  );
+  const { data, error, isStale } = usePollingQuery(
     () => api.dashboardSummary(lookbackHours),
     {
       intervalMs: refreshIntervalMs,
@@ -78,7 +88,12 @@ export function DashboardOverview() {
   const usedMargin = num(open?.total_margin_usdt ?? null) ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div
+      className={cn(
+        "space-y-6 transition-opacity",
+        isStale && "opacity-70",
+      )}
+    >
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Áttekintés</h1>
@@ -90,7 +105,9 @@ export function DashboardOverview() {
               <>frissül {intervalSec} mp-enként · </>
             )}
             <span className="text-xs">
-              utolsó frissítés:{" "}
+              ablak: {lookbackLabel(data.lookback_hours ?? lookbackHours)}
+              {isStale ? " · frissítés…" : ""}
+              {" · "}
               {new Date(data.generated_at).toLocaleString("hu-HU")}
             </span>
           </p>
@@ -102,11 +119,11 @@ export function DashboardOverview() {
             </label>
             <Select
               id="dash-lookback"
-              value={lookbackHours}
+              value={String(lookbackHours)}
               onChange={(e) => setLookbackHours(Number(e.target.value) || 24)}
             >
               {LOOKBACK_PRESETS.map((p) => (
-                <option key={p.hours} value={p.hours}>
+                <option key={p.hours} value={String(p.hours)}>
                   {p.label}
                 </option>
               ))}
@@ -172,7 +189,7 @@ export function DashboardOverview() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ClosedStatsCard data={data} lookbackHours={lookbackHours} />
         <OrdersStatsCard data={data} lookbackHours={lookbackHours} />
-        <StrategyCard data={data} />
+        <StrategyCard data={data} lookbackHours={lookbackHours} />
       </div>
 
       {/* Top winners / losers / nyitott pozíciók */}
@@ -195,7 +212,7 @@ export function DashboardOverview() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <PerSymbolCard rows={closed?.per_symbol ?? []} />
-        <RecentEventsCard data={data} />
+        <RecentEventsCard data={data} lookbackHours={lookbackHours} />
       </div>
     </div>
   );
@@ -349,7 +366,13 @@ function OrdersStatsCard({
   );
 }
 
-function StrategyCard({ data }: { data: DashboardSummary }) {
+function StrategyCard({
+  data,
+  lookbackHours,
+}: {
+  data: DashboardSummary;
+  lookbackHours: number;
+}) {
   const s = data.strategy;
   const successes = s.by_status_24h.SUCCESS ?? 0;
   const failures = s.by_status_24h.FAILED ?? 0;
@@ -358,7 +381,7 @@ function StrategyCard({ data }: { data: DashboardSummary }) {
     <Card>
       <CardHeader>
         <CardTitle>Stratégia heartbeat</CardTitle>
-        <span className="text-xs text-muted">utolsó 24 óra</span>
+        <span className="text-xs text-muted">{lookbackLabel(lookbackHours)}</span>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         <Row label="Sikeres futás" value={successes.toString()} tone="positive" />
@@ -593,12 +616,18 @@ function PerSymbolCard({
   );
 }
 
-function RecentEventsCard({ data }: { data: DashboardSummary }) {
+function RecentEventsCard({
+  data,
+  lookbackHours,
+}: {
+  data: DashboardSummary;
+  lookbackHours: number;
+}) {
   const events = data.events;
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Friss események (24h)</CardTitle>
+        <CardTitle>Friss események ({lookbackLabel(lookbackHours)})</CardTitle>
         <Link href="/events" className="text-xs text-accent hover:underline">
           Eseménynapló →
         </Link>

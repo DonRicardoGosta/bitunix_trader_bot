@@ -34,10 +34,8 @@ from app.db.models import (
     StrategyRunStatus,
     TpSlCalibration,
 )
-from app.services.order_enrichment import (
-    extract_history_position_rows,
-    extract_open_position_rows,
-)
+from app.services.order_enrichment import extract_open_position_rows
+from app.services.position_history import fetch_closed_positions_in_lookback
 from app.services.positions_normalize import normalize_position_row
 
 
@@ -127,9 +125,11 @@ async def _orders_summary(
     }
 
 
-async def _events_summary(session: AsyncSession) -> dict[str, Any]:
+async def _events_summary(
+    session: AsyncSession, *, lookback_hours: int = 24
+) -> dict[str, Any]:
     """Audit eseménynapló aggregátum."""
-    since_24h = datetime.now(UTC) - timedelta(hours=24)
+    since_24h = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
     total_24h = (
         await session.execute(
             sa.select(sa.func.count())
@@ -186,9 +186,11 @@ async def _events_summary(session: AsyncSession) -> dict[str, Any]:
     }
 
 
-async def _strategy_summary(session: AsyncSession) -> dict[str, Any]:
+async def _strategy_summary(
+    session: AsyncSession, *, lookback_hours: int = 24
+) -> dict[str, Any]:
     """Stratégia futások aggregátum + utolsó kalibráció."""
-    since_24h = datetime.now(UTC) - timedelta(hours=24)
+    since_24h = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
     rows = (
         await session.execute(
             sa.select(StrategyRun.status, sa.func.count())
@@ -302,7 +304,6 @@ async def _exchange_summary(
     client: BitunixClient,
     *,
     lookback_hours: int = 168,
-    history_pages: int = 3,
     history_page_size: int = 100,
 ) -> dict[str, Any]:
     """Bitunix-szinkron: nyitott exposure + lezárt pozíciók KPI-jei.
@@ -354,28 +355,20 @@ async def _exchange_summary(
         Decimal(0),
     )
 
-    # 3) Lezárt pozíciók (szimbólum-mentes lapozás, lookback_hours szűréssel)
-    closed_positions: list[dict[str, Any]] = []
-    since_dt = datetime.now(UTC) - timedelta(hours=lookback_hours)
-    start_ms = int(since_dt.timestamp() * 1000)
-    for page in range(history_pages):
-        try:
-            raw_h = await client.get_history_positions(
-                limit=history_page_size,
-                skip=page * history_page_size,
-                start_time_ms=start_ms,
-            )
-            rows = extract_history_position_rows(raw_h)
-            if not rows:
-                break
-            for r in rows:
-                closed_positions.append(normalize_position_row(r))
-            if len(rows) < history_page_size:
-                break
-        except (BitunixAPIError, BitunixSignatureError) as exc:
-            msg = f"History pozíciók (page {page}): {exc}"[:300]
+    # 3) Lezárt pozíciók — Bitunix history + szigorú ablakszűrés
+    try:
+        closed_positions, hist_err = await fetch_closed_positions_in_lookback(
+            client,
+            lookback_hours=lookback_hours,
+            history_page_size=history_page_size,
+        )
+        if hist_err:
+            msg = f"History pozíciók: {hist_err}"[:300]
             sync_error = msg if sync_error is None else f"{sync_error}; {msg}"
-            break
+    except (BitunixAPIError, BitunixSignatureError) as exc:
+        closed_positions = []
+        msg = f"History pozíciók: {exc}"[:300]
+        sync_error = msg if sync_error is None else f"{sync_error}; {msg}"
 
     realized_pnls = [
         Decimal(p["realized_pnl"])
@@ -459,8 +452,8 @@ async def build_dashboard_summary(
 ) -> dict[str, Any]:
     """Egyetlen aggregátum a frontend dashboardhoz."""
     db_orders = await _orders_summary(session, lookback_hours=lookback_hours)
-    events = await _events_summary(session)
-    strat = await _strategy_summary(session)
+    events = await _events_summary(session, lookback_hours=lookback_hours)
+    strat = await _strategy_summary(session, lookback_hours=lookback_hours)
     exchange: dict[str, Any] = {
         "sync_error": (
             "Bitunix API kulcs hiányzik — nincs tőzsdei szinkron."

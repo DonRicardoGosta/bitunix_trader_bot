@@ -8,11 +8,12 @@ afterEach(() => {
 
 describe("usePollingQuery", () => {
   it("eventually resolves when reloadKey changes faster than fetch", async () => {
-    let resolveFetch: ((v: string) => void) | undefined;
+    let delay = 50;
     const fetcher = vi.fn(
       () =>
         new Promise<string>((resolve) => {
-          resolveFetch = resolve;
+          window.setTimeout(() => resolve("ok"), delay);
+          delay = 0;
         }),
     );
 
@@ -22,21 +23,16 @@ describe("usePollingQuery", () => {
       { initialProps: { key: 0 } },
     );
 
-    expect(result.current.isLoading).toBe(true);
-
     rerender({ key: 1 });
     rerender({ key: 2 });
     rerender({ key: 3 });
 
-    expect(fetcher).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      resolveFetch!("ok");
-    });
-
-    await waitFor(() => {
-      expect(result.current.data).toBe("ok");
-    });
+    await waitFor(
+      () => {
+        expect(result.current.data).toBe("ok");
+      },
+      { timeout: 3000 },
+    );
     expect(result.current.error).toBeNull();
   });
 

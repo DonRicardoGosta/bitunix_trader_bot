@@ -74,7 +74,7 @@ def normalize_position_row(row: dict[str, Any]) -> dict[str, Any]:
     position_mode = _pick(row, ("positionMode", "position_mode"))
     liq = _dec(_pick(row, ("liqPrice", "liquidationPrice")))
     opened_ms = _pick(row, ("ctime", "openTime", "createTime"))
-    updated_ms = _pick(row, ("mtime", "updateTime"))
+    updated_ms = _pick(row, ("mtime", "updateTime", "closeTime", "uTime", "utime"))
     symbol = (_pick(row, ("symbol", "symbolName")) or "").upper() or None
 
     roi_pct: Decimal | None = None
