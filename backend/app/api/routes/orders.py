@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.schemas.trading import OrderRequest, OrderResponse
 from app.services.entry_order_prep import OpenEntryPreparationError
 from app.services.trading import TradingService
+from app.services.trading_blackout import is_new_position_open_blocked
 from app.services.trading_gate import is_trading_allowed
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -59,6 +60,13 @@ async def place_order(
                 "POST /api/calibration/run."
             ),
         )
+    if payload.trade_side == "OPEN" and not payload.reduce_only:
+        blocked, block_msg = await is_new_position_open_blocked(session)
+        if blocked:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=block_msg or "Új pozíció nyitás tiltva az ütemezés szerint.",
+            )
     try:
         return await service.place_order(payload)
     except OpenEntryPreparationError as exc:

@@ -9,6 +9,15 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 _ANALYTICS_TZ = ZoneInfo("Europe/Budapest")
+_WEEKDAY_LABELS_HU = (
+    "Hétfő",
+    "Kedd",
+    "Szerda",
+    "Csütörtök",
+    "Péntek",
+    "Szombat",
+    "Vasárnap",
+)
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -127,16 +136,24 @@ async def _fetch_closed_in_window(
     )
 
 
-def _tp_sl_by_hour_of_day(closed: list[dict[str, Any]]) -> dict[str, Any]:
-    """Lezárt pozíciók TP/SL darabszáma napszak szerint (0–23 óra).
+def _tp_sl_timing_stats(closed: list[dict[str, Any]]) -> dict[str, Any]:
+    """Lezárt pozíciók TP/SL darabszáma óra (0–23) és hét napja szerint.
 
     A Bitunix history nem ad explicit TP/SL típust; közelítés:
     realizált PnL > 0 → TP (nyereséges zárás), < 0 → SL (vesztes zárás).
-    Az óra a lezárás időpontjából származik (``closed_at`` / ``updated_at``),
-    napok között összesítve — csak az óra számít, nem a dátum.
+    Időbélyeg: lezárás (``closed_at`` / ``updated_at``), napok/hetek összesítve.
     """
-    buckets: list[dict[str, int]] = [
+    by_hour: list[dict[str, int]] = [
         {"hour": h, "tp_count": 0, "sl_count": 0} for h in range(24)
+    ]
+    by_weekday: list[dict[str, int | str]] = [
+        {
+            "weekday": wd,
+            "label": _WEEKDAY_LABELS_HU[wd],
+            "tp_count": 0,
+            "sl_count": 0,
+        }
+        for wd in range(7)
     ]
     for p in closed:
         r = _dec(p.get("realized_pnl"))
@@ -145,20 +162,26 @@ def _tp_sl_by_hour_of_day(closed: list[dict[str, Any]]) -> dict[str, Any]:
         ts = position_event_time(p)
         if ts is None:
             continue
-        hour = ts.astimezone(_ANALYTICS_TZ).hour
+        local = ts.astimezone(_ANALYTICS_TZ)
+        hour = local.hour
+        wd = local.weekday()
         if r > 0:
-            buckets[hour]["tp_count"] += 1
+            by_hour[hour]["tp_count"] += 1
+            by_weekday[wd]["tp_count"] += 1
         else:
-            buckets[hour]["sl_count"] += 1
-    total_tp = sum(b["tp_count"] for b in buckets)
-    total_sl = sum(b["sl_count"] for b in buckets)
+            by_hour[hour]["sl_count"] += 1
+            by_weekday[wd]["sl_count"] += 1
+    total_tp = sum(b["tp_count"] for b in by_hour)
+    total_sl = sum(b["sl_count"] for b in by_hour)
     return {
         "timezone": "Europe/Budapest",
         "classification_note": (
             "TP = nyereséges lezárás (realized PnL > 0), "
-            "SL = vesztes lezárás (realized PnL < 0); napok összesítve óránként."
+            "SL = vesztes lezárás (realized PnL < 0). "
+            "Óra és hét napja szerint összesítve (a visszatekintési ablak összes napja)."
         ),
-        "hours": buckets,
+        "by_hour": by_hour,
+        "by_weekday": by_weekday,
         "total_tp": total_tp,
         "total_sl": total_sl,
     }
@@ -232,7 +255,7 @@ async def build_pnl_series(
             "cumulative": [],
             "kpis": _closed_kpis([]),
             "breakdown": _positions_breakdown([]),
-            "tp_sl_by_hour": _tp_sl_by_hour_of_day([]),
+            "tp_sl_timing": _tp_sl_timing_stats([]),
         }
 
     closed, sync_error = await _fetch_closed_in_window(
@@ -301,7 +324,7 @@ async def build_pnl_series(
         "cumulative": cumulative,
         "kpis": _closed_kpis(realized_pnls),
         "breakdown": _positions_breakdown(closed),
-        "tp_sl_by_hour": _tp_sl_by_hour_of_day(closed),
+        "tp_sl_timing": _tp_sl_timing_stats(closed),
     }
 
 

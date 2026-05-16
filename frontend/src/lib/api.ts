@@ -325,10 +325,24 @@ export interface SettingsSnapshot {
     strategy_runner_active: boolean;
     live_trading: boolean;
     strategies: Record<string, boolean>;
+    new_position_open_allowed: boolean;
+    new_position_block_reason: string | null;
   };
   runtime_overrides: Record<string, boolean>;
   strategy_config: Record<string, string | number>;
+  trading_blackout: TradingBlackoutSchedulePayload;
 }
+
+export type TradingBlackoutSchedulePayload = {
+  timezone: string;
+  days: Record<
+    string,
+    {
+      mode: "open" | "block_all" | "block_ranges";
+      block_ranges: { start: string; end: string }[];
+    }
+  >;
+};
 
 export interface PnlBreakdownTrade {
   symbol: string | null;
@@ -345,16 +359,25 @@ export interface PnlSeriesBreakdown {
   top_losers: PnlBreakdownTrade[];
 }
 
-export interface TpSlByHourBucket {
-  hour: number;
+export interface TpSlCountRow {
   tp_count: number;
   sl_count: number;
 }
 
-export interface TpSlByHourResponse {
+export interface TpSlByHourBucket extends TpSlCountRow {
+  hour: number;
+}
+
+export interface TpSlByWeekdayBucket extends TpSlCountRow {
+  weekday: number;
+  label: string;
+}
+
+export interface TpSlTimingStats {
   timezone: string;
   classification_note: string;
-  hours: TpSlByHourBucket[];
+  by_hour: TpSlByHourBucket[];
+  by_weekday: TpSlByWeekdayBucket[];
   total_tp: number;
   total_sl: number;
 }
@@ -368,7 +391,7 @@ export interface PnlSeriesResponse {
   sync_error: string | null;
   buckets: { bucket_start: string; realized_pnl_usdt: string }[];
   cumulative: { at: string; cumulative_pnl_usdt: string }[];
-  tp_sl_by_hour?: TpSlByHourResponse;
+  tp_sl_timing?: TpSlTimingStats;
   kpis: {
     count: number;
     realized_pnl_usdt: string;
@@ -667,6 +690,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ paused }),
     }),
+  putTradingBlackout: (schedule: TradingBlackoutSchedulePayload) =>
+    request<{ schedule: TradingBlackoutSchedulePayload; snapshot: SettingsSnapshot }>(
+      "/api/settings/trading-blackout",
+      { method: "PUT", body: JSON.stringify(schedule) },
+    ),
   analyticsSummary: (lookbackHours = 24, bucketHours = 6) =>
     request<AnalyticsSummaryResponse>(
       `/api/analytics/summary?lookback_hours=${lookbackHours}&bucket_hours=${bucketHours}`,

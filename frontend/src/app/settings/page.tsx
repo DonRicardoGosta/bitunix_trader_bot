@@ -7,6 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type SettingsSnapshot } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
+import { TradingBlackoutEditor } from "@/components/TradingBlackoutEditor";
+import {
+  defaultTradingBlackoutSchedule,
+  type TradingBlackoutSchedule,
+} from "@/lib/tradingBlackout";
 import { cn } from "@/lib/utils";
 
 type ToggleKey =
@@ -180,6 +185,26 @@ export default function SettingsPage() {
                   Kalibráció →
                 </Link>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Új pozíció tiltási ütemezés</CardTitle>
+              <span className="text-xs text-muted">
+                {eff.new_position_open_allowed
+                  ? "Most engedélyezett az új pozíció nyitás."
+                  : eff.new_position_block_reason ?? "Tiltva az ütemezés szerint."}
+              </span>
+            </CardHeader>
+            <CardContent>
+              <TradingBlackoutEditor
+                initial={
+                  (snap.trading_blackout as TradingBlackoutSchedule | undefined) ??
+                  defaultTradingBlackoutSchedule()
+                }
+                onSaved={() => void load()}
+              />
             </CardContent>
           </Card>
 
