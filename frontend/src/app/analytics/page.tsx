@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
 import { StatCard } from "@/components/ui/StatCard";
 import { PnlSeriesChart } from "@/components/PnlSeriesChart";
+import { TpSlByHourChart } from "@/components/TpSlByHourChart";
 import { AnalyticsBreakdown } from "@/components/AnalyticsBreakdown";
 import { AnalyticsDbPanels } from "@/components/AnalyticsDbPanels";
 import { RefreshIndicator } from "@/components/RefreshIndicator";
@@ -165,6 +166,20 @@ export default function AnalyticsPage() {
               <PnlSeriesChart key={chartKey} data={pnl} />
             </CardContent>
           </Card>
+          {pnl.tp_sl_by_hour ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>TP / SL napszak szerint</CardTitle>
+                <span className="text-xs text-muted">
+                  Lezárt pozíciók száma óránként (0–23), napok összesítve ·{" "}
+                  {lookbackLabel(pnl.lookback_hours)}
+                </span>
+              </CardHeader>
+              <CardContent>
+                <TpSlByHourChart data={pnl.tp_sl_by_hour} />
+              </CardContent>
+            </Card>
+          ) : null}
           <AnalyticsBreakdown pnl={pnl} />
           <AnalyticsDbPanels orders={data.orders} strategy={data.strategy} />
         </>

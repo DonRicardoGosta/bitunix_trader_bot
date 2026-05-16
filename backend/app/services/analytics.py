@@ -6,6 +6,9 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_ANALYTICS_TZ = ZoneInfo("Europe/Budapest")
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -124,6 +127,43 @@ async def _fetch_closed_in_window(
     )
 
 
+def _tp_sl_by_hour_of_day(closed: list[dict[str, Any]]) -> dict[str, Any]:
+    """Lezárt pozíciók TP/SL darabszáma napszak szerint (0–23 óra).
+
+    A Bitunix history nem ad explicit TP/SL típust; közelítés:
+    realizált PnL > 0 → TP (nyereséges zárás), < 0 → SL (vesztes zárás).
+    Az óra a lezárás időpontjából származik (``closed_at`` / ``updated_at``),
+    napok között összesítve — csak az óra számít, nem a dátum.
+    """
+    buckets: list[dict[str, int]] = [
+        {"hour": h, "tp_count": 0, "sl_count": 0} for h in range(24)
+    ]
+    for p in closed:
+        r = _dec(p.get("realized_pnl"))
+        if r is None or r == 0:
+            continue
+        ts = position_event_time(p)
+        if ts is None:
+            continue
+        hour = ts.astimezone(_ANALYTICS_TZ).hour
+        if r > 0:
+            buckets[hour]["tp_count"] += 1
+        else:
+            buckets[hour]["sl_count"] += 1
+    total_tp = sum(b["tp_count"] for b in buckets)
+    total_sl = sum(b["sl_count"] for b in buckets)
+    return {
+        "timezone": "Europe/Budapest",
+        "classification_note": (
+            "TP = nyereséges lezárás (realized PnL > 0), "
+            "SL = vesztes lezárás (realized PnL < 0); napok összesítve óránként."
+        ),
+        "hours": buckets,
+        "total_tp": total_tp,
+        "total_sl": total_sl,
+    }
+
+
 def _closed_kpis(realized_pnls: list[Decimal]) -> dict[str, Any]:
     wins = [v for v in realized_pnls if v > 0]
     losses = [v for v in realized_pnls if v < 0]
@@ -192,6 +232,7 @@ async def build_pnl_series(
             "cumulative": [],
             "kpis": _closed_kpis([]),
             "breakdown": _positions_breakdown([]),
+            "tp_sl_by_hour": _tp_sl_by_hour_of_day([]),
         }
 
     closed, sync_error = await _fetch_closed_in_window(
@@ -260,6 +301,7 @@ async def build_pnl_series(
         "cumulative": cumulative,
         "kpis": _closed_kpis(realized_pnls),
         "breakdown": _positions_breakdown(closed),
+        "tp_sl_by_hour": _tp_sl_by_hour_of_day(closed),
     }
 
 

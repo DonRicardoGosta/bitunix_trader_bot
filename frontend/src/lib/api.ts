@@ -345,6 +345,20 @@ export interface PnlSeriesBreakdown {
   top_losers: PnlBreakdownTrade[];
 }
 
+export interface TpSlByHourBucket {
+  hour: number;
+  tp_count: number;
+  sl_count: number;
+}
+
+export interface TpSlByHourResponse {
+  timezone: string;
+  classification_note: string;
+  hours: TpSlByHourBucket[];
+  total_tp: number;
+  total_sl: number;
+}
+
 export interface PnlSeriesResponse {
   lookback_hours: number;
   bucket_hours: number;
@@ -354,6 +368,7 @@ export interface PnlSeriesResponse {
   sync_error: string | null;
   buckets: { bucket_start: string; realized_pnl_usdt: string }[];
   cumulative: { at: string; cumulative_pnl_usdt: string }[];
+  tp_sl_by_hour?: TpSlByHourResponse;
   kpis: {
     count: number;
     realized_pnl_usdt: string;
