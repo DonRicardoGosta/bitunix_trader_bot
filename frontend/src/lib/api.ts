@@ -617,11 +617,14 @@ export const api = {
     const qs = usp.toString();
     return request<OrderRow[]>(`/api/orders${qs ? `?${qs}` : ""}`);
   },
-  ordersPnlTotals: (lookbackHours = 6, lifecycle?: string) => {
+  ordersPnlTotals: (lookbackHours?: number, lifecycle?: string) => {
     const usp = new URLSearchParams();
-    usp.set("lookback_hours", String(lookbackHours));
+    if (lookbackHours != null && lookbackHours > 0) {
+      usp.set("lookback_hours", String(lookbackHours));
+    }
     if (lifecycle) usp.set("lifecycle", lifecycle);
-    return request<OrdersPnlTotals>(`/api/orders/pnl-totals?${usp.toString()}`);
+    const qs = usp.toString();
+    return request<OrdersPnlTotals>(`/api/orders/pnl-totals${qs ? `?${qs}` : ""}`);
   },
   placeOrder: (input: PlaceOrderInput) =>
     request<PlaceOrderResult>("/api/orders", {

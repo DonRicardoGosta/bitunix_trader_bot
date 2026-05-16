@@ -41,9 +41,10 @@ def clear_orders_enrichment_cache() -> None:
 
 
 def _orders_cache_key(
-    lookback_hours: int, orders: list[Order], *, debug_sync: bool
+    lookback_hours: int | None, orders: list[Order], *, debug_sync: bool
 ) -> str:
-    return f"{lookback_hours}:{int(debug_sync)}:{','.join(str(o.id) for o in orders)}"
+    lb = lookback_hours if lookback_hours is not None else "all"
+    return f"{lb}:{int(debug_sync)}:{','.join(str(o.id) for o in orders)}"
 
 
 def _filter_rows_by_lifecycle(
@@ -236,7 +237,7 @@ class TradingService:
         *,
         offset: int = 0,
         symbol: str | None = None,
-        lookback_hours: int = 6,
+        lookback_hours: int | None = None,
         lifecycle: str | None = None,
         debug_sync: bool = False,
     ) -> list[dict[str, Any]]:
@@ -246,16 +247,14 @@ class TradingService:
             limit: Maximális visszaadott sorok száma.
             offset: Kihagyott sorok száma (paginálás).
             symbol: Opcionális szimbólum szűrő (case-insensitive).
-            lookback_hours: Csak ennyi óra visszamenő ``created_at`` (alap 6).
+            lookback_hours: Ha megadva: csak ennyi óra visszamenő ``created_at``.
             lifecycle: Pl. ``closed`` – csak az adott életciklusú sorok.
             debug_sync: Ha true, hibakereső metaadat is jön.
         """
-        since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
-        stmt = (
-            select(Order)
-            .where(Order.created_at >= since)
-            .order_by(Order.created_at.desc())
-        )
+        stmt = select(Order).order_by(Order.created_at.desc())
+        if lookback_hours is not None:
+            since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
+            stmt = stmt.where(Order.created_at >= since)
         if symbol:
             stmt = stmt.where(Order.symbol == symbol.upper())
         stmt = stmt.offset(offset).limit(limit)
@@ -276,21 +275,18 @@ class TradingService:
         return filtered
 
     async def orders_pnl_totals(
-        self, *, lookback_hours: int = 6, lifecycle: str | None = None
+        self, *, lookback_hours: int | None = None, lifecycle: str | None = None
     ) -> dict[str, Any]:
-        """Összesített PnL (USDT) a saját ``orders`` tábla soraira az ablakban.
+        """Összesített PnL (USDT) a saját ``orders`` tábla soraira.
 
         Ugyanaz a Bitunix szinkron és enrichment, mint a rendeléslistánál;
         az összeg a soronkénti ``realized_pnl_usdt`` + ``unrealized_pnl_usdt``
-        összege (ahol a mező ki van töltve) — nyitott és lezárt trade-ek
-        együtt, a naplózott saját rendelések alapján.
+        összege (ahol a mező ki van töltve).
         """
-        since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
-        stmt = (
-            select(Order)
-            .where(Order.created_at >= since)
-            .order_by(Order.created_at.desc())
-        )
+        stmt = select(Order).order_by(Order.created_at.desc())
+        if lookback_hours is not None:
+            since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
+            stmt = stmt.where(Order.created_at >= since)
         result = await self._session.execute(stmt)
         orders = list(result.scalars().all())
         cache_key = _orders_cache_key(lookback_hours, orders, debug_sync=False)

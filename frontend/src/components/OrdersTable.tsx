@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Pagination, pageSlice } from "@/components/ui/Pagination";
 import { api, type OrderRow } from "@/lib/api";
+import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { ORDERS_LIFECYCLE_CLOSED } from "@/lib/ordersPage";
 import { cn, formatNumber } from "@/lib/utils";
@@ -106,21 +107,25 @@ type SortKey = "recent" | "pnl_desc" | "pnl_asc" | "count_desc" | "symbol_asc";
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 export function OrdersTable({
-  lookbackHours = 6,
+  lookbackHours = 0,
   refreshIntervalMs,
 }: {
   lookbackHours?: number;
   refreshIntervalMs: number;
 }) {
+  const ordersEpoch = useLiveEpoch("orders");
   const { data: rows, error } = usePollingQuery(
     () =>
       api.orders({
-        limit: 200,
-        lookbackHours,
-        lifecycle: ORDERS_LIFECYCLE_CLOSED,
+        limit: 500,
+        ...(lookbackHours != null && lookbackHours > 0
+          ? { lookbackHours }
+          : {}),
       }),
     {
       intervalMs: refreshIntervalMs,
+      reloadKey: ordersEpoch,
+      reloadDebounceMs: 1500,
       staleKey: `${lookbackHours}:${refreshIntervalMs}`,
       errorMessage: "Hiba a rendelések lekérésekor",
     },
@@ -135,6 +140,7 @@ export function OrdersTable({
     if (!rows) return [];
     const needle = search.trim().toUpperCase();
     return rows.filter((r) => {
+      if (r.exchange?.lifecycle !== ORDERS_LIFECYCLE_CLOSED) return false;
       if (needle && !r.symbol.toUpperCase().includes(needle)) return false;
       return true;
     });

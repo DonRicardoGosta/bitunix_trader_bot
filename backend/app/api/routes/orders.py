@@ -21,7 +21,9 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 
 @router.get("/pnl-totals")
 async def orders_pnl_totals(
-    lookback_hours: int = Query(6, ge=1, le=2160, description="Visszatekintés órában"),
+    lookback_hours: int | None = Query(
+        None, ge=1, le=2160, description="Visszatekintés órában (kihagyva = nincs időszűrés)"
+    ),
     lifecycle: str | None = Query(
         None,
         description="Életciklus szűrő (pl. closed = csak lezárt trade-ek).",
@@ -89,7 +91,9 @@ async def list_orders(
             "(PnL/ROI számítás hibakereséséhez; ne oszd meg nyilvánosan)."
         ),
     ),
-    lookback_hours: int = Query(6, ge=1, le=2160, description="Visszatekintés órában"),
+    lookback_hours: int | None = Query(
+        None, ge=1, le=2160, description="Visszatekintés órában (kihagyva = nincs időszűrés)"
+    ),
     lifecycle: str | None = Query(
         None,
         description="Életciklus szűrő (pl. closed = csak lezárt trade-ek).",

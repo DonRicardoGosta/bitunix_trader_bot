@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { RefreshIndicator } from "@/components/RefreshIndicator";
-import { lookbackLabel } from "@/lib/lookback";
+import { ordersLookbackLabel } from "@/lib/ordersPage";
 import { ORDERS_LIFECYCLE_CLOSED } from "@/lib/ordersPage";
 import { cn, formatNumber } from "@/lib/utils";
 
@@ -16,14 +16,18 @@ function parseNum(s: string | null | undefined): number | null {
 }
 
 export function OrdersTotalDbPnl({
-  lookbackHours = 6,
+  lookbackHours = 0,
   refreshIntervalMs,
 }: {
   lookbackHours?: number;
   refreshIntervalMs: number;
 }) {
   const { data: pnlData, error, isRefreshing } = usePollingQuery(
-    () => api.ordersPnlTotals(lookbackHours, ORDERS_LIFECYCLE_CLOSED),
+    () =>
+      api.ordersPnlTotals(
+        lookbackHours != null && lookbackHours > 0 ? lookbackHours : undefined,
+        ORDERS_LIFECYCLE_CLOSED,
+      ),
     {
       intervalMs: refreshIntervalMs,
       staleKey: `${lookbackHours}:${refreshIntervalMs}`,
@@ -70,7 +74,7 @@ export function OrdersTotalDbPnl({
           <RefreshIndicator active={isRefreshing} />
         </CardTitle>
         <span className="text-xs text-muted">
-          Csak lezárt trade-ek az ablakban ({lookbackLabel(lookbackHours)}) — Bitunix szinkron,
+          Csak lezárt trade-ek az ablakban ({ordersLookbackLabel(lookbackHours)}) — Bitunix szinkron,
           realizált PnL összesen
         </span>
       </CardHeader>

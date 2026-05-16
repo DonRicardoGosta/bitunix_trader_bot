@@ -6,23 +6,21 @@ import { Select } from "@/components/ui/input";
 import { OrdersTable } from "@/components/OrdersTable";
 import { OrdersTotalDbPnl } from "@/components/OrdersTotalDbPnl";
 import { usePersistedState } from "@/hooks/usePersistedState";
+import { STORAGE_KEYS } from "@/lib/lookback";
 import {
-  LOOKBACK_PRESETS,
-  STORAGE_KEYS,
-  isLookbackHours,
-  lookbackLabel,
-} from "@/lib/lookback";
-import {
+  ORDERS_LOOKBACK_PRESETS,
   ORDERS_REFRESH_INTERVAL_OPTIONS,
+  isOrdersLookbackHours,
   isOrdersRefreshIntervalSec,
+  ordersLookbackLabel,
   ordersRefreshLabel,
 } from "@/lib/ordersPage";
 
 export default function OrdersPage() {
   const [lookbackHours, setLookbackHours] = usePersistedState(
     STORAGE_KEYS.ordersLookbackHours,
-    6,
-    isLookbackHours,
+    0,
+    isOrdersLookbackHours,
   );
   const [refreshIntervalSec, setRefreshIntervalSec] = usePersistedState(
     STORAGE_KEYS.ordersRefreshIntervalSec,
@@ -41,7 +39,7 @@ export default function OrdersPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Rendelések</h1>
           <p className="text-muted text-sm mt-1">
-            Csak lezárt trade-ek · ablak: {lookbackLabel(lookbackHours)} · frissítés:{" "}
+            Csak lezárt trade-ek · ablak: {ordersLookbackLabel(lookbackHours)} · frissítés:{" "}
             {ordersRefreshLabel(refreshIntervalSec)}
           </p>
         </div>
@@ -71,9 +69,9 @@ export default function OrdersPage() {
             <Select
               id="ord-lb"
               value={String(lookbackHours)}
-              onChange={(e) => setLookbackHours(Number(e.target.value) || 6)}
+              onChange={(e) => setLookbackHours(Number(e.target.value))}
             >
-              {LOOKBACK_PRESETS.map((p) => (
+              {ORDERS_LOOKBACK_PRESETS.map((p) => (
                 <option key={p.hours} value={String(p.hours)}>
                   {p.label}
                 </option>
