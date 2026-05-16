@@ -8,7 +8,6 @@ type Options = {
   reloadKey?: unknown;
   /**
    * Ha megadva: „stale” csak ennek változásakor (pl. lookback), nem interval/WS miatt.
-   * Így a háttér-frissítés nem sötétíti le az egész oldalt.
    */
   staleKey?: unknown;
   errorMessage?: string;
@@ -24,9 +23,7 @@ export function usePollingQuery<T>(
   data: T | null;
   error: string | null;
   isLoading: boolean;
-  /** Paraméterváltás óta még nincs új válasz (nem használ teljes oldal dimmelést). */
   isStale: boolean;
-  /** Háttér-frissítés fut (már van adat) – diszkrét jelzéshez. */
   isRefreshing: boolean;
 } {
   const {
@@ -43,12 +40,9 @@ export function usePollingQuery<T>(
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
-  const generationRef = useRef(0);
-  const inFlightRef = useRef(false);
-  const pendingRef = useRef(false);
-  const prevStaleKeyRef = useRef(staleKey);
   const hasDataRef = useRef(false);
   hasDataRef.current = data !== null;
+  const prevStaleKeyRef = useRef(staleKey);
 
   useEffect(() => {
     if (staleKey !== undefined && staleKey !== prevStaleKeyRef.current) {
@@ -56,39 +50,37 @@ export function usePollingQuery<T>(
       setIsStale(true);
     }
 
-    const generation = ++generationRef.current;
+    let active = true;
+    let inFlight = false;
+    let pending = false;
 
     async function load() {
-      if (inFlightRef.current) {
-        pendingRef.current = true;
+      if (!active) return;
+      if (inFlight) {
+        pending = true;
         return;
       }
-      inFlightRef.current = true;
+      inFlight = true;
       if (hasDataRef.current) {
         setIsRefreshing(true);
       }
-      const startedGen = generationRef.current;
       try {
         const result = await fetcherRef.current();
-        if (startedGen !== generationRef.current) {
-          pendingRef.current = true;
-          return;
-        }
+        if (!active) return;
         setData(result);
         setError(null);
         setIsStale(false);
       } catch (err) {
-        if (startedGen !== generationRef.current) {
-          pendingRef.current = true;
-          return;
-        }
+        if (!active) return;
         setError(err instanceof Error ? err.message : errorMessage);
         setIsStale(false);
       } finally {
-        inFlightRef.current = false;
-        setIsRefreshing(false);
-        if (pendingRef.current) {
-          pendingRef.current = false;
+        inFlight = false;
+        if (active) {
+          setIsRefreshing(false);
+        }
+        if (pending && active) {
+          pending = false;
           void load();
         }
       }
@@ -98,6 +90,7 @@ export function usePollingQuery<T>(
     const id =
       intervalMs > 0 ? window.setInterval(() => void load(), intervalMs) : undefined;
     return () => {
+      active = false;
       if (id !== undefined) window.clearInterval(id);
     };
   }, [intervalMs, reloadKey, staleKey, errorMessage]);

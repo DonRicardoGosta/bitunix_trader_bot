@@ -7,6 +7,28 @@ afterEach(() => {
 });
 
 describe("usePollingQuery", () => {
+  it("applies first successful result even if reloadKey raced during fetch", async () => {
+    let resolveLate: ((v: string) => void) | undefined;
+    const fetcher = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveLate = resolve;
+        }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ key }) =>
+        usePollingQuery(fetcher, { intervalMs: 60_000, reloadKey: key }),
+      { initialProps: { key: 0 } },
+    );
+
+    rerender({ key: 1 });
+    rerender({ key: 2 });
+    resolveLate?.("done");
+
+    await waitFor(() => expect(result.current.data).toBe("done"), { timeout: 3000 });
+  });
+
   it("eventually resolves when reloadKey changes faster than fetch", async () => {
     let delay = 50;
     const fetcher = vi.fn(

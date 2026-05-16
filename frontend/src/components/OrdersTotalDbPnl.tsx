@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
-import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
+import { useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { lookbackLabel } from "@/lib/lookback";
 import { cn, formatNumber } from "@/lib/utils";
@@ -18,12 +18,10 @@ function parseNum(s: string | null | undefined): number | null {
 export function OrdersTotalDbPnl({ lookbackHours = 6 }: { lookbackHours?: number }) {
   const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
-  const pnlEpoch = useLiveEpoch("orders_pnl");
   const { data: pnlData, error } = usePollingQuery(
     () => api.ordersPnlTotals(lookbackHours),
     {
       intervalMs: refreshIntervalMs,
-      reloadKey: pnlEpoch,
       staleKey: lookbackHours,
       errorMessage: "PnL összesítés lekérése sikertelen",
     },
