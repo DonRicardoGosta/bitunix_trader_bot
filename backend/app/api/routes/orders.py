@@ -22,15 +22,16 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 @router.get("/pnl-totals")
 async def orders_pnl_totals(
     lookback_hours: int = Query(6, ge=1, le=2160, description="Visszatekintés órában"),
+    lifecycle: str | None = Query(
+        None,
+        description="Életciklus szűrő (pl. closed = csak lezárt trade-ek).",
+    ),
     service: TradingService = Depends(get_trading_service),
 ) -> dict[str, Any]:
-    """Összesített PnL (USDT) a saját ``orders`` tábla összes sorára.
-
-    A soronkénti enrichment megegyezik a ``GET /api/orders`` listával
-    (Bitunix history + nyitott pozíció); az összeg a realized + unrealized
-    mezők összege minden naplózott rendelésre.
-    """
-    return await service.orders_pnl_totals(lookback_hours=lookback_hours)
+    """Összesített PnL (USDT) a szűrt rendelésnapló soraira."""
+    return await service.orders_pnl_totals(
+        lookback_hours=lookback_hours, lifecycle=lifecycle
+    )
 
 
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
@@ -89,6 +90,10 @@ async def list_orders(
         ),
     ),
     lookback_hours: int = Query(6, ge=1, le=2160, description="Visszatekintés órában"),
+    lifecycle: str | None = Query(
+        None,
+        description="Életciklus szűrő (pl. closed = csak lezárt trade-ek).",
+    ),
     service: TradingService = Depends(get_trading_service),
 ) -> list[dict[str, Any]]:
     """Legutóbbi rendelések (saját DB + Bitunix history / nyitott pozíció)."""
@@ -97,5 +102,6 @@ async def list_orders(
         offset=offset,
         symbol=symbol,
         lookback_hours=lookback_hours,
+        lifecycle=lifecycle,
         debug_sync=debug_sync,
     )

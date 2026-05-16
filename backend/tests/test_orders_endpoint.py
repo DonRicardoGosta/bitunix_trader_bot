@@ -94,6 +94,15 @@ def test_place_order_dry_run_via_http() -> None:
         assert dbg_row["exchange"]["debug"]["history_row_found"] is False
 
 
+def test_list_orders_lifecycle_closed_filter() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/api/orders?lifecycle=closed&limit=50")
+        assert r.status_code == 200, r.text
+        for row in r.json():
+            assert row["exchange"]["lifecycle"] == "closed"
+
+
 def test_list_orders_lookback_hours_param() -> None:
     app = create_app()
     with TestClient(app) as client:

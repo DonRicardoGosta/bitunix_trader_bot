@@ -46,6 +46,18 @@ def _orders_cache_key(
     return f"{lookback_hours}:{int(debug_sync)}:{','.join(str(o.id) for o in orders)}"
 
 
+def _filter_rows_by_lifecycle(
+    rows: list[dict[str, Any]], lifecycle: str | None
+) -> list[dict[str, Any]]:
+    if not lifecycle:
+        return rows
+    return [
+        r
+        for r in rows
+        if (r.get("exchange") or {}).get("lifecycle") == lifecycle
+    ]
+
+
 def _append_sync_err(sync_err: str | None, msg: str) -> str:
     if sync_err is None:
         return msg[:500]
@@ -225,6 +237,7 @@ class TradingService:
         offset: int = 0,
         symbol: str | None = None,
         lookback_hours: int = 6,
+        lifecycle: str | None = None,
         debug_sync: bool = False,
     ) -> list[dict[str, Any]]:
         """Legutóbbi rendelések DB-ből, Bitunix history + nyitott pozíció szinkronnal.
@@ -234,6 +247,7 @@ class TradingService:
             offset: Kihagyott sorok száma (paginálás).
             symbol: Opcionális szimbólum szűrő (case-insensitive).
             lookback_hours: Csak ennyi óra visszamenő ``created_at`` (alap 6).
+            lifecycle: Pl. ``closed`` – csak az adott életciklusú sorok.
             debug_sync: Ha true, hibakereső metaadat is jön.
         """
         since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
@@ -251,13 +265,19 @@ class TradingService:
         now = time.monotonic()
         hit = _ENRICHED_CACHE.get(cache_key)
         if hit is not None and now - hit[0] < _ENRICHED_CACHE_TTL_SEC:
-            return hit[1]
-        rows = await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
-        _ENRICHED_CACHE[cache_key] = (now, rows)
-        _prune_enriched_cache()
-        return rows
+            rows = hit[1]
+        else:
+            rows = await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
+            _ENRICHED_CACHE[cache_key] = (now, rows)
+            _prune_enriched_cache()
+        filtered = _filter_rows_by_lifecycle(rows, lifecycle)
+        if lifecycle:
+            return filtered[offset : offset + limit] if offset else filtered[:limit]
+        return filtered
 
-    async def orders_pnl_totals(self, *, lookback_hours: int = 6) -> dict[str, Any]:
+    async def orders_pnl_totals(
+        self, *, lookback_hours: int = 6, lifecycle: str | None = None
+    ) -> dict[str, Any]:
         """Összesített PnL (USDT) a saját ``orders`` tábla soraira az ablakban.
 
         Ugyanaz a Bitunix szinkron és enrichment, mint a rendeléslistánál;
@@ -282,6 +302,7 @@ class TradingService:
             rows = await self._enriched_order_api_rows(orders, debug_sync=False)
             _ENRICHED_CACHE[cache_key] = (now, rows)
             _prune_enriched_cache()
+        rows = _filter_rows_by_lifecycle(rows, lifecycle)
         total_r = Decimal(0)
         total_u = Decimal(0)
         for row in rows:
@@ -298,6 +319,7 @@ class TradingService:
             sync_error = ex0.get("sync_error")
         return {
             "lookback_hours": lookback_hours,
+            "lifecycle_filter": lifecycle,
             "order_count": len(rows),
             "realized_pnl_usdt": str(total_r),
             "unrealized_pnl_usdt": str(total_u),

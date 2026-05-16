@@ -5,9 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Pagination, pageSlice } from "@/components/ui/Pagination";
 import { api, type OrderRow } from "@/lib/api";
-import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
-import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
+import { ORDERS_LIFECYCLE_CLOSED } from "@/lib/ordersPage";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseDecimal(value: string | null | undefined): number | null {
@@ -102,28 +101,31 @@ function summarizeGroup(symbol: string, rows: OrderRow[]): SymbolGroup {
   };
 }
 
-type LifecycleFilter = "all" | "open" | "closed" | "pending" | "canceled" | "unknown";
 type SortKey = "recent" | "pnl_desc" | "pnl_asc" | "count_desc" | "symbol_asc";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
-const ORDERS_RELOAD_DEBOUNCE_MS = 1500;
-
-export function OrdersTable({ lookbackHours = 6 }: { lookbackHours?: number }) {
-  const { refreshIntervalMs } = useRefreshInterval();
-  const ordersEpoch = useLiveEpoch("orders");
+export function OrdersTable({
+  lookbackHours = 6,
+  refreshIntervalMs,
+}: {
+  lookbackHours?: number;
+  refreshIntervalMs: number;
+}) {
   const { data: rows, error } = usePollingQuery(
-    () => api.orders({ limit: 200, lookbackHours }),
+    () =>
+      api.orders({
+        limit: 200,
+        lookbackHours,
+        lifecycle: ORDERS_LIFECYCLE_CLOSED,
+      }),
     {
       intervalMs: refreshIntervalMs,
-      reloadKey: ordersEpoch,
-      reloadDebounceMs: ORDERS_RELOAD_DEBOUNCE_MS,
-      staleKey: lookbackHours,
+      staleKey: `${lookbackHours}:${refreshIntervalMs}`,
       errorMessage: "Hiba a rendelések lekérésekor",
     },
   );
   const [search, setSearch] = useState("");
-  const [lifecycle, setLifecycle] = useState<LifecycleFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
@@ -134,10 +136,9 @@ export function OrdersTable({ lookbackHours = 6 }: { lookbackHours?: number }) {
     const needle = search.trim().toUpperCase();
     return rows.filter((r) => {
       if (needle && !r.symbol.toUpperCase().includes(needle)) return false;
-      if (lifecycle !== "all" && r.exchange?.lifecycle !== lifecycle) return false;
       return true;
     });
-  }, [rows, search, lifecycle]);
+  }, [rows, search]);
 
   const groups = useMemo<SymbolGroup[]>(() => {
     const map = new Map<string, OrderRow[]>();
@@ -222,7 +223,7 @@ export function OrdersTable({ lookbackHours = 6 }: { lookbackHours?: number }) {
         </p>
       ) : null}
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
         <div className="sm:col-span-1">
           <label className="block text-xs uppercase text-muted mb-1" htmlFor="orders-search">
             Szimbólum szűrő
@@ -233,23 +234,6 @@ export function OrdersTable({ lookbackHours = 6 }: { lookbackHours?: number }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-        </div>
-        <div>
-          <label className="block text-xs uppercase text-muted mb-1" htmlFor="orders-lifecycle">
-            Életciklus
-          </label>
-          <Select
-            id="orders-lifecycle"
-            value={lifecycle}
-            onChange={(e) => setLifecycle(e.target.value as LifecycleFilter)}
-          >
-            <option value="all">Mind</option>
-            <option value="open">Nyitott</option>
-            <option value="closed">Lezárt</option>
-            <option value="pending">Függőben</option>
-            <option value="canceled">Visszavonva</option>
-            <option value="unknown">Ismeretlen</option>
-          </Select>
         </div>
         <div>
           <label className="block text-xs uppercase text-muted mb-1" htmlFor="orders-sort">
@@ -296,7 +280,7 @@ export function OrdersTable({ lookbackHours = 6 }: { lookbackHours?: number }) {
       </div>
 
       {visibleGroups.length === 0 ? (
-        <p className="text-muted text-sm">Nincs találat a szűrésre.</p>
+        <p className="text-muted text-sm">Nincs lezárt trade az ablakban.</p>
       ) : (
         <div className="space-y-2">
           {visibleGroups.map((g) => (
@@ -355,22 +339,8 @@ function SymbolGroupRow({
         <span className="text-xs text-muted">
           {group.rows.length} rendelés
         </span>
-        <span className="flex gap-1.5 text-[10px] uppercase">
-          {group.openCount > 0 && (
-            <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
-              {group.openCount} nyitott
-            </span>
-          )}
-          {group.closedCount > 0 && (
-            <span className="px-1.5 py-0.5 rounded bg-muted/15 text-muted border border-muted/30">
-              {group.closedCount} lezárt
-            </span>
-          )}
-          {group.pendingCount > 0 && (
-            <span className="px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400 border border-yellow-500/30">
-              {group.pendingCount} függőben
-            </span>
-          )}
+        <span className="text-[10px] uppercase text-muted">
+          {group.closedCount} lezárt
         </span>
         <span className="ml-auto flex items-baseline gap-4 text-sm tabular-nums">
           <span>
@@ -379,14 +349,6 @@ function SymbolGroupRow({
               {formatNumber(group.realizedSum, { decimals: 4, sign: true })}
             </span>
           </span>
-          {Math.abs(group.unrealizedSum) > 1e-9 && (
-            <span>
-              <span className="text-[10px] uppercase text-muted mr-1">Nyitott</span>
-              <span className={pnlToneClass(group.unrealizedSum)}>
-                {formatNumber(group.unrealizedSum, { decimals: 4, sign: true })}
-              </span>
-            </span>
-          )}
         </span>
       </button>
       {open ? (

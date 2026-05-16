@@ -21,6 +21,7 @@ export const STORAGE_KEYS = {
   analyticsLookbackHours: "bitunix_ui_analytics_lookback_hours",
   analyticsBucketHours: "bitunix_ui_analytics_bucket_hours",
   ordersLookbackHours: "bitunix_ui_orders_lookback_hours",
+  ordersRefreshIntervalSec: "bitunix_ui_orders_refresh_interval_sec",
 } as const;
 
 export function isLookbackHours(n: number): boolean {

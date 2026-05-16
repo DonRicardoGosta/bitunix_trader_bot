@@ -3,11 +3,10 @@
 import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
-import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
-import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
 import { RefreshIndicator } from "@/components/RefreshIndicator";
 import { lookbackLabel } from "@/lib/lookback";
+import { ORDERS_LIFECYCLE_CLOSED } from "@/lib/ordersPage";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseNum(s: string | null | undefined): number | null {
@@ -16,19 +15,18 @@ function parseNum(s: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-const ORDERS_PNL_RELOAD_DEBOUNCE_MS = 1500;
-
-export function OrdersTotalDbPnl({ lookbackHours = 6 }: { lookbackHours?: number }) {
-  const { intervalSec, refreshIntervalMs } = useRefreshInterval();
-  const pushConnected = useLivePushConnected();
-  const pnlEpoch = useLiveEpoch("orders_pnl");
+export function OrdersTotalDbPnl({
+  lookbackHours = 6,
+  refreshIntervalMs,
+}: {
+  lookbackHours?: number;
+  refreshIntervalMs: number;
+}) {
   const { data: pnlData, error, isRefreshing } = usePollingQuery(
-    () => api.ordersPnlTotals(lookbackHours),
+    () => api.ordersPnlTotals(lookbackHours, ORDERS_LIFECYCLE_CLOSED),
     {
       intervalMs: refreshIntervalMs,
-      reloadKey: pnlEpoch,
-      reloadDebounceMs: ORDERS_PNL_RELOAD_DEBOUNCE_MS,
-      staleKey: lookbackHours,
+      staleKey: `${lookbackHours}:${refreshIntervalMs}`,
       errorMessage: "PnL összesítés lekérése sikertelen",
     },
   );
@@ -68,18 +66,12 @@ export function OrdersTotalDbPnl({ lookbackHours = 6 }: { lookbackHours?: number
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          Összesített PnL (saját rendelésnapló)
+          Összesített realized PnL (lezárt trade-ek)
           <RefreshIndicator active={isRefreshing} />
         </CardTitle>
         <span className="text-xs text-muted">
-          A Postgres <code className="text-[11px]">orders</code> tábla sorai ({lookbackLabel(lookbackHours)}):
-          soronkénti realizált + nem realizált (Bitunix szinkron, mint a táblázatnál) — nyitott és
-          lezárt együtt ·{" "}
-          {pushConnected ? (
-            <>élő WebSocket push</>
-          ) : (
-            <>frissül {intervalSec} mp-ként</>
-          )}
+          Csak lezárt trade-ek az ablakban ({lookbackLabel(lookbackHours)}) — Bitunix szinkron,
+          realizált PnL összesen
         </span>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -102,12 +94,6 @@ export function OrdersTotalDbPnl({ lookbackHours = 6 }: { lookbackHours?: number
                 Realizált (össz. sorok):{" "}
                 <span className="num text-slate-200">
                   {formatNumber(realized ?? 0, { decimals: 4, sign: true })}
-                </span>
-              </span>
-              <span>
-                Nem realizált (össz. sorok):{" "}
-                <span className="num text-slate-200">
-                  {formatNumber(unrealized ?? 0, { decimals: 4, sign: true })}
                 </span>
               </span>
               {orderCount != null ? (

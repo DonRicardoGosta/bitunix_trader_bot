@@ -604,6 +604,7 @@ export const api = {
     offset?: number;
     symbol?: string;
     lookbackHours?: number;
+    lifecycle?: string;
   }) => {
     const usp = new URLSearchParams();
     if (params?.limit != null) usp.set("limit", String(params.limit));
@@ -612,13 +613,16 @@ export const api = {
     if (params?.lookbackHours != null) {
       usp.set("lookback_hours", String(params.lookbackHours));
     }
+    if (params?.lifecycle) usp.set("lifecycle", params.lifecycle);
     const qs = usp.toString();
     return request<OrderRow[]>(`/api/orders${qs ? `?${qs}` : ""}`);
   },
-  ordersPnlTotals: (lookbackHours = 6) =>
-    request<OrdersPnlTotals>(
-      `/api/orders/pnl-totals?lookback_hours=${lookbackHours}`,
-    ),
+  ordersPnlTotals: (lookbackHours = 6, lifecycle?: string) => {
+    const usp = new URLSearchParams();
+    usp.set("lookback_hours", String(lookbackHours));
+    if (lifecycle) usp.set("lifecycle", lifecycle);
+    return request<OrdersPnlTotals>(`/api/orders/pnl-totals?${usp.toString()}`);
+  },
   placeOrder: (input: PlaceOrderInput) =>
     request<PlaceOrderResult>("/api/orders", {
       method: "POST",

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OrdersTable } from "./OrdersTable";
-import { WithRefreshProvider } from "@/contexts/RefreshIntervalContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -57,9 +56,10 @@ describe("<OrdersTable /> (grouped)", () => {
           symbol: "BTCUSDT",
           exchange: {
             ...order().exchange,
-            lifecycle: "open",
-            unrealized_pnl_usdt: "100",
-            realized_pnl_usdt: "0",
+            lifecycle: "closed",
+            lifecycle_label: "Lezárva",
+            realized_pnl_usdt: "10",
+            unrealized_pnl_usdt: null,
           },
         }),
         order({
@@ -81,19 +81,16 @@ describe("<OrdersTable /> (grouped)", () => {
           symbol: "ETHUSDT",
           exchange: {
             ...order().exchange,
-            lifecycle: "open",
-            unrealized_pnl_usdt: "-25",
-            realized_pnl_usdt: "0",
+            lifecycle: "closed",
+            lifecycle_label: "Lezárva",
+            realized_pnl_usdt: "-25",
+            unrealized_pnl_usdt: null,
           },
         }),
       ]),
     ) as unknown as typeof fetch;
 
-    render(
-      <WithRefreshProvider>
-        <OrdersTable />
-      </WithRefreshProvider>,
-    );
+    render(<OrdersTable refreshIntervalMs={60_000} />);
     // Várjuk meg a load-ot
     await waitFor(() =>
       expect(screen.getByText("BTCUSDT")).toBeInTheDocument(),
@@ -124,11 +121,7 @@ describe("<OrdersTable /> (grouped)", () => {
       ]),
     ) as unknown as typeof fetch;
 
-    render(
-      <WithRefreshProvider>
-        <OrdersTable />
-      </WithRefreshProvider>,
-    );
+    render(<OrdersTable refreshIntervalMs={60_000} />);
     const header = await screen.findByRole("button", { name: /SAGAUSDT/ });
     expect(header).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(header);
@@ -141,16 +134,20 @@ describe("<OrdersTable /> (grouped)", () => {
   it("filters by symbol search input", async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse([
-        order({ id: 1, symbol: "BTCUSDT" }),
-        order({ id: 2, symbol: "ETHUSDT" }),
+        order({
+          id: 1,
+          symbol: "BTCUSDT",
+          exchange: { ...order().exchange, lifecycle: "closed", lifecycle_label: "Lezárva" },
+        }),
+        order({
+          id: 2,
+          symbol: "ETHUSDT",
+          exchange: { ...order().exchange, lifecycle: "closed", lifecycle_label: "Lezárva" },
+        }),
       ]),
     ) as unknown as typeof fetch;
 
-    render(
-      <WithRefreshProvider>
-        <OrdersTable />
-      </WithRefreshProvider>,
-    );
+    render(<OrdersTable refreshIntervalMs={60_000} />);
     await screen.findByText("BTCUSDT");
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
 
@@ -170,6 +167,8 @@ describe("<OrdersTable /> (grouped)", () => {
           symbol: "FOOUSDT",
           exchange: {
             ...order().exchange,
+            lifecycle: "closed",
+            lifecycle_label: "Lezárva",
             roi_pct: "0.00",
             realized_pnl_usdt: "0",
           },
@@ -177,11 +176,7 @@ describe("<OrdersTable /> (grouped)", () => {
       ]),
     ) as unknown as typeof fetch;
 
-    render(
-      <WithRefreshProvider>
-        <OrdersTable />
-      </WithRefreshProvider>,
-    );
+    render(<OrdersTable refreshIntervalMs={60_000} />);
     const header = await screen.findByRole("button", { name: /FOOUSDT/ });
     await userEvent.click(header);
     const roiCell = await screen.findByText(/^0\.00 %$/);
@@ -204,6 +199,7 @@ describe("<OrdersTable /> (grouped)", () => {
           id: 99,
           symbol: "PTBUSDT",
           entry_context,
+          exchange: { ...order().exchange, lifecycle: "closed", lifecycle_label: "Lezárva" },
         }),
       ]),
     ) as unknown as typeof fetch;
@@ -214,11 +210,7 @@ describe("<OrdersTable /> (grouped)", () => {
       configurable: true,
     });
 
-    render(
-      <WithRefreshProvider>
-        <OrdersTable />
-      </WithRefreshProvider>,
-    );
+    render(<OrdersTable refreshIntervalMs={60_000} />);
     const header = await screen.findByRole("button", { name: /PTBUSDT/ });
     await userEvent.click(header);
     expect(screen.getByText(/TPwin=92\.5%/)).toBeInTheDocument();
