@@ -31,6 +31,7 @@ from app.services.position_history import (
     fetch_closed_positions_in_lookback,
     fetch_closed_positions_in_window,
     position_event_time,
+    trade_hold_duration_seconds,
 )
 
 
@@ -143,6 +144,95 @@ async def _fetch_closed_for_window(
 
 def _empty_hour_buckets() -> list[dict[str, int]]:
     return [{"hour": h, "tp_count": 0, "sl_count": 0} for h in range(24)]
+
+
+def _empty_duration_bucket() -> dict[str, int]:
+    return {
+        "win_count": 0,
+        "win_total_duration_sec": 0,
+        "loss_count": 0,
+        "loss_total_duration_sec": 0,
+    }
+
+
+def _duration_side_avg(bucket: dict[str, int], *, win: bool) -> dict[str, int | None]:
+    if win:
+        count = bucket["win_count"]
+        total = bucket["win_total_duration_sec"]
+    else:
+        count = bucket["loss_count"]
+        total = bucket["loss_total_duration_sec"]
+    if count == 0:
+        return {"count": 0, "avg_duration_sec": None}
+    return {"count": count, "avg_duration_sec": int(total // count)}
+
+
+def _duration_bucket_row(bucket: dict[str, int]) -> dict[str, Any]:
+    return {
+        "wins": _duration_side_avg(bucket, win=True),
+        "losses": _duration_side_avg(bucket, win=False),
+    }
+
+
+def _trade_hold_duration_stats(closed: list[dict[str, Any]]) -> dict[str, Any]:
+    """Átlagos nyitás–lezárás tartam nyertes / vesztes trade-enként.
+
+    Időbontás a **lezárás** ideje szerint (Budapest), mint a TP/SL statnál.
+    """
+    summary = _empty_duration_bucket()
+    by_hour = [{"hour": h, **_empty_duration_bucket()} for h in range(24)]
+    by_weekday: list[dict[str, Any]] = [
+        {"weekday": wd, "label": _WEEKDAY_LABELS_HU[wd], **_empty_duration_bucket()}
+        for wd in range(7)
+    ]
+    skipped = 0
+
+    for p in closed:
+        r = _dec(p.get("realized_pnl"))
+        if r is None or r == 0:
+            continue
+        dur = trade_hold_duration_seconds(p)
+        if dur is None:
+            skipped += 1
+            continue
+        closed_ts = position_event_time(p)
+        if closed_ts is None:
+            skipped += 1
+            continue
+        local = closed_ts.astimezone(_ANALYTICS_TZ)
+        hour = local.hour
+        wd = local.weekday()
+        is_win = r > 0
+
+        for target in (summary, by_hour[hour], by_weekday[wd]):
+            if is_win:
+                target["win_count"] += 1
+                target["win_total_duration_sec"] += dur
+            else:
+                target["loss_count"] += 1
+                target["loss_total_duration_sec"] += dur
+
+    return {
+        "timezone": "Europe/Budapest",
+        "classification_note": (
+            "Nyertes = realized PnL > 0, vesztes = realized PnL < 0. "
+            "Tartam = lezárás − nyitás (opened_at → closed_at). "
+            "Nap és óra bontás a lezárás időpontja szerint, az ablak összes napján összesítve."
+        ),
+        "skipped_no_duration": skipped,
+        "summary": _duration_bucket_row(summary),
+        "by_weekday": [
+            {
+                "weekday": d["weekday"],
+                "label": d["label"],
+                **_duration_bucket_row(d),
+            }
+            for d in by_weekday
+        ],
+        "by_hour": [
+            {"hour": h["hour"], **_duration_bucket_row(h)} for h in by_hour
+        ],
+    }
 
 
 def _tp_sl_timing_stats(closed: list[dict[str, Any]]) -> dict[str, Any]:
@@ -283,6 +373,7 @@ async def build_pnl_series(
             "kpis": _closed_kpis([]),
             "breakdown": _positions_breakdown([]),
             "tp_sl_timing": _tp_sl_timing_stats([]),
+            "trade_hold_duration": _trade_hold_duration_stats([]),
         }
 
     closed, sync_error = await _fetch_closed_for_window(client, window)
@@ -352,6 +443,7 @@ async def build_pnl_series(
         "kpis": _closed_kpis(realized_pnls),
         "breakdown": _positions_breakdown(closed),
         "tp_sl_timing": _tp_sl_timing_stats(closed),
+        "trade_hold_duration": _trade_hold_duration_stats(closed),
     }
 
 
