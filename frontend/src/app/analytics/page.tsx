@@ -93,10 +93,6 @@ export default function AnalyticsPage() {
       ? "egyedi ablak"
       : `${windowParams.mode === "preset" ? windowParams.lookbackHours : 24} óra`;
 
-  const chartKey = pnl
-    ? `${pnl.window_custom ? "c" : "p"}:${pnl.window_start}:${pnl.window_end}:${pnl.bucket_hours}:${pnl.buckets.length}`
-    : "empty";
-
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -167,7 +163,7 @@ export default function AnalyticsPage() {
               )}
             </CardHeader>
             <CardContent>
-              <PnlSeriesChart key={chartKey} data={pnl} />
+              <PnlSeriesChart data={pnl} freezeKey={paramKey} />
             </CardContent>
           </Card>
           {pnl.tp_sl_timing ? (
