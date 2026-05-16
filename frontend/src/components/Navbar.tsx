@@ -14,9 +14,11 @@ import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/", label: "Dashboard" },
+  { href: "/analytics", label: "Analytics" },
   { href: "/orders", label: "Rendelések" },
   { href: "/positions", label: "Pozíciók" },
   { href: "/strategies", label: "Stratégiák" },
+  { href: "/settings", label: "Vezérlőpult" },
   { href: "/coin-analyze", label: "Coin elemzés" },
   { href: "/calibration", label: "Kalibráció" },
   { href: "/events", label: "Eseménynapló" },
@@ -31,7 +33,7 @@ export function Navbar() {
   return (
     <header className="relative border-b border-border bg-bg-subtle/60 backdrop-blur sticky top-0 z-10">
       <RouteLoadingBar />
-      <div className="mx-auto max-w-7xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div className="mx-auto max-w-[90rem] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <Link href="/" className="flex items-center gap-2">
           <span className="text-xl font-bold text-accent">⟡ Bitunix Trader</span>
         </Link>

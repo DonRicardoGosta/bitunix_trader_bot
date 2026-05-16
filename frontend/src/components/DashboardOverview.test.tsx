@@ -9,10 +9,12 @@ const originalFetch = globalThis.fetch;
 function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
   return {
     generated_at: "2026-05-13T10:00:00Z",
+    lookback_hours: 168,
     lookback_days: 7,
     orders: {
       total: 12,
       last_24h: 4,
+      in_lookback_window: 4,
       by_status: { NEW: 8, FILLED: 4 },
       top_symbols_30d: [{ symbol: "BTCUSDT", count: 8 }],
       by_strategy_30d: [{ strategy: "top_movers", count: 12 }],
@@ -84,6 +86,7 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
         ],
       },
       closed_positions: {
+        lookback_hours: 168,
         lookback_days: 7,
         count: 3,
         realized_pnl_usdt: "25.50",
@@ -92,6 +95,9 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
         losses: 1,
         avg_win_usdt: "20.00",
         avg_loss_usdt: "-5.00",
+        profit_factor: "4.00",
+        expectancy_usdt: "8.50",
+        max_drawdown_usdt: "5.00",
         top_winners: [
           {
             symbol: "BTCUSDT",

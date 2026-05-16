@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.db.models import StrategyRun
 from app.db.session import get_db
+from app.services.runtime_settings import is_strategy_enabled
 from app.services.strategy import (
     StrategyNotFoundError,
     available_strategies,
@@ -38,7 +39,7 @@ async def list_strategies(
         out.append(
             {
                 "name": name,
-                "enabled": _is_enabled(name, settings),
+                "enabled": await _is_enabled(session, name, settings),
                 "last_run": _run_to_dict(last) if last else None,
             }
         )
@@ -75,10 +76,10 @@ async def trigger_strategy(name: str) -> dict:
         ) from exc
 
 
-def _is_enabled(name: str, settings: Settings) -> bool:
-    if name == "top_movers":
-        return settings.strategy_top_movers_enabled
-    return True
+async def _is_enabled(
+    session: AsyncSession, name: str, settings: Settings
+) -> bool:
+    return await is_strategy_enabled(session, settings, name)
 
 
 def _run_to_dict(run: StrategyRun) -> dict:

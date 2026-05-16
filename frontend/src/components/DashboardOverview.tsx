@@ -13,6 +13,7 @@ import {
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch, useLivePushConnected } from "@/contexts/LiveUpdatesContext";
 import { usePollingQuery } from "@/hooks/usePollingQuery";
+import { LOOKBACK_PRESETS, lookbackLabel } from "@/lib/lookback";
 import { cn, formatNumber } from "@/lib/utils";
 
 function num(v: string | null | undefined): number | null {
@@ -46,12 +47,12 @@ export function DashboardOverview() {
   const { intervalSec, refreshIntervalMs } = useRefreshInterval();
   const pushConnected = useLivePushConnected();
   const dashEpoch = useLiveEpoch("dashboard");
-  const [lookback, setLookback] = useState(1);
+  const [lookbackHours, setLookbackHours] = useState(24);
   const { data, error } = usePollingQuery(
-    () => api.dashboardSummary(lookback),
+    () => api.dashboardSummary(lookbackHours),
     {
       intervalMs: refreshIntervalMs,
-      reloadKey: `${dashEpoch}:${lookback}`,
+      reloadKey: `${dashEpoch}:${lookbackHours}`,
       errorMessage: "Hiba a dashboard lekérésekor",
     },
   );
@@ -101,14 +102,14 @@ export function DashboardOverview() {
             </label>
             <Select
               id="dash-lookback"
-              value={lookback}
-              onChange={(e) => setLookback(Number(e.target.value) || 7)}
+              value={lookbackHours}
+              onChange={(e) => setLookbackHours(Number(e.target.value) || 24)}
             >
-              <option value={1}>1 nap</option>
-              <option value={7}>7 nap</option>
-              <option value={14}>14 nap</option>
-              <option value={30}>30 nap</option>
-              <option value={90}>90 nap</option>
+              {LOOKBACK_PRESETS.map((p) => (
+                <option key={p.hours} value={p.hours}>
+                  {p.label}
+                </option>
+              ))}
             </Select>
           </div>
         </div>
@@ -155,7 +156,7 @@ export function DashboardOverview() {
           }
         />
         <StatCard
-          label={`Realizált (${closed?.lookback_days ?? lookback} nap)`}
+          label={`Realizált (${lookbackLabel(lookbackHours)})`}
           value={formatNumber(realized, { decimals: 4, sign: true })}
           unit="USDT"
           tone={toneOf(realized)}
@@ -169,8 +170,8 @@ export function DashboardOverview() {
 
       {/* Trading szignál sor */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <ClosedStatsCard data={data} />
-        <OrdersStatsCard data={data} />
+        <ClosedStatsCard data={data} lookbackHours={lookbackHours} />
+        <OrdersStatsCard data={data} lookbackHours={lookbackHours} />
         <StrategyCard data={data} />
       </div>
 
@@ -200,13 +201,19 @@ export function DashboardOverview() {
   );
 }
 
-function ClosedStatsCard({ data }: { data: DashboardSummary }) {
+function ClosedStatsCard({
+  data,
+  lookbackHours,
+}: {
+  data: DashboardSummary;
+  lookbackHours: number;
+}) {
   const c = data.exchange.closed_positions;
   return (
     <Card>
       <CardHeader>
         <CardTitle>Lezárt pozíció statisztika</CardTitle>
-        <span className="text-xs text-muted">{c.lookback_days} napos ablak</span>
+        <span className="text-xs text-muted">{lookbackLabel(lookbackHours)}</span>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         <Row label="Pozíciók száma" value={c.count.toString()} />
@@ -215,6 +222,27 @@ function ClosedStatsCard({ data }: { data: DashboardSummary }) {
           value={`${c.wins} / ${c.losses}`}
         />
         <Row label="Win rate" value={c.win_rate_pct ? `${c.win_rate_pct}%` : "—"} />
+        <Row
+          label="Profit factor"
+          value={c.profit_factor ?? "—"}
+        />
+        <Row
+          label="Expectancy"
+          value={
+            c.expectancy_usdt
+              ? `${formatNumber(c.expectancy_usdt, { decimals: 4, sign: true })} USDT`
+              : "—"
+          }
+        />
+        <Row
+          label="Max drawdown"
+          value={
+            c.max_drawdown_usdt
+              ? `${formatNumber(c.max_drawdown_usdt, { decimals: 4 })} USDT`
+              : "—"
+          }
+          tone="negative"
+        />
         <Row
           label="Átlag nyereség"
           value={
@@ -233,23 +261,38 @@ function ClosedStatsCard({ data }: { data: DashboardSummary }) {
           }
           tone="negative"
         />
+        <Link href="/analytics" className="inline-block text-xs text-accent hover:underline">
+          Részletes analytics →
+        </Link>
       </CardContent>
     </Card>
   );
 }
 
-function OrdersStatsCard({ data }: { data: DashboardSummary }) {
+function OrdersStatsCard({
+  data,
+  lookbackHours,
+}: {
+  data: DashboardSummary;
+  lookbackHours: number;
+}) {
   const o = data.orders;
   const statusEntries = Object.entries(o.by_status);
   return (
     <Card>
       <CardHeader>
         <CardTitle>Rendelések (saját napló)</CardTitle>
-        <span className="text-xs text-muted">DB audit alapján</span>
+        <span className="text-xs text-muted">DB audit · {lookbackLabel(lookbackHours)}</span>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         <Row label="Összesen" value={o.total.toString()} />
         <Row label="Utolsó 24 óra" value={o.last_24h.toString()} />
+        {o.in_lookback_window != null ? (
+          <Row
+            label="Ablakon belül"
+            value={o.in_lookback_window.toString()}
+          />
+        ) : null}
         <div>
           <div className="text-xs uppercase text-muted">Státusz szerint</div>
           <div className="flex flex-wrap gap-1.5 mt-1">
@@ -277,6 +320,20 @@ function OrdersStatsCard({ data }: { data: DashboardSummary }) {
               </div>
             ))}
             {o.top_symbols_30d.length === 0 && (
+              <p className="text-muted">Nincs adat.</p>
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase text-muted">Stratégia szerint (30 nap)</div>
+          <div className="text-xs mt-1 space-y-0.5">
+            {o.by_strategy_30d.slice(0, 6).map((s) => (
+              <div key={s.strategy} className="flex justify-between gap-2">
+                <span className="font-medium text-slate-200">{s.strategy}</span>
+                <span className="num text-muted">{s.count}</span>
+              </div>
+            ))}
+            {o.by_strategy_30d.length === 0 && (
               <p className="text-muted">Nincs adat.</p>
             )}
           </div>

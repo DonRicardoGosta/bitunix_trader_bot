@@ -12,9 +12,9 @@ from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
 from app.config import Settings, get_settings
 from app.db.session import get_db
 from app.schemas.trading import OrderRequest, OrderResponse
-from app.services.calibration_runner import get_latest_successful_calibration
 from app.services.entry_order_prep import OpenEntryPreparationError
 from app.services.trading import TradingService
+from app.services.trading_gate import is_trading_allowed
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -46,23 +46,15 @@ async def place_order(
     módban (``BITUNIX_LIVE_TRADING=false``) sem kerüli el a gate-et –
     így a felület konzisztensen viselkedik élesben is.
     """
-    if settings.require_calibration_for_trading:
-        max_age = max(
-            settings.calibration_interval_seconds * 2 // 60,
-            settings.calibration_max_age_minutes,
+    if not await is_trading_allowed(session, settings):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Trading zárolva (pause vagy nincs friss kalibráció). "
+                "Ellenőrizd a Vezérlőpultot vagy indíts kalibrációt: "
+                "POST /api/calibration/run."
+            ),
         )
-        calibration = await get_latest_successful_calibration(
-            session, max_age_minutes=max_age
-        )
-        if calibration is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Trading is locked: nincs friss TP/SL kalibráció. "
-                    "Várj amíg a calibration runner lefut, vagy indítsd "
-                    "kézzel: POST /api/calibration/run."
-                ),
-            )
     try:
         return await service.place_order(payload)
     except OpenEntryPreparationError as exc:

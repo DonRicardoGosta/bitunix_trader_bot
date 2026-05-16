@@ -15,6 +15,8 @@ from app.services.calibration_runner import (
     get_latest_successful_calibration,
     run_calibration,
 )
+from app.services.runtime_settings import effective_require_calibration, is_trading_paused
+from app.services.trading_gate import is_calibration_trading_allowed
 
 router = APIRouter(prefix="/calibration", tags=["calibration"])
 
@@ -54,10 +56,10 @@ async def get_latest(
         session, max_age_minutes=max_age
     )
 
-    trading_enabled = (
-        not settings.require_calibration_for_trading
-        or latest_success is not None
-    )
+    cal_allowed = await is_calibration_trading_allowed(session, settings)
+    paused = await is_trading_paused(session)
+    trading_enabled = cal_allowed and not paused
+    require_cal = await effective_require_calibration(session, settings)
 
     next_run_after = None
     if latest_any and latest_any.finished_at is not None:
@@ -70,7 +72,9 @@ async def get_latest(
 
     return {
         "trading_enabled": trading_enabled,
-        "require_calibration_for_trading": settings.require_calibration_for_trading,
+        "trading_paused": paused,
+        "calibration_gate_open": cal_allowed,
+        "require_calibration_for_trading": require_cal,
         "max_age_minutes": max_age,
         "now": datetime.now(UTC).isoformat(),
         "next_run_after": next_run_after,

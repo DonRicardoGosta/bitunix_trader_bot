@@ -54,7 +54,9 @@ def _q2(value: Decimal) -> str:
     return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-async def _orders_summary(session: AsyncSession) -> dict[str, Any]:
+async def _orders_summary(
+    session: AsyncSession, *, lookback_hours: int | None = None
+) -> dict[str, Any]:
     """Saját DB-rendelések aggregátuma — *order audit log* alapú."""
     total = (
         await session.execute(sa.select(sa.func.count()).select_from(Order))
@@ -104,9 +106,21 @@ async def _orders_summary(session: AsyncSession) -> dict[str, Any]:
         )
     ).scalar_one()
 
+    in_window: int | None = None
+    if lookback_hours is not None:
+        since_win = datetime.now(UTC) - timedelta(hours=lookback_hours)
+        in_window = (
+            await session.execute(
+                sa.select(sa.func.count())
+                .select_from(Order)
+                .where(Order.created_at >= since_win)
+            )
+        ).scalar_one()
+
     return {
         "total": int(total),
         "last_24h": int(last_24h),
+        "in_lookback_window": int(in_window) if in_window is not None else None,
         "by_status": by_status,
         "top_symbols_30d": top_symbols,
         "by_strategy_30d": by_strategy,
@@ -248,10 +262,46 @@ async def _strategy_summary(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+def _extended_closed_kpis(realized_pnls: list[Decimal]) -> dict[str, Any]:
+    wins = [v for v in realized_pnls if v > 0]
+    losses = [v for v in realized_pnls if v < 0]
+    gross_profit = sum(wins, Decimal(0))
+    gross_loss_abs = abs(sum(losses, Decimal(0)))
+    profit_factor: str | None = None
+    if gross_loss_abs > 0:
+        profit_factor = _q2(gross_profit / gross_loss_abs)
+    total = len(realized_pnls)
+    avg_win = gross_profit / Decimal(len(wins)) if wins else None
+    avg_loss = sum(losses, Decimal(0)) / Decimal(len(losses)) if losses else None
+    expectancy: str | None = None
+    if total > 0 and avg_win is not None and avg_loss is not None:
+        wr = Decimal(len(wins)) / Decimal(total)
+        lr = Decimal(len(losses)) / Decimal(total)
+        exp = avg_win * wr + avg_loss * lr
+        expectancy = str(exp.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+    max_dd = Decimal(0)
+    peak = Decimal(0)
+    cumulative = Decimal(0)
+    for v in realized_pnls:
+        cumulative += v
+        if cumulative > peak:
+            peak = cumulative
+        dd = peak - cumulative
+        if dd > max_dd:
+            max_dd = dd
+    return {
+        "profit_factor": profit_factor,
+        "expectancy_usdt": expectancy,
+        "max_drawdown_usdt": str(
+            max_dd.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        ),
+    }
+
+
 async def _exchange_summary(
     client: BitunixClient,
     *,
-    lookback_days: int = 7,
+    lookback_hours: int = 168,
     history_pages: int = 3,
     history_page_size: int = 100,
 ) -> dict[str, Any]:
@@ -304,11 +354,10 @@ async def _exchange_summary(
         Decimal(0),
     )
 
-    # 3) Lezárt pozíciók (szimbólum-mentes lapozás, lookback_days szűréssel)
+    # 3) Lezárt pozíciók (szimbólum-mentes lapozás, lookback_hours szűréssel)
     closed_positions: list[dict[str, Any]] = []
-    start_ms = int(
-        (datetime.now(UTC) - timedelta(days=lookback_days)).timestamp() * 1000
-    )
+    since_dt = datetime.now(UTC) - timedelta(hours=lookback_hours)
+    start_ms = int(since_dt.timestamp() * 1000)
     for page in range(history_pages):
         try:
             raw_h = await client.get_history_positions(
@@ -370,6 +419,8 @@ async def _exchange_summary(
         key=lambda r: Decimal(r["realized_pnl_usdt"]),
         reverse=True,
     )
+    extended = _extended_closed_kpis(realized_pnls)
+    lookback_days_equiv = max(1, lookback_hours // 24)
 
     return {
         "sync_error": sync_error,
@@ -381,7 +432,8 @@ async def _exchange_summary(
             "items": open_positions,
         },
         "closed_positions": {
-            "lookback_days": lookback_days,
+            "lookback_hours": lookback_hours,
+            "lookback_days": lookback_days_equiv,
             "count": total_closed,
             "realized_pnl_usdt": str(realized_sum),
             "win_rate_pct": _q2(win_rate) if win_rate is not None else None,
@@ -389,6 +441,9 @@ async def _exchange_summary(
             "losses": losses,
             "avg_win_usdt": str(avg_win) if avg_win is not None else None,
             "avg_loss_usdt": str(avg_loss) if avg_loss is not None else None,
+            "profit_factor": extended["profit_factor"],
+            "expectancy_usdt": extended["expectancy_usdt"],
+            "max_drawdown_usdt": extended["max_drawdown_usdt"],
             "top_winners": top_winners,
             "top_losers": top_losers,
             "per_symbol": per_symbol_list,
@@ -400,10 +455,10 @@ async def build_dashboard_summary(
     session: AsyncSession,
     client: BitunixClient | None,
     *,
-    lookback_days: int = 7,
+    lookback_hours: int = 168,
 ) -> dict[str, Any]:
     """Egyetlen aggregátum a frontend dashboardhoz."""
-    db_orders = await _orders_summary(session)
+    db_orders = await _orders_summary(session, lookback_hours=lookback_hours)
     events = await _events_summary(session)
     strat = await _strategy_summary(session)
     exchange: dict[str, Any] = {
@@ -420,7 +475,8 @@ async def build_dashboard_summary(
             "items": [],
         },
         "closed_positions": {
-            "lookback_days": lookback_days,
+            "lookback_hours": lookback_hours,
+            "lookback_days": max(1, lookback_hours // 24),
             "count": 0,
             "realized_pnl_usdt": "0",
             "win_rate_pct": None,
@@ -428,17 +484,21 @@ async def build_dashboard_summary(
             "losses": 0,
             "avg_win_usdt": None,
             "avg_loss_usdt": None,
+            "profit_factor": None,
+            "expectancy_usdt": None,
+            "max_drawdown_usdt": "0",
             "top_winners": [],
             "top_losers": [],
             "per_symbol": [],
         },
     }
     if client is not None:
-        exchange = await _exchange_summary(client, lookback_days=lookback_days)
+        exchange = await _exchange_summary(client, lookback_hours=lookback_hours)
 
     return {
         "generated_at": datetime.now(UTC).isoformat(),
-        "lookback_days": lookback_days,
+        "lookback_hours": lookback_hours,
+        "lookback_days": max(1, lookback_hours // 24),
         "orders": db_orders,
         "events": events,
         "strategy": strat,

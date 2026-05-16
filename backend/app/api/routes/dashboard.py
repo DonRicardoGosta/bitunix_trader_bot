@@ -18,28 +18,31 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 @router.get("/summary")
 async def dashboard_summary(
-    lookback_days: int = Query(
-        7,
+    lookback_hours: int | None = Query(
+        None,
+        ge=1,
+        le=2160,
+        description="Visszatekintés órában (1–2160, max ~90 nap).",
+    ),
+    lookback_days: int | None = Query(
+        None,
         ge=1,
         le=90,
-        description=(
-            "Hány napra visszamenőleg számoljuk a lezárt pozíciók KPI-jait "
-            "(realized PnL, win-rate, top winners/losers)."
-        ),
+        description="Kompatibilitás: napokban (felülírja lookback_hours-t, ha megadva).",
     ),
     session: AsyncSession = Depends(get_db),
     client: BitunixClient = Depends(get_bitunix_client),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """Aggregált dashboard adatok (DB + Bitunix szinkron).
+    """Aggregált dashboard adatok (DB + Bitunix szinkron)."""
+    if lookback_days is not None:
+        hours = lookback_days * 24
+    elif lookback_hours is not None:
+        hours = lookback_hours
+    else:
+        hours = 168
 
-    Ha a Bitunix API kulcs nincs konfigurálva, a Bitunix-szinkron rész
-    üresen tér vissza ``sync_error`` jelzéssel — a DB-alapú aggregátumok
-    továbbra is működnek.
-    """
     bitunix = (
         client if (settings.bitunix_api_key and settings.bitunix_api_secret) else None
     )
-    return await build_dashboard_summary(
-        session, bitunix, lookback_days=lookback_days
-    )
+    return await build_dashboard_summary(session, bitunix, lookback_hours=hours)

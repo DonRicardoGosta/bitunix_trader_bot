@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.api.routes import (
     account,
+    analytics,
     calibration,
     dashboard,
     events,
@@ -27,6 +28,7 @@ from app.api.routes import (
     market,
     orders,
     positions,
+    settings as settings_routes,
     strategies,
 )
 from app.config import get_settings
@@ -152,6 +154,8 @@ def create_app() -> FastAPI:
     app.include_router(events.router, prefix="/api")
     app.include_router(calibration.router, prefix="/api")
     app.include_router(dashboard.router, prefix="/api")
+    app.include_router(analytics.router, prefix="/api")
+    app.include_router(settings_routes.router, prefix="/api")
     app.include_router(live.router, prefix="/api")
 
     return app

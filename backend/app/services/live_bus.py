@@ -21,6 +21,8 @@ DEFAULT_INVALIDATION_TOPICS: tuple[str, ...] = (
     "strategies",
     "events",
     "market",
+    "settings",
+    "analytics",
 )
 
 _th_lock = threading.Lock()
