@@ -171,8 +171,8 @@ export default function AnalyticsPage() {
               <CardHeader>
                 <CardTitle>TP / SL idő szerint</CardTitle>
                 <span className="text-xs text-muted">
-                  Lezárt pozíciók száma óránként és hét napja szerint (összesítve) ·{" "}
-                  {lookbackLabel(pnl.lookback_hours)}
+                  TP/SL bontás órákra, napokra vagy nap+óra nézetben (ugyanazon hét nap minden
+                  előfordulása összeadva) · {lookbackLabel(pnl.lookback_hours)}
                 </span>
               </CardHeader>
               <CardContent>

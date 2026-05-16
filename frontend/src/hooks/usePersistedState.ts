@@ -39,3 +39,37 @@ export function usePersistedState(
 
   return [value, setPersisted];
 }
+
+/** localStorage-ba mentett string állapot (CSR only). */
+export function usePersistedStringState<T extends string>(
+  storageKey: string,
+  defaultValue: T,
+  isValid: (v: string) => v is T,
+): [T, (value: T) => void] {
+  const [value, setValue] = useState<T>(defaultValue);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw == null) return;
+      if (isValid(raw)) setValue(raw);
+    } catch {
+      /* ignore */
+    }
+  }, [storageKey, isValid]);
+
+  const setPersisted = useCallback(
+    (next: T) => {
+      if (!isValid(next)) return;
+      setValue(next);
+      try {
+        localStorage.setItem(storageKey, next);
+      } catch {
+        /* ignore */
+      }
+    },
+    [storageKey, isValid],
+  );
+
+  return [value, setPersisted];
+}

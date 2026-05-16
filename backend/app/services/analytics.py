@@ -136,22 +136,35 @@ async def _fetch_closed_in_window(
     )
 
 
+def _empty_hour_buckets() -> list[dict[str, int]]:
+    return [{"hour": h, "tp_count": 0, "sl_count": 0} for h in range(24)]
+
+
 def _tp_sl_timing_stats(closed: list[dict[str, Any]]) -> dict[str, Any]:
     """Lezárt pozíciók TP/SL darabszáma óra (0–23) és hét napja szerint.
 
     A Bitunix history nem ad explicit TP/SL típust; közelítés:
     realizált PnL > 0 → TP (nyereséges zárás), < 0 → SL (vesztes zárás).
     Időbélyeg: lezárás (``closed_at`` / ``updated_at``), napok/hetek összesítve.
+
+    ``by_hour`` / ``by_weekday``: az ablak összes napja együtt.
+    ``by_weekday_hour``: hét napja × óra — pl. minden hétfő 14:00-ja összeadódik.
     """
-    by_hour: list[dict[str, int]] = [
-        {"hour": h, "tp_count": 0, "sl_count": 0} for h in range(24)
-    ]
+    by_hour = _empty_hour_buckets()
     by_weekday: list[dict[str, int | str]] = [
         {
             "weekday": wd,
             "label": _WEEKDAY_LABELS_HU[wd],
             "tp_count": 0,
             "sl_count": 0,
+        }
+        for wd in range(7)
+    ]
+    by_weekday_hour: list[dict[str, Any]] = [
+        {
+            "weekday": wd,
+            "label": _WEEKDAY_LABELS_HU[wd],
+            "by_hour": _empty_hour_buckets(),
         }
         for wd in range(7)
     ]
@@ -165,12 +178,15 @@ def _tp_sl_timing_stats(closed: list[dict[str, Any]]) -> dict[str, Any]:
         local = ts.astimezone(_ANALYTICS_TZ)
         hour = local.hour
         wd = local.weekday()
+        wd_hours = by_weekday_hour[wd]["by_hour"]
         if r > 0:
             by_hour[hour]["tp_count"] += 1
             by_weekday[wd]["tp_count"] += 1
+            wd_hours[hour]["tp_count"] += 1
         else:
             by_hour[hour]["sl_count"] += 1
             by_weekday[wd]["sl_count"] += 1
+            wd_hours[hour]["sl_count"] += 1
     total_tp = sum(b["tp_count"] for b in by_hour)
     total_sl = sum(b["sl_count"] for b in by_hour)
     return {
@@ -178,10 +194,13 @@ def _tp_sl_timing_stats(closed: list[dict[str, Any]]) -> dict[str, Any]:
         "classification_note": (
             "TP = nyereséges lezárás (realized PnL > 0), "
             "SL = vesztes lezárás (realized PnL < 0). "
-            "Óra és hét napja szerint összesítve (a visszatekintési ablak összes napja)."
+            "Órák és napok külön-külön az ablak összes napján összesítve; "
+            "a nap+óra nézet ugyanazon hét napjának minden előfordulását összeadja "
+            "(pl. két hétfő 10:00-ja egy sorban)."
         ),
         "by_hour": by_hour,
         "by_weekday": by_weekday,
+        "by_weekday_hour": by_weekday_hour,
         "total_tp": total_tp,
         "total_sl": total_sl,
     }

@@ -373,11 +373,16 @@ export interface TpSlByWeekdayBucket extends TpSlCountRow {
   label: string;
 }
 
+export interface TpSlByWeekdayHourBucket extends TpSlByWeekdayBucket {
+  by_hour: TpSlByHourBucket[];
+}
+
 export interface TpSlTimingStats {
   timezone: string;
   classification_note: string;
   by_hour: TpSlByHourBucket[];
   by_weekday: TpSlByWeekdayBucket[];
+  by_weekday_hour: TpSlByWeekdayHourBucket[];
   total_tp: number;
   total_sl: number;
 }
