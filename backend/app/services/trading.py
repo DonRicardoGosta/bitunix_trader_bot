@@ -120,6 +120,7 @@ class TradingService:
         )
         tp_stop = payload.tp_stop_type
         sl_stop = payload.sl_stop_type
+        tpsl_error: str | None = None
 
         async with self._session.begin_nested():
             self._session.add(order)
@@ -142,21 +143,32 @@ class TradingService:
 
             dry_run = bool(response.get("dryRun"))
             if use_position_tpsl:
-                tpsl_resp = await attach_full_position_tp_sl(
-                    self._client,
-                    symbol=payload.symbol,
-                    side=payload.side,
-                    tp_price=payload.tp_price,  # type: ignore[arg-type]
-                    sl_price=payload.sl_price,  # type: ignore[arg-type]
-                    tp_stop_type=tp_stop,
-                    sl_stop_type=sl_stop,
-                    dry_run_entry=dry_run,
-                )
-                response = {
-                    **response,
-                    "positionTpSl": tpsl_resp,
-                    "tpsl_mode": "position_full",
-                }
+                try:
+                    tpsl_resp = await attach_full_position_tp_sl(
+                        self._client,
+                        symbol=payload.symbol,
+                        side=payload.side,
+                        tp_price=payload.tp_price,  # type: ignore[arg-type]
+                        sl_price=payload.sl_price,  # type: ignore[arg-type]
+                        tp_stop_type=tp_stop,
+                        sl_stop_type=sl_stop,
+                        dry_run_entry=dry_run,
+                        client_order_id=client_order_id,
+                        place_order_response=response,
+                    )
+                    response = {
+                        **response,
+                        "positionTpSl": tpsl_resp,
+                        "tpsl_mode": "position_full",
+                    }
+                except OpenEntryPreparationError as exc:
+                    tpsl_error = str(exc)
+                    response = {
+                        **response,
+                        "tpsl_mode": "position_full",
+                        "positionTpSl": None,
+                        "tpsl_attach_error": tpsl_error,
+                    }
             order.raw_response = json.dumps(response, default=str)
             if not dry_run:
                 data = response.get("data") or {}
@@ -164,14 +176,22 @@ class TradingService:
                 if bitunix_id:
                     order.bitunix_order_id = str(bitunix_id)
 
+        audit_level = AuditLevel.INFO
+        audit_msg = (
+            f"{payload.side} {payload.symbol} qty={payload.quantity} "
+            f"lev={payload.leverage}x (dry_run={dry_run})"
+        )
+        if tpsl_error:
+            audit_level = AuditLevel.WARNING
+            audit_msg = (
+                f"{payload.symbol} {payload.side}: belépés OK, TP/SL rögzítés sikertelen: "
+                f"{tpsl_error}"
+            )
         await audit.record(
             self._session,
-            "trade.order_placed",
-            level=AuditLevel.INFO,
-            message=(
-                f"{payload.side} {payload.symbol} qty={payload.quantity} "
-                f"lev={payload.leverage}x (dry_run={dry_run})"
-            ),
+            "trade.order_placed" if not tpsl_error else "trade.tpsl_attach_failed",
+            level=audit_level,
+            message=audit_msg,
             payload={
                 "client_order_id": client_order_id,
                 "bitunix_order_id": order.bitunix_order_id,
@@ -188,6 +208,7 @@ class TradingService:
                 "sl_price": str(payload.sl_price) if payload.sl_price else None,
                 "dry_run": dry_run,
                 "entry_context": entry_context,
+                "tpsl_attach_error": tpsl_error,
             },
             strategy_name=strategy_name,
         )

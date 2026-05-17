@@ -707,6 +707,24 @@ class TopSignalEntriesStrategy(Strategy):
             )
             return out
 
+        raw_resp = order_resp.raw if isinstance(order_resp.raw, dict) else {}
+        tpsl_attach_error = raw_resp.get("tpsl_attach_error")
+        if tpsl_attach_error:
+            await audit.record(
+                ctx.session,
+                "strategy.top_signal_entries.tpsl_attach_failed",
+                level=AuditLevel.WARNING,
+                message=f"{symbol} {side}: belépés OK, TP/SL rögzítés sikertelen: {tpsl_attach_error}",
+                payload={
+                    "symbol": symbol,
+                    "side": side,
+                    "client_order_id": order_resp.client_order_id,
+                    "tpsl_attach_error": tpsl_attach_error,
+                },
+                strategy_name=self.name,
+            )
+            out["tpsl_attach_error"] = str(tpsl_attach_error)
+
         out.update(
             placed=True,
             leverage=leverage,

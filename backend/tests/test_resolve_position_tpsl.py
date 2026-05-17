@@ -9,6 +9,7 @@ import pytest
 
 from app.services.entry_order_prep import (
     attach_full_position_tp_sl,
+    position_id_from_place_order_response,
     resolve_open_position_id,
 )
 
@@ -28,6 +29,46 @@ async def test_resolve_open_position_id_finds_matching_side() -> None:
     }
     pid = await resolve_open_position_id(client, symbol="ETHUSDT", side="BUY")
     assert pid == "p-eth"
+
+
+@pytest.mark.asyncio
+async def test_resolve_open_position_id_from_place_order_response() -> None:
+    client = AsyncMock()
+    pid = await resolve_open_position_id(
+        client,
+        symbol="SPKUSDT",
+        side="SELL",
+        place_order_response={"data": {"positionId": "pos-from-order"}},
+    )
+    assert pid == "pos-from-order"
+    client.get_positions.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_open_position_id_matches_hold_side() -> None:
+    client = AsyncMock()
+    client.get_positions.return_value = {
+        "data": [
+            {
+                "symbol": "BOMEUSDT",
+                "holdSide": "LONG",
+                "positionId": "p-bome",
+                "qty": "100",
+            }
+        ]
+    }
+    pid = await resolve_open_position_id(client, symbol="BOMEUSDT", side="BUY")
+    assert pid == "p-bome"
+
+
+@pytest.mark.asyncio
+async def test_position_id_from_place_order_response_helper() -> None:
+    assert (
+        position_id_from_place_order_response(
+            {"data": {"positionId": "abc123"}}
+        )
+        == "abc123"
+    )
 
 
 @pytest.mark.asyncio

@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Ha True, a tradelés (manuális is) blokkolva van amíg nincs friss kalibráció.
     require_calibration_for_trading: bool = True
 
+    # TP/SL position attach: várakozás a fill + pending positions API között
+    position_tpsl_resolve_max_attempts: int = Field(default=40, ge=5, le=120)
+    position_tpsl_resolve_delay_seconds: float = Field(default=0.5, ge=0.1, le=5.0)
+
     # -- élő UI push (WebSocket invalidáció + opcionális tick) ----------------
     live_ui_push_enabled: bool = True
     live_ui_push_interval_seconds: float = Field(
