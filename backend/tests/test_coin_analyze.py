@@ -14,6 +14,7 @@ from app.services.coin_analyze import (
     build_walk_forward_tpsl_variations_payload,
     leg_choppiness,
     merge_same_side_swings,
+    interval_bar_minutes,
     plan_kline_interval,
     split_klines_at_time_fraction,
     split_klines_time_midpoint,
@@ -30,6 +31,11 @@ def test_plan_kline_interval_one_day_uses_15m_or_finer_cap() -> None:
     iv, lim = plan_kline_interval(1440)
     assert iv == "15m"
     assert lim == 96
+
+
+def test_interval_bar_minutes() -> None:
+    assert interval_bar_minutes("15m") == 15
+    assert interval_bar_minutes("1m") == 1
 
 
 def test_merge_same_side_keeps_higher_high() -> None:

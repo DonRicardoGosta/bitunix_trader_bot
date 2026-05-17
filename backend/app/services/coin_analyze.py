@@ -42,6 +42,14 @@ _INTERVAL_BAR_MINUTES: list[tuple[str, int]] = [
 ]
 
 
+def interval_bar_minutes(interval: str) -> int:
+    """Gyertya hossza percben a Bitunix intervallum stringhez."""
+    for iv, bar_m in _INTERVAL_BAR_MINUTES:
+        if iv == interval:
+            return bar_m
+    return 1
+
+
 def plan_kline_interval(lookback_minutes: int) -> tuple[str, int]:
     """Válassz legfinomabb intervallumot, hogy ``limit`` ≤ 200 legyen.
 
@@ -786,6 +794,7 @@ def build_walk_forward_tpsl_variations_payload(
     target_tp_win_rate_pct: Decimal = _WF_TARGET_TP_WIN_RATE_PCT,
     min_resolved_trades: int = 2,
     hold_params: Any | None = None,
+    kline_bar_minutes: int | None = None,
 ) -> dict[str, Any]:
     """Több TP/SL (medián×) kombináció; szimulációban TP/SL %% csak **felülről** vágva (≤300 / ≤150).
 
@@ -834,10 +843,16 @@ def build_walk_forward_tpsl_variations_payload(
             continue
         hold_block: dict[str, Any] | None = None
         if hold_params is not None and getattr(hold_params, "enabled", False):
-            from app.services.hold_window import optimize_hold_window_for_sequence
+            from app.services.hold_window import (
+                infer_kline_bar_minutes,
+                optimize_hold_window_for_sequence,
+            )
 
+            bar_m = kline_bar_minutes
+            if bar_m is None:
+                bar_m = infer_kline_bar_minutes(klines)
             hold_block = optimize_hold_window_for_sequence(
-                klines, seq, params=hold_params
+                klines, seq, params=hold_params, kline_bar_minutes=int(bar_m)
             )
         raw_tp_s: str | None = None
         raw_sl_s: str | None = None
@@ -1416,6 +1431,7 @@ def build_coin_analysis_payload(
             choppiness_max=choppiness_max,
             cooldown_minutes=walk_forward_cooldown_minutes,
             hold_params=hold_params,
+            kline_bar_minutes=interval_bar_minutes(interval),
         ),
         "hold_window_optimization": _hold_window_optimization_info(hold_params),
     }

@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from app.services.hold_window import (
     HoldWindowParams,
+    effective_hold_grid_minutes,
     evaluate_hold_window_grid,
     is_good_profit,
     signed_profit_move_pct,
@@ -68,6 +69,60 @@ def test_simulate_time_exit_good_profit() -> None:
     assert kind == "time"
     assert profit == Decimal("16")
     assert is_good_profit(profit, threshold_pct=Decimal("15"))
+
+
+def test_effective_hold_grid_filters_coarse_klines() -> None:
+    params = HoldWindowParams(
+        enabled=True,
+        min_minutes=30,
+        max_minutes=60,
+        step_minutes=5,
+    )
+    assert effective_hold_grid_minutes(params, kline_bar_minutes=15) == [
+        30,
+        45,
+        60,
+    ]
+    assert effective_hold_grid_minutes(params, kline_bar_minutes=5) == [
+        30,
+        35,
+        40,
+        45,
+        50,
+        55,
+        60,
+    ]
+
+
+def test_hold_window_grid_tie_break_prefers_shorter_hold() -> None:
+    entry_ms = 0
+    klines = [
+        _bar(0, "100", "100", "100", "100"),
+        _bar(45 * 60 * 1000, "100", "120", "99", "116"),
+    ]
+    trades = [
+        {
+            "entry_bar_index": 0,
+            "entry_time_ms": entry_ms,
+            "entry_price": "100",
+            "predicted_side": "long",
+            "tp_move_pct": "50",
+            "sl_move_pct": "50",
+        }
+    ]
+    params = HoldWindowParams(
+        enabled=True,
+        min_minutes=30,
+        max_minutes=60,
+        step_minutes=15,
+        profit_threshold_pct=Decimal("15"),
+    )
+    result = evaluate_hold_window_grid(
+        klines, trades, params=params, kline_bar_minutes=15
+    )
+    assert result["best_hold_minutes"] == 30
+    rates = {int(r["hold_minutes"]): r["good_rate_pct"] for r in result["rows"]}
+    assert rates[30] == rates[45] == rates[60]
 
 
 def test_hold_window_grid_picks_best_minutes() -> None:

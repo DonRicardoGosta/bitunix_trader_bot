@@ -179,7 +179,10 @@ class HoldWindowBlock(BaseModel):
 
     enabled: bool
     profit_threshold_pct: str | None = None
+    configured_grid_minutes: list[int] = Field(default_factory=list)
     grid_minutes: list[int] = Field(default_factory=list)
+    kline_bar_minutes: int | None = Field(default=None, ge=1)
+    coarse_kline_resolution: bool = False
     best_hold_minutes: int | None = None
     best_good_rate_pct: str | None = None
     rows: list[HoldWindowGridRow] = Field(default_factory=list)

@@ -42,6 +42,26 @@ class HoldWindowParams:
         return out
 
 
+def effective_hold_grid_minutes(
+    params: HoldWindowParams,
+    *,
+    kline_bar_minutes: int,
+) -> list[int]:
+    """Rács szűrése gyertya-felbontásra: csak olyan percek, amik gyertyán mérhetők.
+
+    15 perces gyertyánál a 35–55 perces lépések gyakran ugyanarra a záró
+    gyertyára esnek, mint a 30/45/60 – ezért csak a ``bar`` többszörösei
+    maradnak (pl. 30, 45, 60).
+    """
+    configured = params.grid_minutes()
+    if not configured:
+        return []
+    bar_m = max(1, int(kline_bar_minutes))
+    if bar_m <= int(params.step_minutes):
+        return configured
+    return [m for m in configured if m % bar_m == 0]
+
+
 def signed_profit_move_pct(
     *,
     entry: Decimal,
@@ -168,17 +188,24 @@ def evaluate_hold_window_grid(
     trades: list[dict[str, Any]],
     *,
     params: HoldWindowParams,
+    kline_bar_minutes: int = 1,
 ) -> dict[str, Any]:
     """Minden hold percre: hány trade „jó” (profit ≥ küszöb a kilépéskor).
 
     A ``trades`` elemek a WF szekvencia mezőit használják (entry_bar_index,
     predicted_side, tp_move_pct, sl_move_pct).
     """
-    grid = params.grid_minutes()
+    configured_grid = params.grid_minutes()
+    bar_m = max(1, int(kline_bar_minutes))
+    grid = effective_hold_grid_minutes(params, kline_bar_minutes=bar_m)
+    coarse = bar_m > int(params.step_minutes)
     empty: dict[str, Any] = {
         "enabled": params.enabled,
         "profit_threshold_pct": str(params.profit_threshold_pct),
+        "configured_grid_minutes": configured_grid,
         "grid_minutes": grid,
+        "kline_bar_minutes": bar_m,
+        "coarse_kline_resolution": coarse,
         "best_hold_minutes": None,
         "best_good_rate_pct": None,
         "rows": [],
@@ -245,13 +272,16 @@ def evaluate_hold_window_grid(
             best_rate = rate
             best_m = int(row["hold_minutes"])
         elif best_rate is not None and rate == best_rate and best_m is not None:
-            if int(row["hold_minutes"]) > best_m:
+            if int(row["hold_minutes"]) < best_m:
                 best_m = int(row["hold_minutes"])
 
     return {
         "enabled": True,
         "profit_threshold_pct": str(threshold),
+        "configured_grid_minutes": configured_grid,
         "grid_minutes": grid,
+        "kline_bar_minutes": bar_m,
+        "coarse_kline_resolution": coarse,
         "best_hold_minutes": best_m,
         "best_good_rate_pct": (
             str(best_rate.quantize(Decimal("0.01"))) if best_rate is not None else None
@@ -265,10 +295,23 @@ def optimize_hold_window_for_sequence(
     sequence: dict[str, Any],
     *,
     params: HoldWindowParams,
+    kline_bar_minutes: int = 1,
 ) -> dict[str, Any]:
     """WF szekvencia trade listájára hold-window rács."""
     trades = sequence.get("trades") or []
-    return evaluate_hold_window_grid(klines, trades, params=params)
+    return evaluate_hold_window_grid(
+        klines, trades, params=params, kline_bar_minutes=kline_bar_minutes
+    )
+
+
+def infer_kline_bar_minutes(klines: list[dict[str, Decimal]]) -> int:
+    """Közelítő gyertya-hossz két szomszédos időbélyeg különbségéből."""
+    if len(klines) < 2:
+        return 1
+    t0 = _to_int_ms(klines[0]["time"])
+    t1 = _to_int_ms(klines[1]["time"])
+    delta_ms = abs(t1 - t0)
+    return max(1, delta_ms // 60_000)
 
 
 def hold_window_from_strategy_config(cfg: Any) -> HoldWindowParams:

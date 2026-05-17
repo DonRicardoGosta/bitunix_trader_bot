@@ -208,7 +208,12 @@ def apply_hold_window_to_symbol_calibration(
         cooldown_minutes=cooldown_minutes,
         clip_variation_tpsl_bounds=True,
     )
-    hw = optimize_hold_window_for_sequence(klines, seq, params=hold_params)
+    from app.services.hold_window import infer_kline_bar_minutes
+
+    bar_m = infer_kline_bar_minutes(klines)
+    hw = optimize_hold_window_for_sequence(
+        klines, seq, params=hold_params, kline_bar_minutes=bar_m
+    )
     best = hw.get("best_hold_minutes")
     if best is not None:
         calibration.best_hold_minutes = int(best)
