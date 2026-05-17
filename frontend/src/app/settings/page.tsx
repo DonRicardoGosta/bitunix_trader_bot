@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,6 +109,13 @@ export default function SettingsPage() {
 
   const eff = snap?.effective;
 
+  const tradingBlackoutInitial = useMemo((): TradingBlackoutSchedule => {
+    if (snap?.trading_blackout) {
+      return snap.trading_blackout as TradingBlackoutSchedule;
+    }
+    return defaultTradingBlackoutSchedule();
+  }, [snap?.trading_blackout]);
+
   return (
     <div className="space-y-6">
       <header>
@@ -193,10 +200,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <TradingBlackoutEditor
-                initial={
-                  (snap.trading_blackout as TradingBlackoutSchedule | undefined) ??
-                  defaultTradingBlackoutSchedule()
-                }
+                initial={tradingBlackoutInitial}
                 onSaved={() => void load()}
               />
             </CardContent>

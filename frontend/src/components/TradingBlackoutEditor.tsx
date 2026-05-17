@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { api } from "@/lib/api";
@@ -21,6 +21,11 @@ function emptyRange(): { start: string; end: string } {
   return { start: "22:00", end: "06:00" };
 }
 
+/** Szerver snapshot összehasonlítás — ne reseteljünk új objektum referenciára. */
+function scheduleFingerprint(schedule: TradingBlackoutSchedule): string {
+  return JSON.stringify(schedule);
+}
+
 export function TradingBlackoutEditor({
   initial,
   onSaved,
@@ -32,11 +37,16 @@ export function TradingBlackoutEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const syncedFingerprintRef = useRef(scheduleFingerprint(initial));
 
+  // Háttér-frissítés (WS / polling) ne írja felül a szerkesztést; mentés után szinkronizálunk.
   useEffect(() => {
+    if (dirty) return;
+    const fp = scheduleFingerprint(initial);
+    if (fp === syncedFingerprintRef.current) return;
+    syncedFingerprintRef.current = fp;
     setSchedule(initial);
-    setDirty(false);
-  }, [initial]);
+  }, [initial, dirty]);
 
   const updateDay = useCallback(
     (dayKey: string, patch: Partial<BlackoutDayConfig>) => {
@@ -72,6 +82,8 @@ export function TradingBlackoutEditor({
         ),
       };
       await api.putTradingBlackout(payload);
+      syncedFingerprintRef.current = scheduleFingerprint(payload);
+      setSchedule(payload);
       setDirty(false);
       onSaved?.();
     } catch (err) {
