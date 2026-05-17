@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     position_tpsl_resolve_max_attempts: int = Field(default=40, ge=5, le=120)
     position_tpsl_resolve_delay_seconds: float = Field(default=0.5, ge=0.1, le=5.0)
 
+    orders_enrichment_cache_ttl_seconds: int = Field(default=60, ge=5, le=600)
+
     # -- élő UI push (WebSocket invalidáció + opcionális tick) ----------------
     live_ui_push_enabled: bool = True
     live_ui_push_interval_seconds: float = Field(

@@ -4,9 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Pagination, pageSlice } from "@/components/ui/Pagination";
-import { api, type OrderRow } from "@/lib/api";
-import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
-import { usePollingQuery } from "@/hooks/usePollingQuery";
+import { type OrderRow } from "@/lib/api";
 import { cn, formatNumber } from "@/lib/utils";
 
 function parseDecimal(value: string | null | undefined): number | null {
@@ -107,26 +105,14 @@ type SortKey = "recent" | "pnl_desc" | "pnl_asc" | "count_desc" | "symbol_asc";
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 export function OrdersTable({
-  lookbackHours = 6,
-  refreshIntervalMs,
+  rows: rowsProp,
+  error: errorProp,
 }: {
-  lookbackHours?: number;
-  refreshIntervalMs: number;
+  rows: import("@/lib/api").OrderRow[] | null | undefined;
+  error: string | null;
 }) {
-  const ordersEpoch = useLiveEpoch("orders");
-  const { data: rows, error } = usePollingQuery(
-    () =>
-      api.orders({
-        limit: 500,
-        lookbackHours,
-      }),
-    {
-      intervalMs: refreshIntervalMs,
-      reloadKey: ordersEpoch,
-      staleKey: `${lookbackHours}:${refreshIntervalMs}`,
-      errorMessage: "Hiba a rendelések lekérésekor",
-    },
-  );
+  const rows = rowsProp;
+  const error = errorProp;
   const [search, setSearch] = useState("");
   const [lifecycle, setLifecycle] = useState<LifecycleFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("recent");

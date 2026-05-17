@@ -44,11 +44,47 @@ from app.services.order_enrichment import (
     parse_open_symbols_from_positions,
     pick_trade_augment,
 )
+from app.services.order_enrichment_cache import (
+    clear_order_enrichment_cache as _clear_enrichment_cache_impl,
+    enrichment_cache_key,
+    get_order_enrichment_cache,
+)
 
 
 def clear_orders_enrichment_cache() -> None:
-    """Kompatibilitás tesztekkel / place_order után (nincs in-memory cache)."""
-    return None
+    """Új rendelés után: Bitunix enrichment cache ürítése."""
+    _clear_enrichment_cache_impl()
+
+
+def _summarize_pnl_rows(
+    rows: list[dict[str, Any]],
+    *,
+    lookback_hours: int | None,
+    lifecycle: str | None,
+) -> dict[str, Any]:
+    total_r = Decimal(0)
+    total_u = Decimal(0)
+    for row in rows:
+        ex = row.get("exchange") or {}
+        raw_r = ex.get("realized_pnl_usdt")
+        raw_u = ex.get("unrealized_pnl_usdt")
+        if raw_r is not None:
+            total_r += Decimal(str(raw_r))
+        if raw_u is not None:
+            total_u += Decimal(str(raw_u))
+    sync_error = None
+    if rows:
+        ex0 = rows[0].get("exchange") or {}
+        sync_error = ex0.get("sync_error")
+    return {
+        "lookback_hours": lookback_hours,
+        "lifecycle_filter": lifecycle,
+        "order_count": len(rows),
+        "realized_pnl_usdt": str(total_r),
+        "unrealized_pnl_usdt": str(total_u),
+        "total_pnl_usdt": str(total_r + total_u),
+        "sync_error": sync_error,
+    }
 
 
 def _filter_rows_by_lifecycle(
@@ -224,6 +260,43 @@ class TradingService:
             raw=response,
         )
 
+    async def _fetch_orders_for_lookback(
+        self,
+        *,
+        lookback_hours: int | None = None,
+        symbol: str | None = None,
+    ) -> list[Order]:
+        stmt = select(Order).order_by(Order.created_at.desc())
+        if lookback_hours is not None:
+            since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
+            stmt = stmt.where(Order.created_at >= since)
+        if symbol:
+            stmt = stmt.where(Order.symbol == symbol.upper())
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _enriched_rows_cached(
+        self,
+        orders: list[Order],
+        *,
+        lookback_hours: int | None,
+        symbol: str | None,
+        debug_sync: bool,
+    ) -> list[dict[str, Any]]:
+        newest = orders[0].created_at.isoformat() if orders else None
+        key = enrichment_cache_key(
+            lookback_hours=lookback_hours,
+            order_count=len(orders),
+            newest_created_at_iso=newest,
+            symbol=symbol,
+        ) + f":dbg={int(debug_sync)}"
+        cache = get_order_enrichment_cache()
+
+        async def _build() -> list[dict[str, Any]]:
+            return await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
+
+        return await cache.get_or_fetch(key, _build)
+
     async def list_orders(
         self,
         limit: int = 50,
@@ -244,20 +317,19 @@ class TradingService:
             lifecycle: Pl. ``closed`` – csak az adott életciklusú sorok.
             debug_sync: Ha true, hibakereső metaadat is jön.
         """
-        stmt = select(Order).order_by(Order.created_at.desc())
-        if lookback_hours is not None:
-            since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
-            stmt = stmt.where(Order.created_at >= since)
-        if symbol:
-            stmt = stmt.where(Order.symbol == symbol.upper())
-        stmt = stmt.offset(offset).limit(limit)
-        result = await self._session.execute(stmt)
-        orders = list(result.scalars().all())
-        rows = await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
+        orders = await self._fetch_orders_for_lookback(
+            lookback_hours=lookback_hours, symbol=symbol
+        )
+        rows = await self._enriched_rows_cached(
+            orders,
+            lookback_hours=lookback_hours,
+            symbol=symbol,
+            debug_sync=debug_sync,
+        )
         filtered = _filter_rows_by_lifecycle(rows, lifecycle)
         if lifecycle:
             return filtered[offset : offset + limit] if offset else filtered[:limit]
-        return filtered
+        return filtered[offset : offset + limit]
 
     async def orders_pnl_totals(
         self, *, lookback_hours: int | None = None, lifecycle: str | None = None
@@ -268,37 +340,41 @@ class TradingService:
         az összeg a soronkénti ``realized_pnl_usdt`` + ``unrealized_pnl_usdt``
         összege (ahol a mező ki van töltve).
         """
-        stmt = select(Order).order_by(Order.created_at.desc())
-        if lookback_hours is not None:
-            since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
-            stmt = stmt.where(Order.created_at >= since)
-        result = await self._session.execute(stmt)
-        orders = list(result.scalars().all())
-        rows = await self._enriched_order_api_rows(orders, debug_sync=False)
+        orders = await self._fetch_orders_for_lookback(lookback_hours=lookback_hours)
+        rows = await self._enriched_rows_cached(
+            orders,
+            lookback_hours=lookback_hours,
+            symbol=None,
+            debug_sync=False,
+        )
         rows = _filter_rows_by_lifecycle(rows, lifecycle)
-        total_r = Decimal(0)
-        total_u = Decimal(0)
-        for row in rows:
-            ex = row.get("exchange") or {}
-            raw_r = ex.get("realized_pnl_usdt")
-            raw_u = ex.get("unrealized_pnl_usdt")
-            if raw_r is not None:
-                total_r += Decimal(str(raw_r))
-            if raw_u is not None:
-                total_u += Decimal(str(raw_u))
-        sync_error = None
-        if rows:
-            ex0 = rows[0].get("exchange") or {}
-            sync_error = ex0.get("sync_error")
-        return {
-            "lookback_hours": lookback_hours,
-            "lifecycle_filter": lifecycle,
-            "order_count": len(rows),
-            "realized_pnl_usdt": str(total_r),
-            "unrealized_pnl_usdt": str(total_u),
-            "total_pnl_usdt": str(total_r + total_u),
-            "sync_error": sync_error,
-        }
+        return _summarize_pnl_rows(
+            rows, lookback_hours=lookback_hours, lifecycle=lifecycle
+        )
+
+    async def orders_bundle(
+        self,
+        *,
+        lookback_hours: int | None = None,
+        limit: int = 500,
+        offset: int = 0,
+        lifecycle: str | None = None,
+        debug_sync: bool = False,
+    ) -> dict[str, Any]:
+        """Egy Bitunix enrichment: lista + PnL összesítő (rendelések oldal)."""
+        orders = await self._fetch_orders_for_lookback(lookback_hours=lookback_hours)
+        rows = await self._enriched_rows_cached(
+            orders,
+            lookback_hours=lookback_hours,
+            symbol=None,
+            debug_sync=debug_sync,
+        )
+        filtered = _filter_rows_by_lifecycle(rows, lifecycle)
+        page = filtered[offset : offset + limit]
+        totals = _summarize_pnl_rows(
+            filtered, lookback_hours=lookback_hours, lifecycle=lifecycle
+        )
+        return {"orders": page, "pnl_totals": totals}
 
     async def _enriched_order_api_rows(
         self,
