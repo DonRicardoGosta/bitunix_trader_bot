@@ -25,34 +25,46 @@ const TOGGLES: {
   key: ToggleKey;
   label: string;
   hint: string;
+  example?: string;
   invert?: boolean;
 }[] = [
   {
     key: "trading_paused",
     label: "Trading szüneteltetve",
-    hint: "Minden order (manuális + stratégia) blokkolva.",
+    hint:
+      "Ha be van kapcsolva, minden új order blokkolva: kézi rendelés a UI-ról és stratégia nyitások egyaránt. A meglévő pozíciók nem záródnak automatikusan.",
+    example: "Bekapcsolva = „vészstop” teszt vagy karbantartás közben.",
     invert: true,
   },
   {
     key: "require_calibration_for_trading",
     label: "Kalibráció kötelező",
-    hint: "Csak friss TP/SL kalibráció után enged tradelni.",
+    hint:
+      "Csak akkor enged tradelni (manuálisan és stratégiával), ha van friss, sikeres TP/SL kalibráció a beállított max. korán belül. Kikapcsolva: kalibráció nélkül is mehet order.",
+    example:
+      "Bekapcsolva + nincs friss kalibráció → 409 / stratégia NO_OP „calibration_missing”.",
   },
   {
     key: "strategy_runner_paused",
     label: "Stratégia scheduler szünet",
-    hint: "A háttér stratégia futások kihagyása.",
+    hint:
+      "A háttér scheduler továbbra is fut, de kihagyja a regisztrált stratégiák automatikus futását. Kézi „Indítás most” továbbra is működhet, ha a stratégia be van kapcsolva.",
+    example: "Bekapcsolva = csak kézi indítás a Stratégiák oldalon.",
     invert: true,
   },
   {
     key: "bitunix_live_trading",
     label: "Élő trading (Bitunix)",
-    hint: "Bekapcsolva: valódi rendelések mennek a tőzsdére. Kikapcsolva: dry-run.",
+    hint:
+      "Bekapcsolva: a backend valódi place_order hívást küld a Bitunix felé (API kulcs kell). Kikapcsolva: dry-run — naplózás és mock válasz, nincs tőzsdei order.",
+    example: "Teszthez kapcsold ki; éleshez be + érvényes BITUNIX_API_KEY/SECRET a .env-ben.",
   },
   {
     key: "strategy_top_signal_entries_enabled",
     label: "Top signal entries stratégia",
-    hint: "A stratégia futása és scheduler részvétele.",
+    hint:
+      "Ha ki van kapcsolva, a top_signal_entries run() azonnal kilép (NO_OP, „disabled”). A scheduler és a kézi indítás is ezt tiszteletben tartja.",
+    example: "Ki = paraméterek megmaradnak, de nem nyit pozíciót; be = normál futás.",
   },
 ];
 
@@ -242,11 +254,19 @@ export default function SettingsPage() {
                         void patchOne(t.key, t.invert ? !on : on);
                       }}
                     />
-                    <span>
+                    <span className="min-w-0">
                       <span className="font-medium text-slate-200 block">
                         {t.label}
                       </span>
-                      <span className="text-xs text-muted">{t.hint}</span>
+                      <span className="text-xs text-muted block mt-0.5 leading-relaxed">
+                        {t.hint}
+                      </span>
+                      {t.example ? (
+                        <span className="text-xs text-slate-400 block mt-1 leading-relaxed">
+                          <span className="text-muted">Példa: </span>
+                          {t.example}
+                        </span>
+                      ) : null}
                     </span>
                   </label>
                 );

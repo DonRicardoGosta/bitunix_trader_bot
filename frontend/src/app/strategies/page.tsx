@@ -142,24 +142,38 @@ export default function StrategiesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Futtatás vezérlés</CardTitle>
+          <span className="text-xs text-muted">
+            Runtime kapcsolók — azonnal DB-be mentődnek
+          </span>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <label className="flex items-start gap-3 cursor-pointer">
+        <CardContent className="space-y-4">
+          <label className="flex items-start gap-3 cursor-pointer border-b border-border/30 pb-4">
             <input
               type="checkbox"
-              className="mt-1"
+              className="mt-1 shrink-0"
               checked={liveTrading}
               disabled={toggleBusy !== null}
               onChange={(e) => void patchRuntime("bitunix_live_trading", e.target.checked)}
             />
-            <span>
+            <span className="min-w-0">
               <span className="font-medium text-slate-200 block">
                 Élő trading (Bitunix)
               </span>
-              <span className="text-xs text-muted">
-                {liveTrading
-                  ? "Valódi rendelések engedélyezve."
-                  : "Dry-run: nincs tőzsdei order."}
+              <span className="text-xs text-muted block mt-0.5 leading-relaxed">
+                Bekapcsolva: valódi place_order a tőzsdére (API kulcs szükséges). Kikapcsolva:
+                dry-run — nincs Bitunix order, csak napló és mock válasz.
+              </span>
+              <span className="text-xs text-slate-400 block mt-1 leading-relaxed">
+                <span className="text-muted">Példa: </span>
+                teszt közben kapcsold ki; éles futáshoz be + érvényes kulcs a szerver .env-ben.
+              </span>
+              <span
+                className={cn(
+                  "text-xs block mt-1",
+                  liveTrading ? "text-profit" : "text-muted",
+                )}
+              >
+                Állapot: {liveTrading ? "élő order engedélyezve" : "dry-run"}
               </span>
             </span>
           </label>
@@ -169,8 +183,9 @@ export default function StrategiesPage() {
       <Card>
         <CardHeader>
           <CardTitle>top_signal_entries paraméterek</CardTitle>
-          <span className="text-xs text-muted">
-            alapértelmezés kódban; mentés után DB-ben
+          <span className="text-xs text-muted block mt-1 leading-relaxed">
+            Alapértelmezés a kódban (első indításkor). Mentés után az adatbázisban tárolódik;
+            minden mező alatt rövid magyarázat és példa van.
           </span>
         </CardHeader>
         <CardContent>
@@ -187,7 +202,10 @@ export default function StrategiesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Regisztrált stratégiák</CardTitle>
-          <span className="text-xs text-muted">bekapcsolás runtime (DB)</span>
+          <span className="text-xs text-muted block mt-1 leading-relaxed">
+            Bekapcsolás runtime (DB): ha kikapcsolod, a stratégia nem fut (scheduler és kézi
+            indítás is „disabled” NO_OP). Példa: éjszakai szünethez kapcsold ki, reggel vissza.
+          </span>
         </CardHeader>
         <CardContent>
           {!list && <p className="text-muted text-sm">Betöltés…</p>}
