@@ -182,6 +182,11 @@ export interface TopSignalEntriesConfig {
   sl_roi_pct: string;
   min_tp_roi_pct: string;
   tpsl_stop_type: "MARK_PRICE" | "LAST_PRICE";
+  hold_window_optimization_enabled: boolean;
+  hold_window_min_minutes: number;
+  hold_window_max_minutes: number;
+  hold_window_step_minutes: number;
+  hold_profit_threshold_pct: string;
 }
 
 export type TopSignalEntriesConfigPatch = Partial<TopSignalEntriesConfig>;

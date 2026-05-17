@@ -37,6 +37,7 @@ from app.db.models import AuditLevel
 from app.services.calibration_runner import CalibrationRunner
 from app.services.live_bus import LIVE_UI_TICK_TOPICS, publish_invalidate
 from app.services.live_bus import subscriber_count as live_subscriber_count
+from app.services.position_hold_monitor import PositionHoldMonitor
 from app.services.strategy.runner import StrategyRunner
 
 
@@ -78,6 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         print(f"[bitunix-trader] audit init failed: {exc}", file=sys.stderr, flush=True)
 
     calibration_runner: CalibrationRunner | None = None
+    hold_monitor: PositionHoldMonitor | None = None
     if settings.calibration_enabled:
         calibration_runner = CalibrationRunner(
             interval_seconds=settings.calibration_interval_seconds,
@@ -92,6 +94,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         await runner.start()
         app.state.strategy_runner = runner
+        hold_monitor = PositionHoldMonitor(interval_seconds=30.0)
+        await hold_monitor.start()
+        app.state.position_hold_monitor = hold_monitor
 
     live_push_stop = asyncio.Event()
     live_push_task: asyncio.Task[None] | None = None
@@ -110,6 +115,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             live_push_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await live_push_task
+        if hold_monitor is not None:
+            await hold_monitor.stop()
         if runner is not None:
             await runner.stop()
         if calibration_runner is not None:

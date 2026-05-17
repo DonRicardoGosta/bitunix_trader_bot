@@ -25,6 +25,11 @@ const DEFAULT: TopSignalEntriesConfig = {
   sl_roi_pct: "100",
   min_tp_roi_pct: "60",
   tpsl_stop_type: "MARK_PRICE",
+  hold_window_optimization_enabled: false,
+  hold_window_min_minutes: 30,
+  hold_window_max_minutes: 60,
+  hold_window_step_minutes: 5,
+  hold_profit_threshold_pct: "15",
 };
 
 const putMock = vi.fn();

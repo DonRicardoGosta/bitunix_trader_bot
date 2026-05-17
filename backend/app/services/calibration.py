@@ -31,6 +31,7 @@ from typing import Any
 
 from app.bitunix.client import BitunixClient
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
+from app.services.hold_window import HoldWindowParams, optimize_hold_window_for_sequence
 
 
 @dataclass
@@ -44,6 +45,8 @@ class SymbolCalibration:
     samples: int
     last_close: Decimal
     abs_change_24h_pct: Decimal
+    best_hold_minutes: int | None = None
+    hold_good_rate_pct: Decimal | None = None
 
 
 @dataclass
@@ -88,6 +91,12 @@ class CalibrationResult:
                     "samples": s.samples,
                     "last_close": str(s.last_close),
                     "abs_change_24h_pct": str(s.abs_change_24h_pct),
+                    "best_hold_minutes": s.best_hold_minutes,
+                    "hold_good_rate_pct": (
+                        str(s.hold_good_rate_pct)
+                        if s.hold_good_rate_pct is not None
+                        else None
+                    ),
                 }
                 for sym, s in self.per_symbol.items()
             },
@@ -104,6 +113,13 @@ class CalibrationResult:
             and self.global_sl_move_pct is not None
         ):
             return self.global_tp_move_pct, self.global_sl_move_pct
+        return None
+
+    def lookup_hold_minutes(self, symbol: str) -> int | None:
+        """Optimális tartási idő percben, ha a hold-window kalibráció futott."""
+        s = self.per_symbol.get(symbol)
+        if s is not None and s.best_hold_minutes is not None:
+            return s.best_hold_minutes
         return None
 
 
@@ -166,6 +182,39 @@ def compute_atr_pct(klines: list[dict[str, Decimal]]) -> Decimal | None:
     if not trs:
         return None
     return sum(trs, Decimal(0)) / Decimal(len(trs))
+
+
+def apply_hold_window_to_symbol_calibration(
+    calibration: SymbolCalibration,
+    klines_raw: Any,
+    *,
+    choppiness_max: Decimal,
+    cooldown_minutes: int,
+    hold_params: HoldWindowParams,
+) -> None:
+    """Hold-window rács a szimbólum kline-jain (WF szekvencia + medián×0.5 TP/SL)."""
+    if not hold_params.enabled:
+        return
+    from app.services.coin_analyze import _build_walk_forward_sequence_core
+
+    klines = parse_klines(klines_raw)
+    if len(klines) < 20:
+        return
+    seq = _build_walk_forward_sequence_core(
+        klines,
+        choppiness_max=choppiness_max,
+        tp_median_multiplier=Decimal("0.5"),
+        sl_median_multiplier=Decimal("0.5"),
+        cooldown_minutes=cooldown_minutes,
+        clip_variation_tpsl_bounds=True,
+    )
+    hw = optimize_hold_window_for_sequence(klines, seq, params=hold_params)
+    best = hw.get("best_hold_minutes")
+    if best is not None:
+        calibration.best_hold_minutes = int(best)
+    rate_s = hw.get("best_good_rate_pct")
+    if rate_s is not None:
+        calibration.hold_good_rate_pct = Decimal(str(rate_s))
 
 
 def compute_calibration_for_symbol(
@@ -236,6 +285,9 @@ class CalibrationService:
         tp_atr_mult: Decimal = Decimal("3.0"),
         sl_atr_mult: Decimal = Decimal("1.5"),
         kline_interval: str = "1m",
+        hold_params: HoldWindowParams | None = None,
+        wf_choppiness_max: Decimal = Decimal("1.72"),
+        wf_cooldown_minutes: int = 60,
     ) -> None:
         self._client = client
         self._lookback_minutes = lookback_minutes
@@ -243,6 +295,9 @@ class CalibrationService:
         self._tp_atr_mult = tp_atr_mult
         self._sl_atr_mult = sl_atr_mult
         self._interval = kline_interval
+        self._hold_params = hold_params or HoldWindowParams()
+        self._wf_choppiness_max = wf_choppiness_max
+        self._wf_cooldown_minutes = wf_cooldown_minutes
 
     async def run(self) -> CalibrationResult:
         """A teljes kalibrációs ciklust lefuttatja."""
@@ -290,6 +345,13 @@ class CalibrationService:
                     {"symbol": symbol, "reason": "insufficient_kline_data"}
                 )
                 continue
+            apply_hold_window_to_symbol_calibration(
+                calibration,
+                klines_raw,
+                choppiness_max=self._wf_choppiness_max,
+                cooldown_minutes=self._wf_cooldown_minutes,
+                hold_params=self._hold_params,
+            )
             result.per_symbol[symbol] = calibration
 
         if result.per_symbol:
@@ -320,6 +382,8 @@ def load_result_from_summary(summary: dict[str, Any]) -> CalibrationResult:
     per_symbol = summary.get("per_symbol") or {}
     for sym, payload in per_symbol.items():
         try:
+            bh = payload.get("best_hold_minutes")
+            hgr = payload.get("hold_good_rate_pct")
             result.per_symbol[sym] = SymbolCalibration(
                 symbol=sym,
                 tp_move_pct=Decimal(str(payload["tp_move_pct"])),
@@ -329,6 +393,10 @@ def load_result_from_summary(summary: dict[str, Any]) -> CalibrationResult:
                 last_close=Decimal(str(payload.get("last_close", "0"))),
                 abs_change_24h_pct=Decimal(
                     str(payload.get("abs_change_24h_pct", "0"))
+                ),
+                best_hold_minutes=int(bh) if bh is not None else None,
+                hold_good_rate_pct=(
+                    Decimal(str(hgr)) if hgr is not None else None
                 ),
             )
         except (KeyError, TypeError, ValueError):

@@ -269,6 +269,51 @@ const SECTIONS: {
       },
     ],
   },
+  {
+    title: "Hold-window optimalizálás",
+    intro:
+      "30–60 perc között 5 perces lépésekben szimulálja, melyik tartási idő adja a legtöbb ≥15% (ár-mozgás %) „jó” trade-et. Bekapcsolva: WF variáció rangsor, kalibráció és élő időzített zárás is ezt használja.",
+    fields: [
+      {
+        key: "hold_window_optimization_enabled",
+        label: "Hold-window optimalizálás",
+        description:
+          "Bekapcsolva: coin-analyze / WF és kalibráció a tartási idő rácsot is méri; élőben a legjobb percnél piaci zárás (TP/SL mellett).",
+        example: "false = csak exchange TP/SL; true = időzített exit is.",
+        recommendBalanced: "ki, amíg nem méred a backtestet; élesben csak ha van stabil WF/kalibrációs hold.",
+        type: "bool",
+      },
+      {
+        key: "hold_window_min_minutes",
+        label: "Hold rács minimum (perc)",
+        description: "A szimuláció legkisebb tartási ideje.",
+        example: "30",
+        type: "number",
+      },
+      {
+        key: "hold_window_max_minutes",
+        label: "Hold rács maximum (perc)",
+        description: "A szimuláció legnagyobb tartási ideje.",
+        example: "60",
+        type: "number",
+      },
+      {
+        key: "hold_window_step_minutes",
+        label: "Hold rács lépés (perc)",
+        description: "Lépésköz a minimum és maximum között.",
+        example: "5 → 30, 35, 40, …, 60",
+        type: "number",
+      },
+      {
+        key: "hold_profit_threshold_pct",
+        label: "„Jó” trade küszöb (ár-mozgás %)",
+        description:
+          "Egy időzített kilépés akkor számít jónak, ha a pozíció irányához képest ennyi vagy több profit %% (TP érintés mindig jó).",
+        example: "15",
+        type: "text",
+      },
+    ],
+  },
 ];
 
 function FieldHelp({
@@ -334,13 +379,20 @@ function parsePatch(
     "max_kline_concurrency",
     "wf_lookback_minutes",
     "wf_cooldown_minutes",
+    "hold_window_min_minutes",
+    "hold_window_max_minutes",
+    "hold_window_step_minutes",
+  ];
+  const boolKeys: (keyof TopSignalEntriesConfig)[] = [
+    "wf_gate_enabled",
+    "hold_window_optimization_enabled",
   ];
   for (const key of Object.keys(draft) as (keyof TopSignalEntriesConfig)[]) {
     const raw = draft[key];
     const was = initial[key];
-    if (key === "wf_gate_enabled") {
+    if (boolKeys.includes(key)) {
       const next = raw === "true";
-      if (next !== was) patch.wf_gate_enabled = next;
+      if (next !== was) (patch as Record<string, boolean>)[key] = next;
       continue;
     }
     if (intKeys.includes(key)) {

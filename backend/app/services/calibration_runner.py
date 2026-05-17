@@ -33,18 +33,33 @@ from app.services.calibration import (
     CalibrationService,
     load_result_from_summary,
 )
+from app.services.hold_window import hold_window_from_strategy_config
 from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
+from app.services.strategy_runtime_config import get_top_signal_entries_config
 
 
-def _build_service(client: BitunixClient) -> CalibrationService:
+async def _build_service(
+    client: BitunixClient, session: AsyncSession
+) -> CalibrationService:
     settings = get_settings()
+    tse_cfg = await get_top_signal_entries_config(session)
+    hold_params = hold_window_from_strategy_config(tse_cfg)
+    lookback = settings.calibration_lookback_minutes
+    if hold_params.enabled:
+        lookback = max(
+            lookback,
+            hold_params.max_minutes + 120,
+        )
     return CalibrationService(
         client=client,
-        lookback_minutes=settings.calibration_lookback_minutes,
+        lookback_minutes=lookback,
         top_n=settings.calibration_top_n,
         tp_atr_mult=Decimal(settings.calibration_tp_atr_mult),
         sl_atr_mult=Decimal(settings.calibration_sl_atr_mult),
         kline_interval=settings.calibration_kline_interval,
+        hold_params=hold_params,
+        wf_choppiness_max=Decimal(tse_cfg.wf_choppiness_max),
+        wf_cooldown_minutes=int(tse_cfg.wf_cooldown_minutes),
     )
 
 
@@ -63,18 +78,17 @@ async def run_calibration(*, triggered_by: str = "scheduler") -> dict[str, objec
         row_id = row.id
         await session.commit()
 
-    async with AsyncSessionLocal() as session:
-        client = await create_bitunix_client(session, settings=settings)
-
     error: str | None = None
     result: CalibrationResult | None = None
-    try:
-        service = _build_service(client)
-        result = await service.run()
-    except Exception as exc:  # noqa: BLE001
-        error = f"{type(exc).__name__}: {exc}"
-    finally:
-        await client.close()
+    async with AsyncSessionLocal() as session:
+        client = await create_bitunix_client(session, settings=settings)
+        try:
+            service = await _build_service(client, session)
+            result = await service.run()
+        except Exception as exc:  # noqa: BLE001
+            error = f"{type(exc).__name__}: {exc}"
+        finally:
+            await client.close()
 
     out: dict[str, object]
     async with AsyncSessionLocal() as session:

@@ -170,6 +170,11 @@ async def test_run_calibration_persists_row_and_audit_events(monkeypatch) -> Non
 
     monkeypatch.setattr(cr, "BitunixClient", _ClientFactory)
 
+    async def _fake_create_client(session, *, settings=None):
+        return _ClientFactory()
+
+    monkeypatch.setattr(cr, "create_bitunix_client", _fake_create_client)
+
     # Friss adatbázis-állapot
     async with AsyncSessionLocal() as session:
         await session.execute(sa.delete(TpSlCalibration))

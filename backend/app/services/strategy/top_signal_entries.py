@@ -56,6 +56,7 @@ from app.services.strategy.mover_ranking import (
     rank_top_movers,
 )
 from app.services.trading_pairs_meta import PairMeta, index_trading_pairs
+from app.services.hold_window import hold_window_from_strategy_config
 from app.services.tpsl import (
     compute_tp_sl_prices_from_move_pct,
     implied_price_move_pct_from_roi,
@@ -158,6 +159,7 @@ class TopSignalEntriesStrategy(Strategy):
         kline_interval = cfg.kline_interval
         kline_limit = min(200, max(3, int(cfg.kline_limit)))
         wf_gate = cfg.wf_gate_enabled
+        hold_params = hold_window_from_strategy_config(cfg)
         wf_lb = int(cfg.wf_lookback_minutes)
         fetch_interval = kline_interval
         fetch_limit = kline_limit
@@ -172,6 +174,11 @@ class TopSignalEntriesStrategy(Strategy):
             "lookback_minutes": wf_lb,
             "kline_fetch_interval": fetch_interval,
             "kline_fetch_limit": fetch_limit,
+        }
+        result.details["hold_window_optimization"] = {
+            "enabled": hold_params.enabled,
+            "grid_minutes": hold_params.grid_minutes(),
+            "profit_threshold_pct": str(hold_params.profit_threshold_pct),
         }
 
         tickers_raw = await ctx.client.get_all_tickers()
@@ -349,11 +356,13 @@ class TopSignalEntriesStrategy(Strategy):
                 wf_moves: tuple[Decimal, Decimal] | None = None
                 wf_audit: dict[str, Any] | None = None
                 wf_gate_result: dict[str, Any] | None = None
+                wf_hold_minutes: int | None = None
                 if wf_gate:
                     wf = walk_forward_live_gate_from_klines(
                         klines,
                         choppiness_max=Decimal(cfg.wf_choppiness_max),
                         walk_forward_cooldown_minutes=int(cfg.wf_cooldown_minutes),
+                        hold_params=hold_params if hold_params.enabled else None,
                     )
                     if not wf["ok"]:
                         result.skipped.append(
@@ -382,6 +391,9 @@ class TopSignalEntriesStrategy(Strategy):
                         continue
                     wf_moves = (wf["tp_move_pct"], wf["sl_move_pct"])
                     wf_gate_result = wf
+                    bh = wf.get("best_hold_minutes")
+                    if bh is not None:
+                        wf_hold_minutes = int(bh)
                     wf_audit = {
                         "wf_tp_median_multiplier": wf.get("tp_median_multiplier"),
                         "wf_sl_median_multiplier": wf.get("sl_median_multiplier"),
@@ -410,6 +422,8 @@ class TopSignalEntriesStrategy(Strategy):
                     wf_move_pct_pair=wf_moves,
                     wf_audit=wf_audit if wf_gate else None,
                     wf_gate_result=wf_gate_result,
+                    hold_window_minutes=wf_hold_minutes,
+                    hold_params=hold_params,
                 )
                 if decision.get("placed"):
                     placed_run += 1
@@ -450,6 +464,8 @@ class TopSignalEntriesStrategy(Strategy):
         wf_move_pct_pair: tuple[Decimal, Decimal] | None = None,
         wf_audit: dict[str, Any] | None = None,
         wf_gate_result: dict[str, Any] | None = None,
+        hold_window_minutes: int | None = None,
+        hold_params: Any | None = None,
     ) -> dict[str, Any]:
         symbol = mover.symbol
         out: dict[str, Any] = {
@@ -579,6 +595,21 @@ class TopSignalEntriesStrategy(Strategy):
             return out
         out["tp_source"] = tp_source
 
+        resolved_hold_minutes = hold_window_minutes
+        hold_good_rate: str | None = None
+        if hold_params is not None and hold_params.enabled:
+            if resolved_hold_minutes is None and calibration is not None:
+                resolved_hold_minutes = calibration.lookup_hold_minutes(symbol)
+                sym_cal = calibration.per_symbol.get(symbol)
+                if sym_cal is not None and sym_cal.hold_good_rate_pct is not None:
+                    hold_good_rate = str(sym_cal.hold_good_rate_pct)
+            if (
+                resolved_hold_minutes is None
+                and wf_gate_result
+                and wf_gate_result.get("hold_good_rate_pct")
+            ):
+                hold_good_rate = str(wf_gate_result["hold_good_rate_pct"])
+
         entry_context: dict[str, Any] = {
             "strategy": self.name,
             "signal_reason": signal_reason,
@@ -587,6 +618,16 @@ class TopSignalEntriesStrategy(Strategy):
             "tp_move_pct": str(tp_move_pct),
             "sl_move_pct": str(sl_move_pct),
         }
+        if hold_params is not None and hold_params.enabled:
+            entry_context["hold_window_optimization_enabled"] = True
+            entry_context["hold_profit_threshold_pct"] = str(
+                hold_params.profit_threshold_pct
+            )
+            if resolved_hold_minutes is not None:
+                entry_context["hold_window_minutes"] = resolved_hold_minutes
+            if hold_good_rate is not None:
+                entry_context["hold_good_rate_pct"] = hold_good_rate
+            out["hold_window_minutes"] = resolved_hold_minutes
         if isinstance(wf_gate_result, dict) and wf_gate_result.get("ok"):
             entry_context["walk_forward"] = {
                 "gate_source": wf_gate_result.get("wf_gate_source"),

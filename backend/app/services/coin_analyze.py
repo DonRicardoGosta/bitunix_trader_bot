@@ -785,6 +785,7 @@ def build_walk_forward_tpsl_variations_payload(
     cooldown_minutes: int,
     target_tp_win_rate_pct: Decimal = _WF_TARGET_TP_WIN_RATE_PCT,
     min_resolved_trades: int = 2,
+    hold_params: Any | None = None,
 ) -> dict[str, Any]:
     """Több TP/SL (medián×) kombináció; szimulációban TP/SL %% csak **felülről** vágva (≤300 / ≤150).
 
@@ -831,6 +832,13 @@ def build_walk_forward_tpsl_variations_payload(
         n48 = _count_trades_with_entry_in_last_hours(klines, seq["trades"])
         if _exclude_variation_last_window_single_unresolved(klines, seq["trades"]):
             continue
+        hold_block: dict[str, Any] | None = None
+        if hold_params is not None and getattr(hold_params, "enabled", False):
+            from app.services.hold_window import optimize_hold_window_for_sequence
+
+            hold_block = optimize_hold_window_for_sequence(
+                klines, seq, params=hold_params
+            )
         raw_tp_s: str | None = None
         raw_sl_s: str | None = None
         meets_profile = False
@@ -842,26 +850,35 @@ def build_walk_forward_tpsl_variations_payload(
             raw_tp_s = str(raw_tp.quantize(Decimal("0.0001")))
             raw_sl_s = str(raw_sl.quantize(Decimal("0.0001")))
             meets_profile = _variation_meets_min_tpsl_pct_profile(raw_tp, raw_sl)
-        rows_raw.append(
-            {
-                "tp_median_multiplier": str(tp_m),
-                "sl_median_multiplier": str(sl_m),
-                "label": label,
-                "resolved_tp_win_rate_pct": (
-                    str(rate.quantize(Decimal("0.01"))) if rate is not None else None
-                ),
-                "meets_target": meets,
-                "resolved_count": total_trades,
-                "trades_entered_last_48h_count": n48,
-                "first_trade_tp_move_pct_raw": raw_tp_s,
-                "first_trade_sl_move_pct_raw": raw_sl_s,
-                "meets_min_tpsl_pct_profile": meets_profile,
-                "sequence": slim,
-            }
-        )
+        row_payload: dict[str, Any] = {
+            "tp_median_multiplier": str(tp_m),
+            "sl_median_multiplier": str(sl_m),
+            "label": label,
+            "resolved_tp_win_rate_pct": (
+                str(rate.quantize(Decimal("0.01"))) if rate is not None else None
+            ),
+            "meets_target": meets,
+            "resolved_count": total_trades,
+            "trades_entered_last_48h_count": n48,
+            "first_trade_tp_move_pct_raw": raw_tp_s,
+            "first_trade_sl_move_pct_raw": raw_sl_s,
+            "meets_min_tpsl_pct_profile": meets_profile,
+            "sequence": slim,
+        }
+        if hold_block is not None:
+            row_payload["hold_window"] = hold_block
+            row_payload["best_hold_minutes"] = hold_block.get("best_hold_minutes")
+            row_payload["hold_good_rate_pct"] = hold_block.get("best_good_rate_pct")
+        rows_raw.append(row_payload)
 
     def _rate_key(r: dict[str, Any]) -> Decimal:
         s = r.get("resolved_tp_win_rate_pct")
+        if s is None:
+            return Decimal("-1")
+        return Decimal(str(s))
+
+    def _hold_key(r: dict[str, Any]) -> Decimal:
+        s = r.get("hold_good_rate_pct")
         if s is None:
             return Decimal("-1")
         return Decimal(str(s))
@@ -872,10 +889,24 @@ def build_walk_forward_tpsl_variations_payload(
             return int(s.get("tp_wins", 0))
         return 0
 
-    rows_raw.sort(
-        key=lambda r: (_rate_key(r), _tpw(r), r.get("resolved_count", 0)),
-        reverse=True,
+    use_hold_sort = (
+        hold_params is not None and getattr(hold_params, "enabled", False)
     )
+    if use_hold_sort:
+        rows_raw.sort(
+            key=lambda r: (
+                _hold_key(r),
+                _rate_key(r),
+                _tpw(r),
+                r.get("resolved_count", 0),
+            ),
+            reverse=True,
+        )
+    else:
+        rows_raw.sort(
+            key=lambda r: (_rate_key(r), _tpw(r), r.get("resolved_count", 0)),
+            reverse=True,
+        )
 
     rec_idx: int | None = None
     for i, r in enumerate(rows_raw):
@@ -956,6 +987,7 @@ def walk_forward_live_gate_from_klines(
     *,
     choppiness_max: Decimal,
     walk_forward_cooldown_minutes: int = 60,
+    hold_params: Any | None = None,
 ) -> dict[str, Any]:
     """Top signal / live: WF variációs rács + aktuális jel.
 
@@ -974,6 +1006,7 @@ def walk_forward_live_gate_from_klines(
         klines,
         choppiness_max=choppiness_max,
         cooldown_minutes=walk_forward_cooldown_minutes,
+        hold_params=hold_params,
     )
     if not vblock.get("enabled"):
         return {
@@ -1063,7 +1096,21 @@ def walk_forward_live_gate_from_klines(
         else None
     )
 
-    return {
+    best_hold: int | None = None
+    hold_good_rate: str | None = None
+    hold_grid: list[dict[str, Any]] | None = None
+    if isinstance(selected_row, dict):
+        hw = selected_row.get("hold_window")
+        if isinstance(hw, dict):
+            bh = hw.get("best_hold_minutes")
+            if bh is not None:
+                best_hold = int(bh)
+            hold_good_rate = hw.get("best_good_rate_pct")
+            rows_hw = hw.get("rows")
+            if isinstance(rows_hw, list):
+                hold_grid = rows_hw
+
+    out: dict[str, Any] = {
         "ok": True,
         "reason": "walk_forward_recommended",
         "side": side_map[ps],
@@ -1075,7 +1122,12 @@ def walk_forward_live_gate_from_klines(
         "wf_gate_source": wf_gate_source,
         "wf_variation_snapshot": wf_variation_snapshot,
         "wf_target_tp_win_rate_pct": wf_target_tp_win_rate_pct,
+        "best_hold_minutes": best_hold,
+        "hold_good_rate_pct": hold_good_rate,
     }
+    if hold_grid is not None:
+        out["hold_window_grid"] = hold_grid
+    return out
 
 
 _WF_AGGREGATE_FRACTIONS: tuple[Decimal, ...] = (

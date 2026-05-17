@@ -30,6 +30,11 @@ class TopSignalEntriesConfig(BaseModel):
     sl_roi_pct: str = "100"
     min_tp_roi_pct: str = "60"
     tpsl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = "MARK_PRICE"
+    hold_window_optimization_enabled: bool = False
+    hold_window_min_minutes: int = Field(ge=5, le=240, default=30)
+    hold_window_max_minutes: int = Field(ge=5, le=480, default=60)
+    hold_window_step_minutes: int = Field(ge=1, le=60, default=5)
+    hold_profit_threshold_pct: str = "15"
 
 
 class TopSignalEntriesConfigPatch(BaseModel):
@@ -55,3 +60,8 @@ class TopSignalEntriesConfigPatch(BaseModel):
     sl_roi_pct: str | None = None
     min_tp_roi_pct: str | None = None
     tpsl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] | None = None
+    hold_window_optimization_enabled: bool | None = None
+    hold_window_min_minutes: int | None = Field(default=None, ge=5, le=240)
+    hold_window_max_minutes: int | None = Field(default=None, ge=5, le=480)
+    hold_window_step_minutes: int | None = Field(default=None, ge=1, le=60)
+    hold_profit_threshold_pct: str | None = None
