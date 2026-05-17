@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.db.base import Base
 from app.db.models import (
+    AppRuntimeSetting,
     AuditEvent,
     AuditLevel,
     CalibrationStatus,
@@ -23,8 +24,9 @@ from app.db.models import (
 )
 from app.db.session import AsyncSessionLocal, engine
 from app.main import create_app
-from app.services.strategy.base import StrategyContext
+from app.services.runtime_settings import set_runtime_bool
 from app.services.strategy.top_signal_entries import TopSignalEntriesStrategy
+from tests.strategy_test_context import make_strategy_context
 
 
 def _bbb_klines_raw() -> dict:
@@ -126,20 +128,19 @@ async def test_strategy_skips_when_no_calibration() -> None:
         await session.commit()
 
     fake = FakeBitunixClient()
-    base = get_settings()
-    settings = base.model_copy(
-        update={
-            "strategy_top_signal_entries_enabled": True,
-            "strategy_top_signal_entries_count": 1,
-            "strategy_top_signal_entries_scan_limit": 10,
-            "strategy_top_signal_entries_kline_lookahead": 10,
-            "strategy_top_signal_entries_wf_gate_enabled": False,
-        }
-    )
     strategy = TopSignalEntriesStrategy()
     async with AsyncSessionLocal() as session:
-        ctx = StrategyContext(
-            session=session, client=fake, settings=settings, triggered_by="test"
+        await set_runtime_bool(session, "strategy_top_signal_entries_enabled", True)
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        ctx = make_strategy_context(
+            session,
+            fake,
+            triggered_by="test",
+            count=1,
+            scan_limit=10,
+            kline_lookahead=10,
+            wf_gate_enabled=False,
         )
         result = await strategy.run(ctx)
         await session.commit()
@@ -206,20 +207,20 @@ async def test_strategy_uses_per_symbol_calibration_when_available() -> None:
         await session.commit()
 
     fake = FakeBitunixClient()
-    base = get_settings()
-    settings = base.model_copy(
-        update={
-            "strategy_top_signal_entries_enabled": True,
-            "strategy_top_signal_entries_count": 1,
-            "strategy_top_signal_entries_scan_limit": 10,
-            "strategy_top_signal_entries_kline_lookahead": 10,
-            "strategy_top_signal_entries_wf_gate_enabled": False,
-        }
-    )
     strategy = TopSignalEntriesStrategy()
     async with AsyncSessionLocal() as session:
-        ctx = StrategyContext(
-            session=session, client=fake, settings=settings, triggered_by="test"
+        await set_runtime_bool(session, "strategy_top_signal_entries_enabled", True)
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        ctx = make_strategy_context(
+            session,
+            fake,
+            triggered_by="test",
+            count=1,
+            scan_limit=10,
+            kline_lookahead=10,
+            wf_gate_enabled=False,
+            min_tp_roi_pct="0",
         )
         result = await strategy.run(ctx)
         await session.commit()
@@ -266,7 +267,9 @@ def test_orders_endpoint_allowed_with_fresh_calibration() -> None:
 
     async def _seed() -> None:
         async with AsyncSessionLocal() as session:
+            await session.execute(sa.delete(AppRuntimeSetting))
             await session.execute(sa.delete(TpSlCalibration))
+            await set_runtime_bool(session, "bitunix_live_trading", False)
             session.add(
                 TpSlCalibration(
                     status=CalibrationStatus.SUCCESS,

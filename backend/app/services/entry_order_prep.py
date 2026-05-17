@@ -105,8 +105,11 @@ async def _resolve_move_pcts(
     session: AsyncSession,
     settings: Settings,
 ) -> tuple[Decimal, Decimal]:
-    tp_roi = Decimal(settings.strategy_tp_roi_pct)
-    sl_roi = Decimal(settings.strategy_sl_roi_pct)
+    from app.services.strategy_runtime_config import get_top_signal_entries_config
+
+    cfg = await get_top_signal_entries_config(session)
+    tp_roi = Decimal(cfg.tp_roi_pct)
+    sl_roi = Decimal(cfg.sl_roi_pct)
 
     calibration = await get_active_calibration_result(session)
     if calibration is not None:

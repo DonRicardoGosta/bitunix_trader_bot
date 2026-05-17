@@ -44,43 +44,11 @@ class Settings(BaseSettings):
     bitunix_rest_base_url: str = "https://fapi.bitunix.com"
     bitunix_ws_public_url: str = "wss://fapi.bitunix.com/public/"
     bitunix_ws_private_url: str = "wss://fapi.bitunix.com/private/"
-    bitunix_live_trading: bool = False
     bitunix_margin_coin: str = "USDT"
 
-    # -- stratégia / scheduler ----------------------------------------------
-    # Alapból be: induláskor elindul a háttér-futó; tesztekben kapcsold ki env-vel.
+    # -- stratégia scheduler (infra; algoritmus paraméterek → DB, lásd strategy_runtime_config) --
     strategy_runner_enabled: bool = True
     strategy_interval_seconds: int = 30
-    # Tickerrangsor max. mélysége (top signal entries).
-    strategy_scan_limit_max: int = 1000
-    # Top signal entries: top abs 24h movers + kline megerősítés (long/short).
-    strategy_top_signal_entries_enabled: bool = True
-    strategy_top_signal_entries_count: int = 2
-    strategy_top_signal_entries_scan_limit: int = 1000
-    strategy_top_signal_entries_kline_lookahead: int = 40
-    strategy_top_signal_entries_kline_interval: str = "15m"
-    strategy_top_signal_entries_kline_limit: int = 80
-    strategy_top_signal_entries_cooldown_minutes: int = 240
-    strategy_top_signal_entries_min_abs_change_pct: str = "1.0"
-    strategy_top_signal_entries_range_threshold: str = "0.60"
-    strategy_top_signal_entries_max_kline_concurrency: int = 10
-    # WF variációs coin-elemzés (48h lookback) szűrő + TP/SL a javasolt konfigból.
-    strategy_top_signal_entries_wf_gate_enabled: bool = False
-    strategy_top_signal_entries_wf_lookback_minutes: int = 2880
-    strategy_top_signal_entries_wf_cooldown_minutes: int = 60
-    strategy_top_signal_entries_wf_choppiness_max: str = "1.72"
-    strategy_min_margin_usdt: str = "0.25"
-    strategy_margin_pct_of_balance: str = "0.01"
-
-    # -- TP / SL beállítások (ROI százalékban a margin-on, leverage-vel együtt) --
-    # 200 / 100 a userspec; a kockázat-kommentet lásd a tpsl.py-ban.
-    # Csak fallback-ként, ha a kalibráció ``lookup``-ja nem ad move %%-et.
-    strategy_tp_roi_pct: str = "200"
-    strategy_sl_roi_pct: str = "100"
-    # 0 = kikapcsolva. >0: stratégiák kihagyják a belépést, ha a számolt TP
-    # margin-ROI célja (tp_move_pct × leverage) ennél kisebb lenne.
-    strategy_min_tp_roi_pct: str = "0"
-    strategy_tpsl_stop_type: Literal["MARK_PRICE", "LAST_PRICE"] = "MARK_PRICE"
 
     # -- TP/SL automatikus belövő / calibration --
     calibration_enabled: bool = True

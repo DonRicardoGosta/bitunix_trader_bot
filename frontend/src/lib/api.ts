@@ -161,6 +161,37 @@ export interface StrategyInfo {
   last_run: StrategyRun | null;
 }
 
+export interface TopSignalEntriesConfig {
+  count: number;
+  scan_limit_max: number;
+  scan_limit: number;
+  kline_lookahead: number;
+  kline_interval: string;
+  kline_limit: number;
+  cooldown_minutes: number;
+  min_abs_change_pct: string;
+  range_threshold: string;
+  max_kline_concurrency: number;
+  wf_gate_enabled: boolean;
+  wf_lookback_minutes: number;
+  wf_cooldown_minutes: number;
+  wf_choppiness_max: string;
+  margin_pct_of_balance: string;
+  min_margin_usdt: string;
+  tp_roi_pct: string;
+  sl_roi_pct: string;
+  min_tp_roi_pct: string;
+  tpsl_stop_type: "MARK_PRICE" | "LAST_PRICE";
+}
+
+export type TopSignalEntriesConfigPatch = Partial<TopSignalEntriesConfig>;
+
+export interface TopSignalEntriesConfigResponse {
+  config: TopSignalEntriesConfig;
+  enabled: boolean;
+  live_trading: boolean;
+}
+
 export interface CalibrationRun {
   id: number;
   status: "RUNNING" | "SUCCESS" | "FAILED" | null;
@@ -311,11 +342,9 @@ export interface SettingsSnapshot {
   generated_at: string;
   env: {
     app_env: string;
-    bitunix_live_trading: boolean;
     strategy_runner_enabled: boolean;
     calibration_enabled: boolean;
     require_calibration_for_trading: boolean;
-    strategy_top_signal_entries_enabled: boolean;
   };
   effective: {
     trading_paused: boolean;
@@ -328,7 +357,12 @@ export interface SettingsSnapshot {
     new_position_block_reason: string | null;
   };
   runtime_overrides: Record<string, boolean>;
-  strategy_config: Record<string, string | number>;
+  strategy_config: {
+    interval_seconds: number;
+    calibration_interval_seconds: number;
+    calibration_max_age_minutes: number;
+    top_signal_entries: TopSignalEntriesConfig;
+  };
   trading_blackout: TradingBlackoutSchedulePayload;
 }
 
@@ -782,6 +816,15 @@ export const api = {
     request<{ run_id: number; status: string }>(
       `/api/strategies/${encodeURIComponent(name)}/run`,
       { method: "POST" },
+    ),
+  getTopSignalEntriesConfig: () =>
+    request<TopSignalEntriesConfigResponse>(
+      "/api/strategies/top_signal_entries/config",
+    ),
+  putTopSignalEntriesConfig: (patch: TopSignalEntriesConfigPatch) =>
+    request<{ config: TopSignalEntriesConfig }>(
+      "/api/strategies/top_signal_entries/config",
+      { method: "PUT", body: JSON.stringify(patch) },
     ),
   calibrationLatest: () =>
     request<{

@@ -9,7 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.db.models import StrategyRun
 from app.db.session import get_db
-from app.services.runtime_settings import is_strategy_enabled
+from app.db import audit
+from app.db.models import AuditLevel
+from app.schemas.strategy_config import TopSignalEntriesConfigPatch
+from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
+from app.services.runtime_settings import effective_live_trading, is_strategy_enabled
+from app.services.strategy_runtime_config import (
+    get_top_signal_entries_config,
+    set_top_signal_entries_config,
+)
 from app.services.strategy import (
     StrategyNotFoundError,
     available_strategies,
@@ -62,6 +70,40 @@ async def list_strategy_runs(
         stmt = stmt.where(StrategyRun.strategy_name == strategy)
     result = await session.execute(stmt)
     return [_run_to_dict(r) for r in result.scalars().all()]
+
+
+@router.get("/top_signal_entries/config")
+async def get_top_signal_entries_strategy_config(
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Stratégia paraméterek (DB + kód default) és runtime kapcsolók."""
+    cfg = await get_top_signal_entries_config(session)
+    return {
+        "config": cfg.model_dump(),
+        "enabled": await is_strategy_enabled(session, settings, "top_signal_entries"),
+        "live_trading": await effective_live_trading(session, settings),
+    }
+
+
+@router.put("/top_signal_entries/config")
+async def put_top_signal_entries_strategy_config(
+    body: TopSignalEntriesConfigPatch,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Stratégia paraméterek részleges mentése."""
+    saved = await set_top_signal_entries_config(session, body)
+    await audit.record(
+        session,
+        "strategy.config.updated",
+        level=AuditLevel.INFO,
+        message="Top signal entries konfig frissítve.",
+        payload={"keys": [k for k, v in body.model_dump().items() if v is not None]},
+        strategy_name="top_signal_entries",
+    )
+    await session.commit()
+    await publish_invalidate((*DEFAULT_INVALIDATION_TOPICS, "strategies", "settings"))
+    return {"config": saved.model_dump()}
 
 
 @router.post("/{name}/run", status_code=status.HTTP_202_ACCEPTED)

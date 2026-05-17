@@ -22,10 +22,12 @@ from app.db.session import AsyncSessionLocal, engine
 from app.services.calibration import parse_klines
 from app.services.strategy.base import StrategyContext
 from app.services.strategy.mover_ranking import Mover
+from app.services.runtime_settings import set_runtime_bool
 from app.services.strategy.top_signal_entries import (
     TopSignalEntriesStrategy,
     entry_side_from_mover_and_klines,
 )
+from tests.strategy_test_context import make_strategy_context
 
 
 async def _seed_fresh_calibration() -> None:
@@ -283,11 +285,12 @@ async def test_top_signal_entries_disabled_is_no_op() -> None:
         account={"data": {"available": "1000"}},
         klines_by_symbol={"BBB": _bbb_klines_raw(), "CCC": _ccc_klines_raw()},
     )
-    base = get_settings()
-    settings = base.model_copy(update={"strategy_top_signal_entries_enabled": False})
     strategy = TopSignalEntriesStrategy()
     async with AsyncSessionLocal() as session:
-        ctx = StrategyContext(session=session, client=fake, settings=settings, triggered_by="test")
+        await set_runtime_bool(session, "strategy_top_signal_entries_enabled", False)
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        ctx = make_strategy_context(session, fake, triggered_by="test")
         result = await strategy.run(ctx)
         await session.commit()
     assert result.details.get("reason") == "disabled"
@@ -310,18 +313,21 @@ async def test_top_signal_entries_places_long_and_short_with_signals() -> None:
             "CCC": _ccc_klines_raw(),
         },
     )
-    base = get_settings()
-    settings = base.model_copy(
-        update={
-            "strategy_top_signal_entries_enabled": True,
-            "strategy_top_signal_entries_count": 2,
-            "strategy_top_signal_entries_scan_limit": 60,
-            "strategy_top_signal_entries_kline_lookahead": 10,
-        }
-    )
     strategy = TopSignalEntriesStrategy()
     async with AsyncSessionLocal() as session:
-        ctx = StrategyContext(session=session, client=fake, settings=settings, triggered_by="test")
+        await set_runtime_bool(session, "strategy_top_signal_entries_enabled", True)
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        ctx = make_strategy_context(
+            session,
+            fake,
+            triggered_by="test",
+            count=2,
+            scan_limit=60,
+            kline_lookahead=10,
+            wf_gate_enabled=False,
+            min_tp_roi_pct="0",
+        )
         result = await strategy.run(ctx)
         await session.commit()
 
@@ -397,18 +403,21 @@ async def test_top_signal_entries_caps_leverage_for_order_request() -> None:
         account={"data": {"available": "1000"}},
         klines_by_symbol={"HIGHLEV": _highlev_klines_raw()},
     )
-    base = get_settings()
-    settings = base.model_copy(
-        update={
-            "strategy_top_signal_entries_enabled": True,
-            "strategy_top_signal_entries_count": 1,
-            "strategy_top_signal_entries_scan_limit": 10,
-            "strategy_top_signal_entries_kline_lookahead": 10,
-        }
-    )
     strategy = TopSignalEntriesStrategy()
     async with AsyncSessionLocal() as session:
-        ctx = StrategyContext(session=session, client=fake, settings=settings, triggered_by="test")
+        await set_runtime_bool(session, "strategy_top_signal_entries_enabled", True)
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        ctx = make_strategy_context(
+            session,
+            fake,
+            triggered_by="test",
+            count=1,
+            scan_limit=10,
+            kline_lookahead=10,
+            wf_gate_enabled=False,
+            min_tp_roi_pct="0",
+        )
         result = await strategy.run(ctx)
         await session.commit()
 

@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     print(
         f"[bitunix-trader] startup env={settings.app_env} "
-        f"live_trading={settings.bitunix_live_trading} version={__version__}",
+        f"live_trading=runtime(db) version={__version__}",
         file=sys.stdout,
         flush=True,
     )
@@ -72,7 +72,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             payload={
                 "version": __version__,
                 "env": settings.app_env,
-                "live_trading": settings.bitunix_live_trading,
             },
         )
     except Exception as exc:  # noqa: BLE001

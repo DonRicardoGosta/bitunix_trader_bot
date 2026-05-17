@@ -275,20 +275,36 @@ export default function SettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Env + scheduler referencia</CardTitle>
+              <span className="text-xs text-muted">
+                stratégia algoritmus →{" "}
+                <Link href="/strategies" className="text-accent hover:underline">
+                  Stratégiák
+                </Link>
+              </span>
             </CardHeader>
             <CardContent>
               <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-mono">
-                {Object.entries({ ...snap.env, ...snap.strategy_config }).map(
-                  ([k, v]) => (
-                    <div
-                      key={k}
-                      className="flex justify-between gap-2 border-b border-border/20 py-1"
-                    >
-                      <dt className="text-muted">{k}</dt>
-                      <dd className="text-slate-200">{String(v)}</dd>
-                    </div>
-                  ),
-                )}
+                {Object.entries(snap.env).map(([k, v]) => (
+                  <div
+                    key={k}
+                    className="flex justify-between gap-2 border-b border-border/20 py-1"
+                  >
+                    <dt className="text-muted">{k}</dt>
+                    <dd className="text-slate-200">{String(v)}</dd>
+                  </div>
+                ))}
+                <div className="flex justify-between gap-2 border-b border-border/20 py-1 sm:col-span-2">
+                  <dt className="text-muted">strategy_interval_seconds</dt>
+                  <dd className="text-slate-200">
+                    {snap.strategy_config.interval_seconds}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2 border-b border-border/20 py-1 sm:col-span-2">
+                  <dt className="text-muted">calibration_interval_seconds</dt>
+                  <dd className="text-slate-200">
+                    {snap.strategy_config.calibration_interval_seconds}
+                  </dd>
+                </div>
               </dl>
             </CardContent>
           </Card>

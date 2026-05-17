@@ -27,6 +27,7 @@ from app.services.strategy.registry import (
     StrategyNotFoundError,
     get_strategy,
 )
+from app.services.strategy_runtime_config import get_top_signal_entries_config
 
 
 async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, Any]:
@@ -82,10 +83,12 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
     result: StrategyResult | None = None
     try:
         async with AsyncSessionLocal() as session:
+            tse_cfg = await get_top_signal_entries_config(session)
             ctx = StrategyContext(
                 session=session,
                 client=client,
                 settings=settings,
+                top_signal_entries=tse_cfg,
                 triggered_by=triggered_by,
             )
             try:

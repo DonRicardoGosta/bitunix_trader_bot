@@ -15,6 +15,8 @@ import { strategyPatchKey } from "@/lib/runtimeControls";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 import { cn } from "@/lib/utils";
+import { TopSignalEntriesConfigEditor } from "@/components/TopSignalEntriesConfigEditor";
+import type { TopSignalEntriesConfig } from "@/lib/api";
 
 const RUNS_LIMIT = 8;
 
@@ -28,17 +30,20 @@ export default function StrategiesPage() {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null);
   const [toggleBusy, setToggleBusy] = useState<string | null>(null);
+  const [tseConfig, setTseConfig] = useState<TopSignalEntriesConfig | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [l, r, s] = await Promise.all([
+      const [l, r, s, tse] = await Promise.all([
         api.strategies(),
         api.strategyRuns(undefined, RUNS_LIMIT),
         api.settingsSnapshot(),
+        api.getTopSignalEntriesConfig(),
       ]);
       setList(l);
       setRuns(r);
       setSnap(s);
+      setTseConfig(tse.config);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ismeretlen hiba");
@@ -120,11 +125,11 @@ export default function StrategiesPage() {
       <header>
         <h1 className="text-2xl font-bold text-slate-100">Stratégiák</h1>
         <p className="text-muted text-sm mt-1">
-          Bekapcsolás és élő trading a{" "}
+          Algoritmus paraméterek itt mentődnek (DB). Bekapcsolás és élő trading a{" "}
           <Link href="/settings" className="text-accent hover:underline">
             vezérlőpulton
           </Link>{" "}
-          is állítható (DB runtime).
+          is állítható.
         </p>
       </header>
 
@@ -158,6 +163,24 @@ export default function StrategiesPage() {
               </span>
             </span>
           </label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>top_signal_entries paraméterek</CardTitle>
+          <span className="text-xs text-muted">
+            alapértelmezés kódban; mentés után DB-ben
+          </span>
+        </CardHeader>
+        <CardContent>
+          {!tseConfig && <p className="text-muted text-sm">Betöltés…</p>}
+          {tseConfig && (
+            <TopSignalEntriesConfigEditor
+              initial={tseConfig}
+              onSaved={() => void refresh()}
+            />
+          )}
         </CardContent>
       </Card>
 

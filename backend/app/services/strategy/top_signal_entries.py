@@ -8,7 +8,7 @@ csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 * A 24h ticker alapján van **range** adat, és az ár a mozgás irányához illő
   extrém zónában van (long: felső ``range_threshold``, short: alsó zóna).
 * A **|24h % változás|** ≥ konfigurálható minimum.
-* **Walk-forward gate (opcionális):** ha ``STRATEGY_TOP_SIGNAL_ENTRIES_WF_GATE_ENABLED``,
+* **Walk-forward gate (opcionális):** ha a runtime konfig ``wf_gate_enabled`` be van kapcsolva,
   a kline lekérés a ``plan_kline_interval(WF_LOOKBACK)`` szerinti intervallum/limit
   (alap 48h) alapján történik; minden jelöltre lefut a coin-analyze WF variációs
   ajánlás. Csak akkor nyitunk, ha van **ajánlott** variáció (≥80% TP win cél,
@@ -117,6 +117,7 @@ class TopSignalEntriesStrategy(Strategy):
     async def run(self, ctx: StrategyContext) -> StrategyResult:
         result = StrategyResult()
         settings = ctx.settings
+        cfg = ctx.top_signal_entries
 
         if not await is_strategy_enabled(ctx.session, settings, self.name):
             await audit.record(
@@ -145,35 +146,26 @@ class TopSignalEntriesStrategy(Strategy):
             result.details["reason"] = "calibration_missing"
             return result
 
-        target_slots = max(1, int(settings.strategy_top_signal_entries_count))
-        scan_cap = max(1, int(settings.strategy_scan_limit_max))
-        scan_limit = max(
-            target_slots,
-            min(int(settings.strategy_top_signal_entries_scan_limit), scan_cap),
-        )
-        lookahead = max(
-            target_slots,
-            int(settings.strategy_top_signal_entries_kline_lookahead),
-        )
-        cooldown_minutes = int(settings.strategy_top_signal_entries_cooldown_minutes)
-        pct_of_balance = Decimal(settings.strategy_margin_pct_of_balance)
-        min_margin = Decimal(settings.strategy_min_margin_usdt)
-        min_abs_change = Decimal(settings.strategy_top_signal_entries_min_abs_change_pct)
-        range_threshold = Decimal(settings.strategy_top_signal_entries_range_threshold)
-        kline_interval = settings.strategy_top_signal_entries_kline_interval
-        kline_limit = min(
-            200,
-            max(3, int(settings.strategy_top_signal_entries_kline_limit)),
-        )
-        wf_gate = settings.strategy_top_signal_entries_wf_gate_enabled
-        wf_lb = int(settings.strategy_top_signal_entries_wf_lookback_minutes)
+        target_slots = max(1, int(cfg.count))
+        scan_cap = max(1, int(cfg.scan_limit_max))
+        scan_limit = max(target_slots, min(int(cfg.scan_limit), scan_cap))
+        lookahead = max(target_slots, int(cfg.kline_lookahead))
+        cooldown_minutes = int(cfg.cooldown_minutes)
+        pct_of_balance = Decimal(cfg.margin_pct_of_balance)
+        min_margin = Decimal(cfg.min_margin_usdt)
+        min_abs_change = Decimal(cfg.min_abs_change_pct)
+        range_threshold = Decimal(cfg.range_threshold)
+        kline_interval = cfg.kline_interval
+        kline_limit = min(200, max(3, int(cfg.kline_limit)))
+        wf_gate = cfg.wf_gate_enabled
+        wf_lb = int(cfg.wf_lookback_minutes)
         fetch_interval = kline_interval
         fetch_limit = kline_limit
         if wf_gate:
             planned_iv, planned_lim = plan_kline_interval(wf_lb)
             fetch_interval = planned_iv
             fetch_limit = max(kline_limit, planned_lim)
-        max_conc = max(1, int(settings.strategy_top_signal_entries_max_kline_concurrency))
+        max_conc = max(1, int(cfg.max_kline_concurrency))
 
         result.details["walk_forward_gate"] = {
             "enabled": wf_gate,
@@ -255,8 +247,8 @@ class TopSignalEntriesStrategy(Strategy):
         result.details["available_balance_usdt"] = str(available_balance)
         result.details["margin_per_position_usdt"] = str(margin_usdt)
 
-        tp_roi = Decimal(settings.strategy_tp_roi_pct)
-        sl_roi = Decimal(settings.strategy_sl_roi_pct)
+        tp_roi = Decimal(cfg.tp_roi_pct)
+        sl_roi = Decimal(cfg.sl_roi_pct)
         result.details["calibration_used"] = calibration is not None
         if calibration is None and is_risky_sl_roi(sl_roi):
             await audit.record(
@@ -270,7 +262,7 @@ class TopSignalEntriesStrategy(Strategy):
 
         cooldown_until_after = datetime.now(UTC) - timedelta(minutes=cooldown_minutes)
         trading_service = TradingService(ctx.client, ctx.session)
-        stop_type = settings.strategy_tpsl_stop_type
+        stop_type = cfg.tpsl_stop_type
 
         result.details["position_slots"] = {
             "target": target_slots,
@@ -360,12 +352,8 @@ class TopSignalEntriesStrategy(Strategy):
                 if wf_gate:
                     wf = walk_forward_live_gate_from_klines(
                         klines,
-                        choppiness_max=Decimal(
-                            settings.strategy_top_signal_entries_wf_choppiness_max
-                        ),
-                        walk_forward_cooldown_minutes=int(
-                            settings.strategy_top_signal_entries_wf_cooldown_minutes
-                        ),
+                        choppiness_max=Decimal(cfg.wf_choppiness_max),
+                        walk_forward_cooldown_minutes=int(cfg.wf_cooldown_minutes),
                     )
                     if not wf["ok"]:
                         result.skipped.append(
@@ -544,7 +532,7 @@ class TopSignalEntriesStrategy(Strategy):
                     tp_roi_pct=tp_roi,
                     sl_roi_pct=sl_roi,
                 )
-            min_tp_roi = Decimal(ctx.settings.strategy_min_tp_roi_pct)
+            min_tp_roi = Decimal(ctx.top_signal_entries.min_tp_roi_pct)
             if min_tp_roi > 0:
                 implied_tp_roi = implied_tp_roi_pct_from_price_move_pct(
                     tp_move_pct=tp_move_pct, leverage=leverage

@@ -53,6 +53,13 @@ async def get_runtime_bool(session: AsyncSession, key: str) -> bool | None:
 async def set_runtime_bool(session: AsyncSession, key: str, value: bool) -> None:
     if key not in RUNTIME_BOOL_KEYS:
         raise ValueError(f"Unsupported runtime key: {key}")
+    await set_runtime_json_value(session, key, value)
+
+
+async def set_runtime_json_value(
+    session: AsyncSession, key: str, value: object
+) -> None:
+    """Általános JSON érték mentése (bool, dict, stb.)."""
     existing = await session.get(AppRuntimeSetting, key)
     encoded = json.dumps(value)
     if existing is None:
@@ -71,12 +78,15 @@ async def effective_bool(
     settings: Settings,
     *,
     runtime_key: str,
-    env_attr: str,
+    env_attr: str | None = None,
+    default: bool = False,
 ) -> bool:
     override = await get_runtime_bool(session, runtime_key)
     if override is not None:
         return override
-    return _env_bool(settings, env_attr)
+    if env_attr is not None:
+        return _env_bool(settings, env_attr)
+    return default
 
 
 async def is_trading_paused(session: AsyncSession) -> bool:
@@ -103,23 +113,24 @@ async def is_strategy_runner_paused(session: AsyncSession, settings: Settings) -
 async def effective_live_trading(
     session: AsyncSession, settings: Settings
 ) -> bool:
-    """Élő order küldés engedélyezve (DB runtime, különben env bootstrap)."""
+    """Élő order küldés engedélyezve (DB runtime; alapértelmezés: True)."""
     return await effective_bool(
         session,
         settings,
         runtime_key="bitunix_live_trading",
-        env_attr="bitunix_live_trading",
+        default=True,
     )
 
 
 async def is_strategy_enabled(
     session: AsyncSession, settings: Settings, strategy_name: str
 ) -> bool:
-    env_attr = _STRATEGY_ENV_MAP.get(strategy_name)
-    if env_attr is None:
+    runtime_key = _STRATEGY_ENV_MAP.get(strategy_name)
+    if runtime_key is None:
         return True
-    runtime_key = env_attr
-    return await effective_bool(session, settings, runtime_key=runtime_key, env_attr=env_attr)
+    return await effective_bool(
+        session, settings, runtime_key=runtime_key, default=True
+    )
 
 
 async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
@@ -136,17 +147,17 @@ async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
     blocked, block_reason = await is_new_position_open_blocked(session)
     live_trading = await effective_live_trading(session, settings)
 
+    from app.services.strategy_runtime_config import get_top_signal_entries_config
+
+    tse_config = await get_top_signal_entries_config(session)
+
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "env": {
             "app_env": settings.app_env,
-            "bitunix_live_trading": settings.bitunix_live_trading,
             "strategy_runner_enabled": settings.strategy_runner_enabled,
             "calibration_enabled": settings.calibration_enabled,
             "require_calibration_for_trading": settings.require_calibration_for_trading,
-            "strategy_top_signal_entries_enabled": (
-                settings.strategy_top_signal_entries_enabled
-            ),
         },
         "effective": {
             "trading_paused": trading_paused,
@@ -164,13 +175,7 @@ async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
         "runtime_overrides": await _list_overrides(session),
         "strategy_config": {
             "interval_seconds": settings.strategy_interval_seconds,
-            "top_signal_entries_count": settings.strategy_top_signal_entries_count,
-            "top_signal_entries_cooldown_minutes": (
-                settings.strategy_top_signal_entries_cooldown_minutes
-            ),
-            "top_signal_entries_scan_limit": (
-                settings.strategy_top_signal_entries_scan_limit
-            ),
+            "top_signal_entries": tse_config.model_dump(),
             "calibration_interval_seconds": settings.calibration_interval_seconds,
             "calibration_max_age_minutes": settings.calibration_max_age_minutes,
         },

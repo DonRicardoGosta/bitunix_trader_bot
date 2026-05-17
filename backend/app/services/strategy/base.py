@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bitunix.client import BitunixClient
 from app.config import Settings
+from app.schemas.strategy_config import TopSignalEntriesConfig
 
 
 @dataclass
@@ -19,6 +20,7 @@ class StrategyContext:
     session: AsyncSession
     client: BitunixClient
     settings: Settings
+    top_signal_entries: TopSignalEntriesConfig
     triggered_by: str = "scheduler"
 
 
