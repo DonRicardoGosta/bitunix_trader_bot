@@ -161,6 +161,42 @@ class WalkForwardSequenceCore(BaseModel):
     summary: WalkForwardSequenceSummary | None = None
 
 
+class HoldWindowGridRow(BaseModel):
+    """Egy tartási idő érték szimulációs eredménye."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hold_minutes: int = Field(ge=1)
+    trades_evaluated: int = Field(ge=0)
+    good_trades: int = Field(ge=0)
+    good_rate_pct: str | None = None
+
+
+class HoldWindowBlock(BaseModel):
+    """Hold-window rács egy TP/SL variációhoz."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    profit_threshold_pct: str | None = None
+    grid_minutes: list[int] = Field(default_factory=list)
+    best_hold_minutes: int | None = None
+    best_good_rate_pct: str | None = None
+    rows: list[HoldWindowGridRow] = Field(default_factory=list)
+
+
+class HoldWindowOptimizationInfo(BaseModel):
+    """Stratégia config alapján: fut-e a hold optimalizálás az elemzésben."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    min_minutes: int = Field(default=30, ge=1)
+    max_minutes: int = Field(default=60, ge=1)
+    step_minutes: int = Field(default=5, ge=1)
+    profit_threshold_pct: str = "15"
+
+
 class TpslVariationRow(BaseModel):
     """Egy TP×medián / SL×medián kombináció eredménye."""
 
@@ -179,6 +215,9 @@ class TpslVariationRow(BaseModel):
     meets_min_tpsl_pct_profile: bool = False
     is_recommended: bool = False
     sequence: WalkForwardSequenceCore
+    hold_window: HoldWindowBlock | None = None
+    best_hold_minutes: int | None = None
+    hold_good_rate_pct: str | None = None
 
 
 class WalkForwardTpslVariations(BaseModel):
@@ -261,3 +300,4 @@ class CoinAnalyzeResponse(BaseModel):
     walk_forward: WalkForwardBacktest
     walk_forward_sequence: WalkForwardSequence
     walk_forward_tpsl_variations: WalkForwardTpslVariations
+    hold_window_optimization: HoldWindowOptimizationInfo

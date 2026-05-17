@@ -5,8 +5,10 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.services import coin_analyze as coin_analyze_mod
+from app.services.hold_window import HoldWindowParams
 from app.services.coin_analyze import (
     analyze_clean_legs,
+    build_coin_analysis_payload,
     build_walk_forward_payload,
     build_walk_forward_sequence,
     build_walk_forward_tpsl_variations_payload,
@@ -440,3 +442,23 @@ def test_walk_forward_live_gate_grid_meets_target_fallback(monkeypatch) -> None:
     assert isinstance(snap, dict)
     assert snap.get("resolved_tp_win_rate_pct") == "100.00"
     assert snap.get("rank") == 0
+
+
+def test_build_coin_analysis_payload_includes_hold_window_settings() -> None:
+    klines = [_synth_bar(i * 60_000, str(100 + (i % 5))) for i in range(90)]
+    raw = {"data": [{"time": int(k["time"]), "open": str(k["open"]), "high": str(k["high"]), "low": str(k["low"]), "close": str(k["close"])} for k in klines]}
+    hold = HoldWindowParams(enabled=True, min_minutes=30, max_minutes=35, step_minutes=5)
+    payload = build_coin_analysis_payload(
+        symbol="BTCUSDT",
+        max_leverage=20,
+        lookback_minutes=1440,
+        interval="15m",
+        kline_limit=96,
+        klines_raw=raw,
+        hold_params=hold,
+    )
+    assert payload["hold_window_optimization"]["enabled"] is True
+    assert payload["hold_window_optimization"]["min_minutes"] == 30
+    vars0 = payload["walk_forward_tpsl_variations"]["variations"]
+    assert vars0
+    assert "hold_window" in vars0[0]

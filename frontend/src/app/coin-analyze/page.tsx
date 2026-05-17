@@ -22,6 +22,8 @@ import {
   type CandleChartRow,
   type CleanLegRow,
   type CoinAnalyzeResult,
+  type HoldWindowBlock,
+  type HoldWindowOptimizationInfo,
   type MarketSymbolRow,
   type TpslVariationRow,
   type WalkForwardCurrentSignal,
@@ -36,6 +38,13 @@ const WF_REASON_HU: Record<string, string> = {
   clean_legs_tie_negative_net_close: "Döntetlen lábak, nettó záró csökkent",
   clean_legs_tie_flat_close: "Döntetlen lábak, sík záró → long alapértelmezés",
 };
+
+function formatLookbackMinutes(minutes: number): string {
+  if (minutes < 60) return `${minutes} perc`;
+  if (minutes % 1440 === 0) return `${minutes / 1440} nap`;
+  if (minutes % 60 === 0) return `${minutes / 60} óra`;
+  return `${minutes} perc`;
+}
 
 const LOOKBACK_PRESETS: { label: string; minutes: number }[] = [
   { label: "1 óra", minutes: 60 },
@@ -244,12 +253,19 @@ export default function CoinAnalyzePage() {
                 {result.symbol} · {result.interval} · {result.kline_limit} gyertya
               </CardTitle>
               <p className="text-xs text-muted">
-                Kért lookback: {result.lookback_minutes_requested} perc · choppiness küszöb ≤{" "}
-                {result.choppiness_max} · tiszta lábak: {result.clean_leg_count} / összes láb:{" "}
-                {result.all_leg_count}
+                Kért lookback: {formatLookbackMinutes(result.lookback_minutes_requested)} (
+                {result.lookback_minutes_requested} perc) · gyertya:{" "}
+                <span className="font-medium text-foreground">{result.interval}</span> ×{" "}
+                {result.kline_limit} · choppiness ≤ {result.choppiness_max} · tiszta lábak:{" "}
+                {result.clean_leg_count} / {result.all_leg_count}
               </p>
             </CardHeader>
             <CardContent>
+              <AnalysisParamsBanner
+                result={result}
+                wfCooldownMin={wfCooldownMin}
+                holdCfg={result.hold_window_optimization}
+              />
               <div className="grid gap-4 md:grid-cols-3 mb-4">
                 <Stat label="Medián mozgás (tiszta láb)" value={result.median_move_pct} suffix="%" />
                 <Stat label="Átlag mozgás" value={result.mean_move_pct} suffix="%" />
@@ -365,7 +381,11 @@ export default function CoinAnalyzePage() {
                 vékony sárga függőlegesek a szekvenciális trade belépések; TP/SL részletek a lenti
                 kis chartokon.
               </p>
-              <TpslVariationsSection candles={result.candles} block={result.walk_forward_tpsl_variations} />
+              <TpslVariationsSection
+                candles={result.candles}
+                block={result.walk_forward_tpsl_variations}
+                holdCfg={result.hold_window_optimization}
+              />
               <CurrentSignalPanel
                 sig={
                   result.walk_forward_tpsl_variations.best_current_signal ??
@@ -494,9 +514,11 @@ function TradeMiniChart({ candles, trade }: { candles: CandleChartRow[]; trade: 
 function TpslVariationsSection({
   candles,
   block,
+  holdCfg,
 }: {
   candles: CandleChartRow[];
   block: WalkForwardTpslVariations;
+  holdCfg: HoldWindowOptimizationInfo;
 }) {
   if (!block.variations.length) {
     return (
@@ -538,6 +560,13 @@ function TpslVariationsSection({
           {block.min_trades_last_48h_for_recommendation} belépés történt, eléri a cél TP%-ot, és az első belépés nyers
           TP/SL %% eléri a fenti minimumot; a jelenlegi predikció csak ilyenkor a javasolt szorzókat mutatja.
         </span>
+        {holdCfg.enabled ? (
+          <span className="block mt-1 text-sky-300/90">
+            Hold-window: a variációk sorrendje a „jó tartási idő” arány szerint is súlyozott (≥
+            {holdCfg.profit_threshold_pct}% ár-mozgás profit időzített záráskor). A javasolt perc a rácsban zöld
+            sorral.
+          </span>
+        ) : null}
       </p>
       {block.variations.map((v: TpslVariationRow, i: number) => {
         const s = v.sequence.summary;
@@ -570,6 +599,12 @@ function TpslVariationsSection({
             {v.meets_target ? (
               <span className="text-emerald-400 font-medium">≥ {block.target_tp_win_rate_pct}%</span>
             ) : null}
+            {v.best_hold_minutes != null ? (
+              <span className="text-sky-300">
+                hold: <strong className="text-foreground">{v.best_hold_minutes} perc</strong>
+                {v.hold_good_rate_pct != null ? ` (${v.hold_good_rate_pct}% jó)` : ""}
+              </span>
+            ) : null}
           </div>
         ) : (
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted pt-1">
@@ -586,6 +621,12 @@ function TpslVariationsSection({
             )}
             {v.is_recommended ? (
               <span className="text-emerald-400 font-medium">ajánlott</span>
+            ) : null}
+            {v.best_hold_minutes != null ? (
+              <span className="text-sky-300">
+                hold: <strong className="text-foreground">{v.best_hold_minutes} perc</strong>
+                {v.hold_good_rate_pct != null ? ` (${v.hold_good_rate_pct}% jó)` : ""}
+              </span>
             ) : null}
           </div>
         );
@@ -622,6 +663,7 @@ function TpslVariationsSection({
               </div>
               {head}
               {stats}
+              {v.hold_window?.enabled ? <HoldWindowGridTable block={v.hold_window} /> : null}
               {charts}
             </div>
           );
@@ -636,10 +678,14 @@ function TpslVariationsSection({
               <span className="text-xs font-mono text-muted">
                 TP% {v.resolved_tp_win_rate_pct ?? "—"}
                 {v.meets_target ? <span className="text-emerald-400 ml-2">cél OK</span> : null}
+                {v.best_hold_minutes != null ? (
+                  <span className="text-sky-300 ml-2">hold {v.best_hold_minutes}p</span>
+                ) : null}
               </span>
             </summary>
             <div className="px-3 pb-3 border-t border-border/40">
               {stats}
+              {v.hold_window?.enabled ? <HoldWindowGridTable block={v.hold_window} /> : null}
               {charts}
             </div>
           </details>
@@ -673,6 +719,100 @@ function CurrentSignalPanel({ sig }: { sig: WalkForwardCurrentSignal }) {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+function AnalysisParamsBanner({
+  result,
+  wfCooldownMin,
+  holdCfg,
+}: {
+  result: CoinAnalyzeResult;
+  wfCooldownMin: number;
+  holdCfg: HoldWindowOptimizationInfo;
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-bg-subtle/50 px-3 py-2.5 mb-4 text-xs space-y-1.5">
+      <div className="font-medium text-foreground text-sm">Elemzés futási paraméterek</div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted">
+        <span>
+          Lookback:{" "}
+          <strong className="text-foreground">
+            {formatLookbackMinutes(result.lookback_minutes_requested)}
+          </strong>
+        </span>
+        <span>
+          Gyertya:{" "}
+          <strong className="text-foreground">
+            {result.interval} × {result.kline_limit}
+          </strong>
+        </span>
+        <span>
+          WF cooldown: <strong className="text-foreground">{wfCooldownMin} perc</strong>
+        </span>
+      </div>
+      {holdCfg.enabled ? (
+        <p className="text-sky-300/95">
+          Hold-window optimalizálás:{" "}
+          <strong className="text-foreground">
+            {holdCfg.min_minutes}–{holdCfg.max_minutes} perc, lépés {holdCfg.step_minutes} perc
+          </strong>
+          {" · "}
+          „jó” trade küszöb: ≥{holdCfg.profit_threshold_pct}% ár-mozgás profit (TP érintés mindig jó).
+          Az alábbi variációknál látszik a rács és a javasolt tartási idő.
+        </p>
+      ) : (
+        <p className="text-muted">
+          Hold-window optimalizálás ki van kapcsolva (Stratégiák → top_signal_entries). Bekapcsolva
+          minden variációnál megjelenik, melyik tartási idő (perc) adná a legtöbb jó trade-et.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function HoldWindowGridTable({ block }: { block: HoldWindowBlock }) {
+  if (!block.enabled || !block.rows.length) return null;
+  return (
+    <div className="overflow-x-auto mt-2">
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="text-left text-muted border-b border-border/60">
+            <th className="py-1.5 pr-3">Tartás (perc)</th>
+            <th className="py-1.5 pr-3">Trade-ek</th>
+            <th className="py-1.5 pr-3">Jó</th>
+            <th className="py-1.5">Jó arány</th>
+          </tr>
+        </thead>
+        <tbody>
+          {block.rows.map((row) => {
+            const isBest = block.best_hold_minutes === row.hold_minutes;
+            return (
+              <tr
+                key={row.hold_minutes}
+                className={
+                  isBest
+                    ? "border-b border-emerald-500/30 bg-emerald-950/20"
+                    : "border-b border-border/30"
+                }
+              >
+                <td className="py-1 pr-3 font-mono">
+                  {row.hold_minutes}
+                  {isBest ? (
+                    <span className="ml-1 text-emerald-400 font-sans font-medium">← legjobb</span>
+                  ) : null}
+                </td>
+                <td className="py-1 pr-3 font-mono">{row.trades_evaluated}</td>
+                <td className="py-1 pr-3 font-mono">{row.good_trades}</td>
+                <td className="py-1 font-mono">
+                  {row.good_rate_pct != null ? `${row.good_rate_pct}%` : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

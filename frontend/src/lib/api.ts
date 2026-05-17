@@ -613,6 +613,30 @@ export interface WalkForwardSequenceCore {
   summary: WalkForwardSequenceSummary | null;
 }
 
+export interface HoldWindowGridRow {
+  hold_minutes: number;
+  trades_evaluated: number;
+  good_trades: number;
+  good_rate_pct: string | null;
+}
+
+export interface HoldWindowBlock {
+  enabled: boolean;
+  profit_threshold_pct: string | null;
+  grid_minutes: number[];
+  best_hold_minutes: number | null;
+  best_good_rate_pct: string | null;
+  rows: HoldWindowGridRow[];
+}
+
+export interface HoldWindowOptimizationInfo {
+  enabled: boolean;
+  min_minutes: number;
+  max_minutes: number;
+  step_minutes: number;
+  profit_threshold_pct: string;
+}
+
 export interface TpslVariationRow {
   rank: number;
   tp_median_multiplier: string;
@@ -627,6 +651,9 @@ export interface TpslVariationRow {
   meets_min_tpsl_pct_profile: boolean;
   is_recommended: boolean;
   sequence: WalkForwardSequenceCore;
+  hold_window?: HoldWindowBlock | null;
+  best_hold_minutes?: number | null;
+  hold_good_rate_pct?: string | null;
 }
 
 export interface WalkForwardTpslVariations {
@@ -703,6 +730,7 @@ export interface CoinAnalyzeResult {
   walk_forward: WalkForwardBacktest;
   walk_forward_sequence: WalkForwardSequence;
   walk_forward_tpsl_variations: WalkForwardTpslVariations;
+  hold_window_optimization: HoldWindowOptimizationInfo;
 }
 
 export const api = {

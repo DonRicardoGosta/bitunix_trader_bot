@@ -5,8 +5,10 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bitunix_client
+from app.db.session import get_db
 from app.bitunix.client import BitunixClient
 from app.bitunix.exceptions import BitunixAPIError
 from app.schemas.coin_analyze import (
@@ -16,6 +18,8 @@ from app.schemas.coin_analyze import (
 )
 from app.schemas.trading import TickerInfo
 from app.services.coin_analyze import build_coin_analysis_payload, plan_kline_interval
+from app.services.hold_window import hold_window_from_strategy_config
+from app.services.strategy_runtime_config import get_top_signal_entries_config
 from app.services.trading_pairs_meta import index_trading_pairs
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -96,6 +100,7 @@ async def list_trading_symbols(
 async def coin_analyze(
     body: CoinAnalyzeRequest,
     client: BitunixClient = Depends(get_bitunix_client),
+    session: AsyncSession = Depends(get_db),
 ) -> CoinAnalyzeResponse:
     """Kline + swing elemzés egy szimbólumra (lookback → intervallum automatikus)."""
     try:
@@ -124,6 +129,9 @@ async def coin_analyze(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
 
+    tse_cfg = await get_top_signal_entries_config(session)
+    hold_params = hold_window_from_strategy_config(tse_cfg)
+
     payload = build_coin_analysis_payload(
         symbol=body.symbol,
         max_leverage=max(1, int(pair.max_leverage)),
@@ -132,6 +140,7 @@ async def coin_analyze(
         kline_limit=limit,
         klines_raw=raw_klines,
         walk_forward_cooldown_minutes=body.walk_forward_cooldown_minutes,
+        hold_params=hold_params,
     )
     if not payload["candles"]:
         raise HTTPException(

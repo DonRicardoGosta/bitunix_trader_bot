@@ -1350,6 +1350,7 @@ def build_coin_analysis_payload(
     klines_raw: dict[str, Any],
     choppiness_max: Decimal = Decimal("1.72"),
     walk_forward_cooldown_minutes: int = 60,
+    hold_params: Any | None = None,
 ) -> dict[str, Any]:
     """Teljes API válasz dict összeállítása (Pydantic model_validate-hoz)."""
     klines = parse_klines(klines_raw)
@@ -1414,5 +1415,25 @@ def build_coin_analysis_payload(
             klines,
             choppiness_max=choppiness_max,
             cooldown_minutes=walk_forward_cooldown_minutes,
+            hold_params=hold_params,
         ),
+        "hold_window_optimization": _hold_window_optimization_info(hold_params),
+    }
+
+
+def _hold_window_optimization_info(hold_params: Any | None) -> dict[str, Any]:
+    if hold_params is None or not getattr(hold_params, "enabled", False):
+        return {
+            "enabled": False,
+            "min_minutes": 30,
+            "max_minutes": 60,
+            "step_minutes": 5,
+            "profit_threshold_pct": "15",
+        }
+    return {
+        "enabled": True,
+        "min_minutes": int(getattr(hold_params, "min_minutes", 30)),
+        "max_minutes": int(getattr(hold_params, "max_minutes", 60)),
+        "step_minutes": int(getattr(hold_params, "step_minutes", 5)),
+        "profit_threshold_pct": str(getattr(hold_params, "profit_threshold_pct", "15")),
     }
