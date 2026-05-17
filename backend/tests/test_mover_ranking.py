@@ -1,22 +1,17 @@
-"""Top movers stratégia tiszta funkcionális tesztek (kliens nélkül).
-
-A ``_rank_top_movers`` és ``_index_trading_pairs`` belső segédfüggvényeket
-közvetlenül teszteljük, hogy a rangsorolás abszolút értékkel működjön és
-a max leverage helyesen jöjjön ki a trading_pairs válaszból.
-"""
+"""Mover rangsorolás és irány-döntés unit tesztek (kliens nélkül)."""
 
 from __future__ import annotations
 
 from decimal import Decimal
 
-from app.services.strategy.top_movers import (
-    _extract_available_usdt,
-    _index_trading_pairs,
-    _Mover,
-    _parse_open_position_symbols,
-    _rank_top_movers,
+from app.services.strategy.mover_ranking import (
+    Mover,
     decide_direction,
+    extract_available_usdt,
+    parse_open_position_symbols,
+    rank_top_movers,
 )
+from app.services.trading_pairs_meta import index_trading_pairs
 
 
 def test_rank_top_movers_uses_absolute_change() -> None:
@@ -29,7 +24,7 @@ def test_rank_top_movers_uses_absolute_change() -> None:
             {"symbol": "DDD", "lastPrice": "85", "open": "100"},  # -15%  (abs 15)
         ]
     }
-    top3 = _rank_top_movers(raw, top_n=3)
+    top3 = rank_top_movers(raw, top_n=3)
     assert [m.symbol for m in top3] == ["BBB", "DDD", "AAA"]
     assert top3[0].change_pct == Decimal("-30")
     assert top3[1].change_pct == Decimal("-15")
@@ -45,7 +40,7 @@ def test_rank_top_movers_skips_invalid_rows() -> None:
             {"lastPrice": "100", "open": "100"},  # nincs symbol
         ]
     }
-    top = _rank_top_movers(raw, top_n=10)
+    top = rank_top_movers(raw, top_n=10)
     assert [m.symbol for m in top] == ["AAA"]
 
 
@@ -55,7 +50,7 @@ def test_rank_top_movers_accepts_bare_list() -> None:
         {"symbol": "X", "lastPrice": "200", "open": "100"},
         {"symbol": "Y", "lastPrice": "50", "open": "100"},
     ]
-    top = _rank_top_movers(raw, top_n=2)
+    top = rank_top_movers(raw, top_n=2)
     assert top[0].symbol == "X"
     assert abs(top[0].change_pct) >= abs(top[1].change_pct)
 
@@ -73,7 +68,7 @@ def test_index_trading_pairs_returns_max_leverage_per_symbol() -> None:
             {"symbol": "WEIRD"},  # hiányos – default 1x és 4 tizedes
         ]
     }
-    index = _index_trading_pairs(raw)
+    index = index_trading_pairs(raw)
     assert index["BTCUSDT"].max_leverage == 125
     assert index["BTCUSDT"].base_precision == 3
     assert index["BTCUSDT"].price_precision == 2
@@ -85,19 +80,16 @@ def test_index_trading_pairs_returns_max_leverage_per_symbol() -> None:
 
 def test_extract_available_usdt_from_account_payload() -> None:
     raw = {"code": 0, "data": {"available": "123.45", "frozen": "1"}}
-    assert _extract_available_usdt(raw) == Decimal("123.45")
+    assert extract_available_usdt(raw) == Decimal("123.45")
 
 
 def test_extract_available_usdt_empty() -> None:
-    assert _extract_available_usdt({}) == Decimal("0")
-    assert _extract_available_usdt({"data": {}}) == Decimal("0")
+    assert extract_available_usdt({}) == Decimal("0")
+    assert extract_available_usdt({"data": {}}) == Decimal("0")
 
 
-# -------- direction logika ---------------------------------------------------
-
-
-def _mover(symbol: str, change: str, last: str, high: str, low: str) -> _Mover:
-    return _Mover(
+def _mover(symbol: str, change: str, last: str, high: str, low: str) -> Mover:
+    return Mover(
         symbol=symbol,
         last_price=Decimal(last),
         change_pct=Decimal(change),
@@ -152,7 +144,7 @@ def test_decide_direction_momentum_breakout_skips_ambiguous() -> None:
 
 def test_decide_direction_no_range_data() -> None:
     """Ha nincs high/low, momentum_breakout módban SKIP."""
-    bare = _Mover(
+    bare = Mover(
         symbol="X",
         last_price=Decimal("100"),
         change_pct=Decimal("5"),
@@ -173,4 +165,4 @@ def test_parse_open_position_symbols_filters_zero_size() -> None:
             {"symbol": "BBB", "qty": "1.5"},
         ]
     }
-    assert _parse_open_position_symbols(raw) == {"BBB"}
+    assert parse_open_position_symbols(raw) == {"BBB"}

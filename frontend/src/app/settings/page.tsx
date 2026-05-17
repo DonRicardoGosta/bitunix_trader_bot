@@ -18,7 +18,6 @@ type ToggleKey =
   | "trading_paused"
   | "require_calibration_for_trading"
   | "strategy_runner_paused"
-  | "strategy_top_movers_enabled"
   | "strategy_top_signal_entries_enabled";
 
 const TOGGLES: {
@@ -43,11 +42,6 @@ const TOGGLES: {
     label: "Stratégia scheduler szünet",
     hint: "A háttér stratégia futások kihagyása.",
     invert: true,
-  },
-  {
-    key: "strategy_top_movers_enabled",
-    label: "Top movers stratégia",
-    hint: "Runtime felülírás az env felett.",
   },
   {
     key: "strategy_top_signal_entries_enabled",

@@ -315,7 +315,6 @@ export interface SettingsSnapshot {
     strategy_runner_enabled: boolean;
     calibration_enabled: boolean;
     require_calibration_for_trading: boolean;
-    strategy_top_movers_enabled: boolean;
     strategy_top_signal_entries_enabled: boolean;
   };
   effective: {
@@ -476,7 +475,6 @@ export interface RuntimeSettingsPatch {
   trading_paused?: boolean;
   require_calibration_for_trading?: boolean;
   strategy_runner_paused?: boolean;
-  strategy_top_movers_enabled?: boolean;
   strategy_top_signal_entries_enabled?: boolean;
 }
 

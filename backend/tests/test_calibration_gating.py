@@ -24,7 +24,18 @@ from app.db.models import (
 from app.db.session import AsyncSessionLocal, engine
 from app.main import create_app
 from app.services.strategy.base import StrategyContext
-from app.services.strategy.top_movers import TopMoversStrategy
+from app.services.strategy.top_signal_entries import TopSignalEntriesStrategy
+
+
+def _bbb_klines_raw() -> dict:
+    return {
+        "data": [
+            {"time": 1000, "open": "70", "high": "71", "low": "69", "close": "70"},
+            {"time": 2000, "open": "61.5", "high": "61.6", "low": "58", "close": "59"},
+            {"time": 3000, "open": "60", "high": "60.1", "low": "57", "close": "56"},
+            {"time": 4000, "open": "56", "high": "57", "low": "55", "close": "56.5"},
+        ]
+    }
 
 
 class FakeBitunixClient:
@@ -75,6 +86,9 @@ class FakeBitunixClient:
     async def get_ticker(self, symbol: str) -> dict:
         return {"data": [{"symbol": symbol, "lastPrice": "60"}]}
 
+    async def get_klines(self, symbol: str, **kwargs) -> dict:
+        return _bbb_klines_raw()
+
     async def change_leverage(self, **kwargs) -> dict:
         self.change_leverage_calls.append(kwargs)
         return {"dryRun": True}
@@ -104,7 +118,7 @@ async def _create_all() -> None:
 
 @pytest.mark.asyncio
 async def test_strategy_skips_when_no_calibration() -> None:
-    """Friss kalibráció hiányában a top_movers nem ad fel rendelést."""
+    """Friss kalibráció hiányában a top_signal_entries nem ad fel rendelést."""
     async with AsyncSessionLocal() as session:
         await session.execute(sa.delete(TpSlCalibration))
         await session.execute(sa.delete(Order))
@@ -112,10 +126,20 @@ async def test_strategy_skips_when_no_calibration() -> None:
         await session.commit()
 
     fake = FakeBitunixClient()
-    strategy = TopMoversStrategy()
+    base = get_settings()
+    settings = base.model_copy(
+        update={
+            "strategy_top_signal_entries_enabled": True,
+            "strategy_top_signal_entries_count": 1,
+            "strategy_top_signal_entries_scan_limit": 10,
+            "strategy_top_signal_entries_kline_lookahead": 10,
+            "strategy_top_signal_entries_wf_gate_enabled": False,
+        }
+    )
+    strategy = TopSignalEntriesStrategy()
     async with AsyncSessionLocal() as session:
         ctx = StrategyContext(
-            session=session, client=fake, settings=get_settings(), triggered_by="test"
+            session=session, client=fake, settings=settings, triggered_by="test"
         )
         result = await strategy.run(ctx)
         await session.commit()
@@ -130,7 +154,8 @@ async def test_strategy_skips_when_no_calibration() -> None:
         warns = (
             await session.execute(
                 sa.select(AuditEvent).where(
-                    AuditEvent.event == "strategy.top_movers.calibration_missing"
+                    AuditEvent.event
+                    == "strategy.top_signal_entries.calibration_missing"
                 )
             )
         ).scalars().all()
@@ -181,10 +206,20 @@ async def test_strategy_uses_per_symbol_calibration_when_available() -> None:
         await session.commit()
 
     fake = FakeBitunixClient()
-    strategy = TopMoversStrategy()
+    base = get_settings()
+    settings = base.model_copy(
+        update={
+            "strategy_top_signal_entries_enabled": True,
+            "strategy_top_signal_entries_count": 1,
+            "strategy_top_signal_entries_scan_limit": 10,
+            "strategy_top_signal_entries_kline_lookahead": 10,
+            "strategy_top_signal_entries_wf_gate_enabled": False,
+        }
+    )
+    strategy = TopSignalEntriesStrategy()
     async with AsyncSessionLocal() as session:
         ctx = StrategyContext(
-            session=session, client=fake, settings=get_settings(), triggered_by="test"
+            session=session, client=fake, settings=settings, triggered_by="test"
         )
         result = await strategy.run(ctx)
         await session.commit()
@@ -192,12 +227,10 @@ async def test_strategy_uses_per_symbol_calibration_when_available() -> None:
     assert len(result.placed_orders) == 1
     placed = result.placed_orders[0]
     assert placed["symbol"] == "BBB"
-    # Per-symbol 2%%/1%% — a stratégia a saját kalibrált értéket használja.
-    # SHORT BBB entry=60: tp=59.40, sl=60.30 (round_up 2dec).
+    assert placed["side"] == "SELL"
     assert placed["tp_source"] == "calibration_symbol"
     assert placed["tp_move_pct"] == "2.0"
     assert placed["sl_move_pct"] == "1.0"
-    # SHORT BBB entry=60, TP 2%%, SL 1%% (per-symbol), 2 dec ROUND_UP
     assert Decimal(placed["tp_price"]) == Decimal("58.80")
     assert Decimal(placed["sl_price"]) == Decimal("60.60")
     assert result.details["calibration_used"] is True

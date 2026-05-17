@@ -57,7 +57,7 @@ def test_settings_api_get_and_patch() -> None:
         assert "effective" in r.json()
         r2 = client.patch(
             "/api/settings",
-            json={"trading_paused": True, "strategy_top_movers_enabled": False},
+            json={"trading_paused": True},
         )
         assert r2.status_code == 200, r2.text
         assert r2.json()["applied"]["trading_paused"] is True

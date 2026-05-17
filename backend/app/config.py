@@ -51,18 +51,10 @@ class Settings(BaseSettings):
     # Alapból be: induláskor elindul a háttér-futó; tesztekben kapcsold ki env-vel.
     strategy_runner_enabled: bool = True
     strategy_interval_seconds: int = 30
-    # Tickerrangsor max. mélysége (top movers + top signal entries).
+    # Tickerrangsor max. mélysége (top signal entries).
     strategy_scan_limit_max: int = 1000
-    strategy_top_movers_enabled: bool = True
-    strategy_top_movers_count: int = 3
-    strategy_top_movers_scan_limit: int = 60
-    strategy_top_movers_cooldown_minutes: int = 240
-    strategy_top_movers_direction_mode: Literal[
-        "trend", "momentum_breakout", "mean_revert"
-    ] = "momentum_breakout"
-    strategy_top_movers_range_threshold: str = "0.66"
     # Top signal entries: top abs 24h movers + kline megerősítés (long/short).
-    strategy_top_signal_entries_enabled: bool = False
+    strategy_top_signal_entries_enabled: bool = True
     strategy_top_signal_entries_count: int = 2
     strategy_top_signal_entries_scan_limit: int = 1000
     strategy_top_signal_entries_kline_lookahead: int = 40

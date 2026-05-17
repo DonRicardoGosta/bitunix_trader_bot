@@ -24,8 +24,7 @@ describe("SettingsPage", () => {
               strategy_runner_enabled: true,
               calibration_enabled: true,
               require_calibration_for_trading: true,
-              strategy_top_movers_enabled: true,
-              strategy_top_signal_entries_enabled: false,
+              strategy_top_signal_entries_enabled: true,
             },
             effective: {
               trading_paused: false,
@@ -33,7 +32,7 @@ describe("SettingsPage", () => {
               strategy_runner_paused: false,
               strategy_runner_active: true,
               live_trading: false,
-              strategies: { top_movers: true, top_signal_entries: false },
+              strategies: { top_signal_entries: true },
             },
             runtime_overrides: {},
             strategy_config: { interval_seconds: 30 },

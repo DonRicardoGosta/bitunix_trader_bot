@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from app.config import get_settings
 from app.db.base import Base
 from app.db.models import (
+    AppRuntimeSetting,
     AuditEvent,
     CalibrationStatus,
     Order,
@@ -20,7 +21,7 @@ from app.db.models import (
 from app.db.session import AsyncSessionLocal, engine
 from app.services.calibration import parse_klines
 from app.services.strategy.base import StrategyContext
-from app.services.strategy.top_movers import _Mover
+from app.services.strategy.mover_ranking import Mover
 from app.services.strategy.top_signal_entries import (
     TopSignalEntriesStrategy,
     entry_side_from_mover_and_klines,
@@ -56,13 +57,24 @@ def _create_schema() -> None:
     asyncio.run(_create_all())
 
 
+@pytest.fixture(autouse=True)
+async def _clear_strategy_runtime_override() -> None:
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            sa.delete(AppRuntimeSetting).where(
+                AppRuntimeSetting.key == "strategy_top_signal_entries_enabled"
+            )
+        )
+        await session.commit()
+
+
 async def _create_all() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
-def _ccc_mover() -> _Mover:
-    return _Mover(
+def _ccc_mover() -> Mover:
+    return Mover(
         symbol="CCC",
         last_price=Decimal("125"),
         change_pct=Decimal("25"),
@@ -71,8 +83,8 @@ def _ccc_mover() -> _Mover:
     )
 
 
-def _bbb_mover() -> _Mover:
-    return _Mover(
+def _bbb_mover() -> Mover:
+    return Mover(
         symbol="BBB",
         last_price=Decimal("60"),
         change_pct=Decimal("-40"),
@@ -131,7 +143,7 @@ def test_entry_side_short_confirm() -> None:
 
 def test_entry_side_rejects_when_range_wrong() -> None:
     """Pozitív változás, de ár nem a felső zónában → nincs long."""
-    mover = _Mover(
+    mover = Mover(
         symbol="X",
         last_price=Decimal("99"),
         change_pct=Decimal("5"),
