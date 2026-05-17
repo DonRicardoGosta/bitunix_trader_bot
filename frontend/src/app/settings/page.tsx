@@ -18,6 +18,7 @@ type ToggleKey =
   | "trading_paused"
   | "require_calibration_for_trading"
   | "strategy_runner_paused"
+  | "bitunix_live_trading"
   | "strategy_top_signal_entries_enabled";
 
 const TOGGLES: {
@@ -44,9 +45,14 @@ const TOGGLES: {
     invert: true,
   },
   {
+    key: "bitunix_live_trading",
+    label: "Élő trading (Bitunix)",
+    hint: "Bekapcsolva: valódi rendelések mennek a tőzsdére. Kikapcsolva: dry-run.",
+  },
+  {
     key: "strategy_top_signal_entries_enabled",
-    label: "Top signal entries",
-    hint: "Runtime felülírás az env felett.",
+    label: "Top signal entries stratégia",
+    hint: "A stratégia futása és scheduler részvétele.",
   },
 ];
 
@@ -55,7 +61,15 @@ function effectiveToggle(
   key: ToggleKey,
   invert?: boolean,
 ): boolean {
-  const raw = eff[key as keyof SettingsSnapshot["effective"]];
+  let raw: boolean | undefined;
+  if (key === "bitunix_live_trading") {
+    raw = eff.live_trading;
+  } else if (key === "strategy_top_signal_entries_enabled") {
+    raw = eff.strategies.top_signal_entries;
+  } else {
+    const v = eff[key as keyof SettingsSnapshot["effective"]];
+    raw = typeof v === "boolean" ? v : undefined;
+  }
   if (typeof raw !== "boolean") return false;
   return invert ? !raw : raw;
 }
@@ -121,7 +135,7 @@ export default function SettingsPage() {
       <header>
         <h1 className="text-2xl font-bold text-slate-100">Vezérlőpult</h1>
         <p className="text-muted text-sm mt-1">
-          Runtime kapcsolók (DB) — az env alapértelmezést felülírhatják.
+          Runtime kapcsolók az adatbázisban — élő trading és stratégia be/ki innen vezérelhető.
         </p>
       </header>
 
@@ -147,7 +161,7 @@ export default function SettingsPage() {
                   value={eff.trading_paused ? "IGEN" : "nem"}
                 />
                 <StatusPill
-                  label="Live (env)"
+                  label="Live trading"
                   ok={eff.live_trading}
                   value={eff.live_trading ? "engedélyezve" : "dry-run"}
                 />

@@ -31,7 +31,7 @@ describe("SettingsPage", () => {
               require_calibration_for_trading: true,
               strategy_runner_paused: false,
               strategy_runner_active: true,
-              live_trading: false,
+              live_trading: true,
               strategies: { top_signal_entries: true },
             },
             runtime_overrides: {},

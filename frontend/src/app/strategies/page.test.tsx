@@ -27,6 +27,25 @@ beforeEach(() => {
     const method = (init?.method ?? "GET").toUpperCase();
     calls.push({ url, method });
 
+    if (url.endsWith("/api/settings")) {
+      return jsonResponse({
+        generated_at: "2026-05-13T10:00:00Z",
+        env: { bitunix_live_trading: false, strategy_top_signal_entries_enabled: true },
+        effective: {
+          trading_paused: false,
+          require_calibration_for_trading: true,
+          strategy_runner_paused: false,
+          strategy_runner_active: true,
+          live_trading: true,
+          strategies: { top_signal_entries: true },
+          new_position_open_allowed: true,
+          new_position_block_reason: null,
+        },
+        runtime_overrides: {},
+        strategy_config: {},
+        trading_blackout: { timezone: "UTC", days: {} },
+      });
+    }
     if (url.endsWith("/api/strategies")) {
       return jsonResponse([
         {
@@ -49,7 +68,7 @@ beforeEach(() => {
         },
       ]);
     }
-    if (url.includes("/api/strategies/runs")) {
+    if (url.includes("/api/strategies/runs?")) {
       return jsonResponse([
         {
           id: 1,
@@ -90,8 +109,8 @@ describe("<StrategiesPage />", () => {
       expect(screen.getAllByText("top_signal_entries").length).toBeGreaterThan(0),
     );
     expect(screen.getAllByText("SUCCESS").length).toBeGreaterThan(0);
-    expect(container.textContent).toContain("placed: 2");
-    expect(container.textContent).toContain("skipped: 0");
+    expect(container.textContent).toContain("placed 2");
+    expect(container.textContent).toContain("skip 0");
   });
 
   it("triggers strategy on button click", async () => {

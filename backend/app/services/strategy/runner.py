@@ -7,11 +7,11 @@ import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
-from app.bitunix.client import BitunixClient
 from app.bitunix.error_reporting import format_strategy_run_error, structured_exception
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
 from app.config import get_settings
 from app.db import audit
+from app.services.bitunix_client_factory import create_bitunix_client
 from app.services.runtime_settings import (
     is_strategy_enabled,
     is_strategy_runner_paused,
@@ -74,12 +74,8 @@ async def run_strategy(name: str, *, triggered_by: str = "manual") -> dict[str, 
         run_id = run.id
         await session.commit()
 
-    client = BitunixClient(
-        api_key=settings.bitunix_api_key,
-        api_secret=settings.bitunix_api_secret,
-        base_url=settings.bitunix_rest_base_url,
-        live_trading=settings.bitunix_live_trading,
-    )
+    async with AsyncSessionLocal() as session:
+        client = await create_bitunix_client(session, settings=settings)
 
     error: str | None = None
     failure_detail: dict[str, Any] | None = None

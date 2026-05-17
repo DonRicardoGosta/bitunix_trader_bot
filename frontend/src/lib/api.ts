@@ -475,6 +475,7 @@ export interface RuntimeSettingsPatch {
   trading_paused?: boolean;
   require_calibration_for_trading?: boolean;
   strategy_runner_paused?: boolean;
+  bitunix_live_trading?: boolean;
   strategy_top_signal_entries_enabled?: boolean;
 }
 

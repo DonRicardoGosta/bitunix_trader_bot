@@ -12,9 +12,11 @@ from app.db.base import Base
 from app.db.models import AppRuntimeSetting
 from app.db.session import AsyncSessionLocal, engine
 from app.main import create_app
+from app.config import get_settings
 from app.services.runtime_settings import (
     apply_settings_patch,
     build_settings_snapshot,
+    effective_live_trading,
     is_trading_paused,
 )
 
@@ -33,6 +35,18 @@ async def _clear_runtime() -> None:
     async with AsyncSessionLocal() as session:
         await session.execute(sa.delete(AppRuntimeSetting))
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_live_trading_runtime_override() -> None:
+    await _clear_runtime()
+    settings = get_settings()
+    async with AsyncSessionLocal() as session:
+        assert await effective_live_trading(session, settings) == settings.bitunix_live_trading
+        await apply_settings_patch(session, {"bitunix_live_trading": True})
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        assert await effective_live_trading(session, settings) is True
 
 
 @pytest.mark.asyncio

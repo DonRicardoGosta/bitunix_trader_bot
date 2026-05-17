@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bitunix.client import BitunixClient
 from app.config import get_settings
+from app.services.bitunix_client_factory import create_bitunix_client
 from app.db import audit
 from app.db.models import (
     AuditLevel,
@@ -62,12 +63,8 @@ async def run_calibration(*, triggered_by: str = "scheduler") -> dict[str, objec
         row_id = row.id
         await session.commit()
 
-    client = BitunixClient(
-        api_key=settings.bitunix_api_key,
-        api_secret=settings.bitunix_api_secret,
-        base_url=settings.bitunix_rest_base_url,
-        live_trading=settings.bitunix_live_trading,
-    )
+    async with AsyncSessionLocal() as session:
+        client = await create_bitunix_client(session, settings=settings)
 
     error: str | None = None
     result: CalibrationResult | None = None

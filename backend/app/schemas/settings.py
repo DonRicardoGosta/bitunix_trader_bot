@@ -9,6 +9,7 @@ class RuntimeSettingsPatch(BaseModel):
     trading_paused: bool | None = None
     require_calibration_for_trading: bool | None = None
     strategy_runner_paused: bool | None = None
+    bitunix_live_trading: bool | None = None
     strategy_top_signal_entries_enabled: bool | None = None
 
 

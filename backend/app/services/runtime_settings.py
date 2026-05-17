@@ -22,6 +22,7 @@ RUNTIME_BOOL_KEYS: frozenset[str] = frozenset(
         "trading_paused",
         "require_calibration_for_trading",
         "strategy_runner_paused",
+        "bitunix_live_trading",
         "strategy_top_signal_entries_enabled",
     }
 )
@@ -99,6 +100,18 @@ async def is_strategy_runner_paused(session: AsyncSession, settings: Settings) -
     return override if override is not None else False
 
 
+async def effective_live_trading(
+    session: AsyncSession, settings: Settings
+) -> bool:
+    """Élő order küldés engedélyezve (DB runtime, különben env bootstrap)."""
+    return await effective_bool(
+        session,
+        settings,
+        runtime_key="bitunix_live_trading",
+        env_attr="bitunix_live_trading",
+    )
+
+
 async def is_strategy_enabled(
     session: AsyncSession, settings: Settings, strategy_name: str
 ) -> bool:
@@ -121,6 +134,7 @@ async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
         strategies[name] = await is_strategy_enabled(session, settings, name)
 
     blocked, block_reason = await is_new_position_open_blocked(session)
+    live_trading = await effective_live_trading(session, settings)
 
     return {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -141,7 +155,7 @@ async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
             "strategy_runner_active": (
                 settings.strategy_runner_enabled and not runner_paused
             ),
-            "live_trading": settings.bitunix_live_trading,
+            "live_trading": live_trading,
             "strategies": strategies,
             "new_position_open_allowed": not blocked,
             "new_position_block_reason": block_reason,
