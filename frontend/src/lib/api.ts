@@ -126,12 +126,18 @@ export interface PlaceOrderResult {
   raw: unknown;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type RequestOptions = RequestInit & { timeoutMs?: number };
+
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  const { timeoutMs, ...fetchInit } = init ?? {};
+  const signal =
+    timeoutMs != null && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : fetchInit.signal;
   const response = await fetch(`${BASE_URL}${path}`, {
-    ...init,
+    ...fetchInit,
+    signal,
     headers: {
       "Content-Type": "application/json",
-      ...(init?.headers || {}),
+      ...(fetchInit.headers || {}),
     },
     cache: "no-store",
   });
@@ -773,7 +779,19 @@ export const api = {
     usp.set("lookback_hours", String(lookbackHours));
     if (lifecycle) usp.set("lifecycle", lifecycle);
     const qs = usp.toString();
-    return request<OrdersPnlTotals>(`/api/orders/pnl-totals${qs ? `?${qs}` : ""}`);
+    return request<OrdersPnlTotals>(`/api/orders/pnl-totals${qs ? `?${qs}` : ""}`, {
+      timeoutMs: 120_000,
+    });
+  },
+  ordersBundle: (lookbackHours = 6, limit = 500) => {
+    const usp = new URLSearchParams();
+    usp.set("lookback_hours", String(lookbackHours));
+    usp.set("limit", String(limit));
+    const qs = usp.toString();
+    return request<{ orders: OrderRow[]; pnl_totals: OrdersPnlTotals }>(
+      `/api/orders/bundle?${qs}`,
+      { timeoutMs: 120_000 },
+    );
   },
   placeOrder: (input: PlaceOrderInput) =>
     request<PlaceOrderResult>("/api/orders", {

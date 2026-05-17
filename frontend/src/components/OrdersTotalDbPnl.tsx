@@ -2,9 +2,7 @@
 
 import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { api } from "@/lib/api";
-import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
-import { usePollingQuery } from "@/hooks/usePollingQuery";
+import type { OrdersPnlTotals } from "@/lib/api";
 import { RefreshIndicator } from "@/components/RefreshIndicator";
 import { lookbackLabel } from "@/lib/lookback";
 import { cn, formatNumber } from "@/lib/utils";
@@ -17,21 +15,15 @@ function parseNum(s: string | null | undefined): number | null {
 
 export function OrdersTotalDbPnl({
   lookbackHours = 6,
-  refreshIntervalMs,
+  pnlData,
+  error,
+  isRefreshing,
 }: {
   lookbackHours?: number;
-  refreshIntervalMs: number;
+  pnlData: OrdersPnlTotals | null | undefined;
+  error: string | null;
+  isRefreshing: boolean;
 }) {
-  const pnlEpoch = useLiveEpoch("orders_pnl");
-  const { data: pnlData, error, isRefreshing } = usePollingQuery(
-    () => api.ordersPnlTotals(lookbackHours),
-    {
-      intervalMs: refreshIntervalMs,
-      reloadKey: pnlEpoch,
-      staleKey: `${lookbackHours}:${refreshIntervalMs}`,
-      errorMessage: "PnL összesítés lekérése sikertelen",
-    },
-  );
 
   const { totalPnl, unrealized, realized, orderCount, syncError } = useMemo(() => {
     if (!pnlData) {

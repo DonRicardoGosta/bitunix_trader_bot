@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
 import { OrdersTable } from "@/components/OrdersTable";
 import { OrdersTotalDbPnl } from "@/components/OrdersTotalDbPnl";
+import { useOrdersBundle } from "@/hooks/useOrdersBundle";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import {
   LOOKBACK_PRESETS,
@@ -33,6 +34,11 @@ export default function OrdersPage() {
   const refreshIntervalMs = useMemo(
     () => refreshIntervalSec * 1000,
     [refreshIntervalSec],
+  );
+
+  const { data, error, isRefreshing } = useOrdersBundle(
+    lookbackHours,
+    refreshIntervalMs,
   );
 
   return (
@@ -85,7 +91,9 @@ export default function OrdersPage() {
 
       <OrdersTotalDbPnl
         lookbackHours={lookbackHours}
-        refreshIntervalMs={refreshIntervalMs}
+        pnlData={data?.pnl_totals}
+        error={error}
+        isRefreshing={isRefreshing}
       />
 
       <Card>
@@ -106,10 +114,7 @@ export default function OrdersPage() {
           </p>
         </CardHeader>
         <CardContent>
-          <OrdersTable
-            lookbackHours={lookbackHours}
-            refreshIntervalMs={refreshIntervalMs}
-          />
+          <OrdersTable rows={data?.orders} error={error} />
         </CardContent>
       </Card>
     </div>

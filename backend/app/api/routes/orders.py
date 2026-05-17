@@ -20,6 +20,27 @@ from app.services.trading_gate import is_trading_allowed
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
+@router.get("/bundle")
+async def orders_bundle(
+    lookback_hours: int | None = Query(
+        None, ge=1, le=2160, description="Visszatekintés órában"
+    ),
+    limit: int = Query(500, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    lifecycle: str | None = Query(None),
+    debug_sync: bool = Query(False),
+    service: TradingService = Depends(get_trading_service),
+) -> dict[str, Any]:
+    """Rendeléslista + PnL egy közös Bitunix szinkronnal (kevesebb API terhelés)."""
+    return await service.orders_bundle(
+        lookback_hours=lookback_hours,
+        limit=limit,
+        offset=offset,
+        lifecycle=lifecycle,
+        debug_sync=debug_sync,
+    )
+
+
 @router.get("/pnl-totals")
 async def orders_pnl_totals(
     lookback_hours: int | None = Query(
