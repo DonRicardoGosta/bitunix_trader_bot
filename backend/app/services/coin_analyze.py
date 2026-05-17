@@ -794,7 +794,8 @@ def build_walk_forward_tpsl_variations_payload(
     target_tp_win_rate_pct: Decimal = _WF_TARGET_TP_WIN_RATE_PCT,
     min_resolved_trades: int = 2,
     hold_params: Any | None = None,
-    kline_bar_minutes: int | None = None,
+    hold_klines: list[dict[str, Decimal]] | None = None,
+    hold_sim_interval: str | None = None,
 ) -> dict[str, Any]:
     """Több TP/SL (medián×) kombináció; szimulációban TP/SL %% csak **felülről** vágva (≤300 / ≤150).
 
@@ -843,16 +844,14 @@ def build_walk_forward_tpsl_variations_payload(
             continue
         hold_block: dict[str, Any] | None = None
         if hold_params is not None and getattr(hold_params, "enabled", False):
-            from app.services.hold_window import (
-                infer_kline_bar_minutes,
-                optimize_hold_window_for_sequence,
-            )
+            from app.services.hold_window import optimize_hold_window_for_sequence
 
-            bar_m = kline_bar_minutes
-            if bar_m is None:
-                bar_m = infer_kline_bar_minutes(klines)
             hold_block = optimize_hold_window_for_sequence(
-                klines, seq, params=hold_params, kline_bar_minutes=int(bar_m)
+                klines,
+                seq,
+                params=hold_params,
+                hold_klines=hold_klines,
+                hold_sim_interval=hold_sim_interval,
             )
         raw_tp_s: str | None = None
         raw_sl_s: str | None = None
@@ -1003,6 +1002,8 @@ def walk_forward_live_gate_from_klines(
     choppiness_max: Decimal,
     walk_forward_cooldown_minutes: int = 60,
     hold_params: Any | None = None,
+    hold_klines: list[dict[str, Decimal]] | None = None,
+    hold_sim_interval: str | None = None,
 ) -> dict[str, Any]:
     """Top signal / live: WF variációs rács + aktuális jel.
 
@@ -1022,6 +1023,8 @@ def walk_forward_live_gate_from_klines(
         choppiness_max=choppiness_max,
         cooldown_minutes=walk_forward_cooldown_minutes,
         hold_params=hold_params,
+        hold_klines=hold_klines,
+        hold_sim_interval=hold_sim_interval,
     )
     if not vblock.get("enabled"):
         return {
@@ -1366,6 +1369,8 @@ def build_coin_analysis_payload(
     choppiness_max: Decimal = Decimal("1.72"),
     walk_forward_cooldown_minutes: int = 60,
     hold_params: Any | None = None,
+    hold_klines: list[dict[str, Decimal]] | None = None,
+    hold_sim_interval: str | None = None,
 ) -> dict[str, Any]:
     """Teljes API válasz dict összeállítása (Pydantic model_validate-hoz)."""
     klines = parse_klines(klines_raw)
@@ -1431,13 +1436,21 @@ def build_coin_analysis_payload(
             choppiness_max=choppiness_max,
             cooldown_minutes=walk_forward_cooldown_minutes,
             hold_params=hold_params,
-            kline_bar_minutes=interval_bar_minutes(interval),
+            hold_klines=hold_klines,
+            hold_sim_interval=hold_sim_interval,
         ),
-        "hold_window_optimization": _hold_window_optimization_info(hold_params),
+        "hold_window_optimization": _hold_window_optimization_info(
+            hold_params,
+            hold_sim_interval=hold_sim_interval,
+        ),
     }
 
 
-def _hold_window_optimization_info(hold_params: Any | None) -> dict[str, Any]:
+def _hold_window_optimization_info(
+    hold_params: Any | None,
+    *,
+    hold_sim_interval: str | None = None,
+) -> dict[str, Any]:
     if hold_params is None or not getattr(hold_params, "enabled", False):
         return {
             "enabled": False,
@@ -1445,6 +1458,7 @@ def _hold_window_optimization_info(hold_params: Any | None) -> dict[str, Any]:
             "max_minutes": 60,
             "step_minutes": 5,
             "profit_threshold_pct": "15",
+            "hold_sim_interval": None,
         }
     return {
         "enabled": True,
@@ -1452,4 +1466,5 @@ def _hold_window_optimization_info(hold_params: Any | None) -> dict[str, Any]:
         "max_minutes": int(getattr(hold_params, "max_minutes", 60)),
         "step_minutes": int(getattr(hold_params, "step_minutes", 5)),
         "profit_threshold_pct": str(getattr(hold_params, "profit_threshold_pct", "15")),
+        "hold_sim_interval": hold_sim_interval,
     }

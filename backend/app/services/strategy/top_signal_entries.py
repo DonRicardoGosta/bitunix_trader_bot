@@ -358,11 +358,28 @@ class TopSignalEntriesStrategy(Strategy):
                 wf_gate_result: dict[str, Any] | None = None
                 wf_hold_minutes: int | None = None
                 if wf_gate:
+                    hold_klines = None
+                    hold_sim_iv: str | None = None
+                    if hold_params.enabled:
+                        from app.services.kline_fetch import (
+                            HOLD_SIM_INTERVAL,
+                            fetch_hold_simulation_klines,
+                        )
+
+                        hold_sim_iv = HOLD_SIM_INTERVAL
+                        hold_klines = await fetch_hold_simulation_klines(
+                            ctx.client,
+                            mover.symbol,
+                            lookback_minutes=wf_lb,
+                            hold_max_minutes=hold_params.max_minutes,
+                        )
                     wf = walk_forward_live_gate_from_klines(
                         klines,
                         choppiness_max=Decimal(cfg.wf_choppiness_max),
                         walk_forward_cooldown_minutes=int(cfg.wf_cooldown_minutes),
                         hold_params=hold_params if hold_params.enabled else None,
+                        hold_klines=hold_klines,
+                        hold_sim_interval=hold_sim_iv,
                     )
                     if not wf["ok"]:
                         result.skipped.append(

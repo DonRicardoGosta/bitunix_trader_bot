@@ -759,13 +759,18 @@ function AnalysisParamsBanner({
             {holdCfg.min_minutes}–{holdCfg.max_minutes} perc, lépés {holdCfg.step_minutes} perc
           </strong>
           {" · "}
-          gyertya felbontás:{" "}
-          <strong className="text-foreground">{result.interval}</strong>
+          WF gyertya: <strong className="text-foreground">{result.interval}</strong>
+          {holdCfg.hold_sim_interval ? (
+            <>
+              {" · "}
+              hold szimuláció:{" "}
+              <strong className="text-foreground">{holdCfg.hold_sim_interval}</strong> (30–60 perc,
+              5 perc lépés — teljes rács, több API hívás ha kell)
+            </>
+          ) : null}
           {" · "}
           „jó” trade küszöb: ≥{holdCfg.profit_threshold_pct}% ár-mozgás profit (TP érintés mindig jó).
-          24h lookbacknél a Bitunix 200 gyertya limit miatt gyakran 15m a gyertya — ekkor a 5 perces
-          rácsból csak a 15 perces többszörösek számítanak (pl. 30, 45, 60). Az alábbi variációknál
-          látszik a tényleges rács és a javasolt tartási idő.
+          Az alábbi variációknál látszik a hold rács és a javasolt tartási idő.
         </p>
       ) : (
         <p className="text-muted">
@@ -779,22 +784,20 @@ function AnalysisParamsBanner({
 
 function HoldWindowGridTable({ block }: { block: HoldWindowBlock }) {
   if (!block.enabled || !block.rows.length) return null;
-  const configured = block.configured_grid_minutes ?? block.grid_minutes;
-  const showConfiguredNote =
-    block.coarse_kline_resolution &&
-    configured.length > 0 &&
-    configured.length !== block.grid_minutes.length;
   return (
     <div className="mt-2 space-y-1.5">
-      {showConfiguredNote ? (
-        <p className="text-[11px] text-amber-300/90">
-          Beállított rács ({configured.join(", ")} perc) → szimuláció{" "}
-          {block.kline_bar_minutes ?? "?"} perces gyertyán:{" "}
-          <strong className="text-foreground">{block.grid_minutes.join(", ")} perc</strong>
+      {block.hold_sim_interval ? (
+        <p className="text-[11px] text-muted">
+          Szimuláció: {block.hold_sim_interval}
+          {block.hold_sim_kline_bar_minutes != null
+            ? ` (${block.hold_sim_kline_bar_minutes} perces gyertya)`
+            : ""}
+          {" · "}
+          rács: {block.grid_minutes.join(", ")} perc
         </p>
       ) : null}
       <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse">
+        <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="text-left text-muted border-b border-border/60">
             <th className="py-1.5 pr-3">Tartás (perc)</th>

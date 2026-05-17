@@ -42,26 +42,6 @@ class HoldWindowParams:
         return out
 
 
-def effective_hold_grid_minutes(
-    params: HoldWindowParams,
-    *,
-    kline_bar_minutes: int,
-) -> list[int]:
-    """Rács szűrése gyertya-felbontásra: csak olyan percek, amik gyertyán mérhetők.
-
-    15 perces gyertyánál a 35–55 perces lépések gyakran ugyanarra a záró
-    gyertyára esnek, mint a 30/45/60 – ezért csak a ``bar`` többszörösei
-    maradnak (pl. 30, 45, 60).
-    """
-    configured = params.grid_minutes()
-    if not configured:
-        return []
-    bar_m = max(1, int(kline_bar_minutes))
-    if bar_m <= int(params.step_minutes):
-        return configured
-    return [m for m in configured if m % bar_m == 0]
-
-
 def signed_profit_move_pct(
     *,
     entry: Decimal,
@@ -115,6 +95,7 @@ def simulate_trade_exit_with_hold(
     tp_move_pct: Decimal,
     sl_move_pct: Decimal,
     hold_minutes: int,
+    bar_duration_ms: int = 60_000,
 ) -> tuple[ExitKind, Decimal, int, bool]:
     """Trade kilépés: TP → SL → idő (hold_minutes) záró áron.
 
@@ -135,6 +116,7 @@ def simulate_trade_exit_with_hold(
 
     hold_ms = hold_minutes * 60 * 1000
     deadline_ms = entry_time_ms + hold_ms
+    bar_dur = max(1, int(bar_duration_ms))
 
     for i, bar in enumerate(forward_bars):
         kind, amb = _bar_hit_tp_sl(
@@ -158,8 +140,9 @@ def simulate_trade_exit_with_hold(
                 i,
                 amb,
             )
-        bar_ms = int(bar["time"])
-        if bar_ms >= deadline_ms:
+        bar_open = int(bar["time"])
+        bar_end = bar_open + bar_dur
+        if deadline_ms < bar_end:
             exit_px = bar["close"]
             return (
                 "time",
@@ -180,7 +163,24 @@ def simulate_trade_exit_with_hold(
 def _to_int_ms(t: Decimal | int) -> int:
     if isinstance(t, int):
         return t
-    return int(t)
+    v = int(t)
+    if v < 10**11:
+        return v * 1000
+    return v
+
+
+def forward_bars_after_entry_time(
+    klines: list[dict[str, Decimal]],
+    entry_time_ms: int,
+) -> list[dict[str, Decimal]]:
+    """Belépés utáni gyertyák (időbélyeg alapján)."""
+    idx = 0
+    for i, bar in enumerate(klines):
+        if _to_int_ms(bar["time"]) <= entry_time_ms:
+            idx = i + 1
+        else:
+            break
+    return klines[idx:]
 
 
 def evaluate_hold_window_grid(
@@ -188,24 +188,25 @@ def evaluate_hold_window_grid(
     trades: list[dict[str, Any]],
     *,
     params: HoldWindowParams,
-    kline_bar_minutes: int = 1,
+    hold_klines: list[dict[str, Decimal]] | None = None,
+    hold_sim_interval: str | None = None,
 ) -> dict[str, Any]:
     """Minden hold percre: hány trade „jó” (profit ≥ küszöb a kilépéskor).
 
     A ``trades`` elemek a WF szekvencia mezőit használják (entry_bar_index,
-    predicted_side, tp_move_pct, sl_move_pct).
+    predicted_side, tp_move_pct, sl_move_pct). Ha ``hold_klines`` megadva,
+    a tartási szimuláció azon fut (pl. 5m), a WF továbbra is ``klines``-en.
     """
-    configured_grid = params.grid_minutes()
-    bar_m = max(1, int(kline_bar_minutes))
-    grid = effective_hold_grid_minutes(params, kline_bar_minutes=bar_m)
-    coarse = bar_m > int(params.step_minutes)
+    grid = params.grid_minutes()
+    sim_klines = hold_klines if hold_klines else klines
+    bar_m = infer_kline_bar_minutes(sim_klines)
+    bar_duration_ms = bar_m * 60_000
     empty: dict[str, Any] = {
         "enabled": params.enabled,
         "profit_threshold_pct": str(params.profit_threshold_pct),
-        "configured_grid_minutes": configured_grid,
         "grid_minutes": grid,
-        "kline_bar_minutes": bar_m,
-        "coarse_kline_resolution": coarse,
+        "hold_sim_interval": hold_sim_interval,
+        "hold_sim_kline_bar_minutes": bar_m,
         "best_hold_minutes": None,
         "best_good_rate_pct": None,
         "rows": [],
@@ -220,7 +221,6 @@ def evaluate_hold_window_grid(
         good = 0
         resolved = 0
         for t in trades:
-            entry_idx = int(t["entry_bar_index"])
             side_raw = str(t.get("predicted_side", "long"))
             side: Side = "long" if side_raw == "long" else "short"
             try:
@@ -229,11 +229,22 @@ def evaluate_hold_window_grid(
                 sl_move = Decimal(str(t["sl_move_pct"]))
             except (ArithmeticError, TypeError, ValueError):
                 continue
-            entry_ms = int(t.get("entry_time_ms") or _to_int_ms(klines[entry_idx]["time"]))
-            remaining = len(klines) - entry_idx - 1
-            if remaining <= 0:
+            entry_ms = int(t.get("entry_time_ms") or 0)
+            if entry_ms <= 0:
+                entry_idx = int(t["entry_bar_index"])
+                if entry_idx < 0 or entry_idx >= len(klines):
+                    continue
+                entry_ms = _to_int_ms(klines[entry_idx]["time"])
+            if hold_klines is not None:
+                forward = forward_bars_after_entry_time(sim_klines, entry_ms)
+            else:
+                entry_idx = int(t["entry_bar_index"])
+                remaining = len(klines) - entry_idx - 1
+                if remaining <= 0:
+                    continue
+                forward = klines[entry_idx + 1 :]
+            if not forward:
                 continue
-            forward = klines[entry_idx + 1 :]
             kind, profit, _off, _amb = simulate_trade_exit_with_hold(
                 forward,
                 entry_time_ms=entry_ms,
@@ -242,6 +253,7 @@ def evaluate_hold_window_grid(
                 tp_move_pct=tp_move,
                 sl_move_pct=sl_move,
                 hold_minutes=hold_m,
+                bar_duration_ms=bar_duration_ms,
             )
             resolved += 1
             if kind == "tp" or is_good_profit(profit, threshold_pct=threshold):
@@ -278,10 +290,9 @@ def evaluate_hold_window_grid(
     return {
         "enabled": True,
         "profit_threshold_pct": str(threshold),
-        "configured_grid_minutes": configured_grid,
         "grid_minutes": grid,
-        "kline_bar_minutes": bar_m,
-        "coarse_kline_resolution": coarse,
+        "hold_sim_interval": hold_sim_interval,
+        "hold_sim_kline_bar_minutes": bar_m,
         "best_hold_minutes": best_m,
         "best_good_rate_pct": (
             str(best_rate.quantize(Decimal("0.01"))) if best_rate is not None else None
@@ -295,12 +306,17 @@ def optimize_hold_window_for_sequence(
     sequence: dict[str, Any],
     *,
     params: HoldWindowParams,
-    kline_bar_minutes: int = 1,
+    hold_klines: list[dict[str, Decimal]] | None = None,
+    hold_sim_interval: str | None = None,
 ) -> dict[str, Any]:
     """WF szekvencia trade listájára hold-window rács."""
     trades = sequence.get("trades") or []
     return evaluate_hold_window_grid(
-        klines, trades, params=params, kline_bar_minutes=kline_bar_minutes
+        klines,
+        trades,
+        params=params,
+        hold_klines=hold_klines,
+        hold_sim_interval=hold_sim_interval,
     )
 
 

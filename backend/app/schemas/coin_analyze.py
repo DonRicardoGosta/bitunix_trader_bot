@@ -179,10 +179,9 @@ class HoldWindowBlock(BaseModel):
 
     enabled: bool
     profit_threshold_pct: str | None = None
-    configured_grid_minutes: list[int] = Field(default_factory=list)
     grid_minutes: list[int] = Field(default_factory=list)
-    kline_bar_minutes: int | None = Field(default=None, ge=1)
-    coarse_kline_resolution: bool = False
+    hold_sim_interval: str | None = None
+    hold_sim_kline_bar_minutes: int | None = Field(default=None, ge=1)
     best_hold_minutes: int | None = None
     best_good_rate_pct: str | None = None
     rows: list[HoldWindowGridRow] = Field(default_factory=list)
@@ -198,6 +197,7 @@ class HoldWindowOptimizationInfo(BaseModel):
     max_minutes: int = Field(default=60, ge=1)
     step_minutes: int = Field(default=5, ge=1)
     profit_threshold_pct: str = "15"
+    hold_sim_interval: str | None = None
 
 
 class TpslVariationRow(BaseModel):

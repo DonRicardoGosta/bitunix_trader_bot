@@ -623,10 +623,9 @@ export interface HoldWindowGridRow {
 export interface HoldWindowBlock {
   enabled: boolean;
   profit_threshold_pct: string | null;
-  configured_grid_minutes?: number[];
   grid_minutes: number[];
-  kline_bar_minutes?: number | null;
-  coarse_kline_resolution?: boolean;
+  hold_sim_interval?: string | null;
+  hold_sim_kline_bar_minutes?: number | null;
   best_hold_minutes: number | null;
   best_good_rate_pct: string | null;
   rows: HoldWindowGridRow[];
@@ -638,6 +637,7 @@ export interface HoldWindowOptimizationInfo {
   max_minutes: number;
   step_minutes: number;
   profit_threshold_pct: string;
+  hold_sim_interval?: string | null;
 }
 
 export interface TpslVariationRow {

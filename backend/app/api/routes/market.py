@@ -132,6 +132,22 @@ async def coin_analyze(
     tse_cfg = await get_top_signal_entries_config(session)
     hold_params = hold_window_from_strategy_config(tse_cfg)
 
+    hold_klines = None
+    hold_sim_interval: str | None = None
+    if hold_params.enabled:
+        from app.services.kline_fetch import (
+            HOLD_SIM_INTERVAL,
+            fetch_hold_simulation_klines,
+        )
+
+        hold_sim_interval = HOLD_SIM_INTERVAL
+        hold_klines = await fetch_hold_simulation_klines(
+            client,
+            body.symbol,
+            lookback_minutes=body.lookback_minutes,
+            hold_max_minutes=hold_params.max_minutes,
+        )
+
     payload = build_coin_analysis_payload(
         symbol=body.symbol,
         max_leverage=max(1, int(pair.max_leverage)),
@@ -141,6 +157,8 @@ async def coin_analyze(
         klines_raw=raw_klines,
         walk_forward_cooldown_minutes=body.walk_forward_cooldown_minutes,
         hold_params=hold_params,
+        hold_klines=hold_klines,
+        hold_sim_interval=hold_sim_interval,
     )
     if not payload["candles"]:
         raise HTTPException(

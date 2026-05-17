@@ -191,6 +191,8 @@ def apply_hold_window_to_symbol_calibration(
     choppiness_max: Decimal,
     cooldown_minutes: int,
     hold_params: HoldWindowParams,
+    hold_klines: list[dict[str, Decimal]] | None = None,
+    hold_sim_interval: str | None = None,
 ) -> None:
     """Hold-window rács a szimbólum kline-jain (WF szekvencia + medián×0.5 TP/SL)."""
     if not hold_params.enabled:
@@ -208,11 +210,12 @@ def apply_hold_window_to_symbol_calibration(
         cooldown_minutes=cooldown_minutes,
         clip_variation_tpsl_bounds=True,
     )
-    from app.services.hold_window import infer_kline_bar_minutes
-
-    bar_m = infer_kline_bar_minutes(klines)
     hw = optimize_hold_window_for_sequence(
-        klines, seq, params=hold_params, kline_bar_minutes=bar_m
+        klines,
+        seq,
+        params=hold_params,
+        hold_klines=hold_klines,
+        hold_sim_interval=hold_sim_interval,
     )
     best = hw.get("best_hold_minutes")
     if best is not None:
@@ -350,12 +353,30 @@ class CalibrationService:
                     {"symbol": symbol, "reason": "insufficient_kline_data"}
                 )
                 continue
+            hold_klines = None
+            hold_sim_interval: str | None = None
+            if self._hold_params.enabled:
+                from app.services.kline_fetch import (
+                    HOLD_SIM_INTERVAL,
+                    fetch_hold_simulation_klines,
+                )
+
+                hold_sim_interval = HOLD_SIM_INTERVAL
+                hold_klines = await fetch_hold_simulation_klines(
+                    self._client,
+                    symbol,
+                    lookback_minutes=self._lookback_minutes,
+                    hold_max_minutes=self._hold_params.max_minutes,
+                    end_time_ms=end_ms,
+                )
             apply_hold_window_to_symbol_calibration(
                 calibration,
                 klines_raw,
                 choppiness_max=self._wf_choppiness_max,
                 cooldown_minutes=self._wf_cooldown_minutes,
                 hold_params=self._hold_params,
+                hold_klines=hold_klines,
+                hold_sim_interval=hold_sim_interval,
             )
             result.per_symbol[symbol] = calibration
 
