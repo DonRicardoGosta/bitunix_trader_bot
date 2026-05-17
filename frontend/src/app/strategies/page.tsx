@@ -184,8 +184,9 @@ export default function StrategiesPage() {
         <CardHeader>
           <CardTitle>top_signal_entries paraméterek</CardTitle>
           <span className="text-xs text-muted block mt-1 leading-relaxed">
-            Alapértelmezés a kódban (első indításkor). Mentés után az adatbázisban tárolódik;
-            minden mező alatt rövid magyarázat és példa van.
+            Alapértelmezés a kódban (első indításkor). Mentés után DB-ben; minden mezőnél
+            magyarázat, példa és javasolt értékek (sok pozíció / WF kompromisszum). Felül
+            két kész profil kitöltheti az űrlapot.
           </span>
         </CardHeader>
         <CardContent>

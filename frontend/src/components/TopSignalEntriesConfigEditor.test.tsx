@@ -53,4 +53,17 @@ describe("<TopSignalEntriesConfigEditor />", () => {
     await userEvent.click(screen.getByRole("button", { name: /Paraméterek mentése/i }));
     await waitFor(() => expect(putMock).toHaveBeenCalledWith({ count: 5 }));
   });
+
+  it("shows tuning guide and applies many-positions preset", async () => {
+    render(<TopSignalEntriesConfigEditor initial={DEFAULT} />);
+    expect(screen.getByText(/Beállítási útmutató — minél több pozíció/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Javaslat \(sok pozíció\)/i).length).toBeGreaterThan(0);
+    await userEvent.click(
+      screen.getByRole("button", { name: /Profil: max pozíció \(WF ki\)/i }),
+    );
+    const countInput = screen.getByLabelText(/Max\. párhuzamos pozíció/i) as HTMLInputElement;
+    expect(countInput.value).toBe("30");
+    const wfCheckbox = screen.getByLabelText(/WF gate bekapcsolva/i) as HTMLInputElement;
+    expect(wfCheckbox.checked).toBe(false);
+  });
 });
