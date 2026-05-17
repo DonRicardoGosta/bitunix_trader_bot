@@ -22,13 +22,11 @@ RUNTIME_BOOL_KEYS: frozenset[str] = frozenset(
         "trading_paused",
         "require_calibration_for_trading",
         "strategy_runner_paused",
-        "strategy_top_movers_enabled",
         "strategy_top_signal_entries_enabled",
     }
 )
 
 _STRATEGY_ENV_MAP: dict[str, str] = {
-    "top_movers": "strategy_top_movers_enabled",
     "top_signal_entries": "strategy_top_signal_entries_enabled",
 }
 
@@ -132,7 +130,6 @@ async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
             "strategy_runner_enabled": settings.strategy_runner_enabled,
             "calibration_enabled": settings.calibration_enabled,
             "require_calibration_for_trading": settings.require_calibration_for_trading,
-            "strategy_top_movers_enabled": settings.strategy_top_movers_enabled,
             "strategy_top_signal_entries_enabled": (
                 settings.strategy_top_signal_entries_enabled
             ),
@@ -153,9 +150,13 @@ async def build_settings_snapshot(session: AsyncSession) -> dict[str, Any]:
         "runtime_overrides": await _list_overrides(session),
         "strategy_config": {
             "interval_seconds": settings.strategy_interval_seconds,
-            "top_movers_count": settings.strategy_top_movers_count,
-            "top_movers_cooldown_minutes": settings.strategy_top_movers_cooldown_minutes,
-            "top_movers_direction_mode": settings.strategy_top_movers_direction_mode,
+            "top_signal_entries_count": settings.strategy_top_signal_entries_count,
+            "top_signal_entries_cooldown_minutes": (
+                settings.strategy_top_signal_entries_cooldown_minutes
+            ),
+            "top_signal_entries_scan_limit": (
+                settings.strategy_top_signal_entries_scan_limit
+            ),
             "calibration_interval_seconds": settings.calibration_interval_seconds,
             "calibration_max_age_minutes": settings.calibration_max_age_minutes,
         },

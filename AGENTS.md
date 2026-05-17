@@ -70,4 +70,4 @@ make migrate               # DB migrációk
    sessionjével, hogy a stratégia tranzakcióval együtt commit-oljon.
 5. Cooldown / state derived a `orders` táblából (`strategy_name` oszlop).
 6. Tesztek: tiszta logika unit tesztek (rangsorolás, számítás), majd egy
-   integráció a `FakeBitunixClient` mintával (`tests/test_top_movers_strategy.py`).
+   integráció fake klienssel (`tests/test_top_signal_entries_strategy.py`).

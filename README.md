@@ -54,11 +54,10 @@ Elérhetőség:
 | `BITUNIX_LIVE_TRADING`                     | `false`             | Ha `false`, semmilyen rendelés nem megy a Bitunixhoz.            |
 | `STRATEGY_RUNNER_ENABLED`                  | `true`              | A háttér scheduler kapcsolója (induláskor indul).                 |
 | `STRATEGY_INTERVAL_SECONDS`                | `30`                | Két scheduler-kör közti várakozás (mp).                          |
-| `STRATEGY_TOP_MOVERS_COUNT`                | `3`                 | Hány párhuzamos slot (nyitott pozíció cél a Bitunix szerint).     |
-| `STRATEGY_TOP_MOVERS_SCAN_LIMIT`           | `60`                | Rangsorolt coinok max. száma slot-feltöltéshez (TP/SL után pótlás). |
-| `STRATEGY_TOP_MOVERS_COOLDOWN_MINUTES`     | `240`               | Per-szimbólum cooldown a `top_movers` stratégiához.              |
-| `STRATEGY_TOP_MOVERS_DIRECTION_MODE`       | `momentum_breakout` | `trend` \| `momentum_breakout` \| `mean_revert`                  |
-| `STRATEGY_TOP_MOVERS_RANGE_THRESHOLD`      | `0.66`              | Momentum_breakout küszöb a 24h tartomány felső/alsó zónájához.   |
+| `STRATEGY_TOP_SIGNAL_ENTRIES_ENABLED`      | `true`              | Top signal entries stratégia kapcsoló.                           |
+| `STRATEGY_TOP_SIGNAL_ENTRIES_COUNT`        | `2`                 | Párhuzamos slot (nyitott pozíció cél).                           |
+| `STRATEGY_TOP_SIGNAL_ENTRIES_SCAN_LIMIT`   | `1000`              | Rangsorolt coinok max. száma.                                     |
+| `STRATEGY_TOP_SIGNAL_ENTRIES_COOLDOWN_MINUTES` | `240`           | Per-szimbólum cooldown.                                          |
 | `STRATEGY_MARGIN_PCT_OF_BALANCE`           | `0.01`              | Margin arány a futures egyenlegből (1%).                         |
 | `STRATEGY_MIN_MARGIN_USDT`                 | `0.25`              | Margin padló.                                                    |
 | `STRATEGY_TP_ROI_PCT`                      | `200`               | TP ROI fallback (ha nincs friss kalibráció).                     |
@@ -86,25 +85,14 @@ A stratégia keretrendszer pluggable: a regisztrált logikák a
 és minden döntés a DB-be kerül – **nincs külön log csatorna**, az
 `audit_events` tábla az egyetlen authoritatív napló.
 
-**`top_movers` stratégia** (alapból elérhető):
+**`top_signal_entries` stratégia** (egyetlen regisztrált stratégia):
 
-1. Lekérdezi az összes szimbólum 24h tickerét (`GET /futures/market/tickers`).
-2. Rangsorolja őket **|24h % változás|** csökkenő sorrendben (az esések is játszanak).
-3. Veszi a **top 3**-at.
-4. Szimbólumonként ellenőrzi a **4 órás cooldownt** (per-stratégia, per-szimbólum).
-5. **Irány** (configurálható, `STRATEGY_TOP_MOVERS_DIRECTION_MODE`):
-   * `momentum_breakout` (**alapértelmezett, ajánlott**): pozitív 24h változás
-     **és** ár a 24h tartomány felső harmadában → LONG. Negatív változás
-     **és** ár az alsó harmadban → SHORT. Egyébként **skip** (kétértelmű
-     mozgás, valószínűleg konszolidál vagy fordul).
-   * `trend`: tisztán a 24h változás előjele dönt.
-   * `mean_revert`: ellenirány (a "túlfutott" mozgás visszafelé fade-elése).
-6. Lekéri a `maxLeverage`-ét (`GET /futures/market/trading_pairs`), és
-   **beállítja** (`POST /futures/account/change_leverage`).
-7. Margin: `max(1% × futures USDT egyenleg, 0.25 USDT)`.
-8. **TP / SL** trigger árak kiszámolva ROI-célokból, atomi módon az entry
-   order-rel **egyetlen REST hívásban** (a Bitunix `place_order` támogatja a
-   `tpPrice` és `slPrice` paramétereket). Lásd `app/services/tpsl.py`.
+1. Lekérdezi az összes szimbólum 24h tickerét és rangsorolja **|24h % változás|** szerint.
+2. Az első N jelöltre kline-t kér, és csak megerősített belépő jel esetén nyit
+   (long/short, 24h range zóna + utolsó lezárt gyertya).
+3. Opcionális **walk-forward gate** (`STRATEGY_TOP_SIGNAL_ENTRIES_WF_GATE_ENABLED`).
+4. Cooldown, leverage, margin és TP/SL ugyanazzal a kalibrációs / ROI logikával,
+   mint korábban. Lásd `backend/app/services/strategy/top_signal_entries.py`.
 
 ### ⚠️ Javaslat a TP/SL beállításra
 
@@ -123,11 +111,11 @@ Konzervatívabb és tipikusan **profitabilisebb** elrendezés:
 | R:R arány        | 2:1       | 2:1–4:1           |
 
 A backend `WARNING` szintű audit eseményt ír a `audit_events` táblába minden
-futás elején, ha az SL ROI ≥ 80% (`strategy.top_movers.risky_sl_warning`).
+futás elején, ha az SL ROI ≥ 80% (`strategy.top_signal_entries.risky_sl_warning`).
 
 ### 🎯 TP/SL automatikus belövés (kalibráció)
 
-A `top_movers` stratégia **per-szimbólum kalibrált TP/SL targeteket** is
+A `top_signal_entries` stratégia **per-szimbólum kalibrált TP/SL targeteket** is
 használ, ami felülírja a fenti ROI defaulteket. A kalibrációs process az
 **app indulásakor azonnal lefut**, majd **óránként** újra. Trading csak
 akkor engedélyezett, ha létezik friss, sikeres kalibráció.
@@ -154,12 +142,12 @@ targeteket, a per-szimbólum tábláját, és a futási történetet. A dashboar
 egy banner jelzi ha a trading **le van tiltva**.
 
 Indítás:
-* API: `POST /api/strategies/top_movers/run` (manuális)
+* API: `POST /api/strategies/top_signal_entries/run` (manuális)
 * Scheduler: alapból be (`STRATEGY_RUNNER_ENABLED=true`), ~30 mp-enként új kör (`STRATEGY_INTERVAL_SECONDS`)
 * UI: a **Stratégiák** oldalon `Indítás most` gomb
 
 A teljes audit látható a **Eseménynapló** oldalon, vagy
-`GET /api/events?strategy_name=top_movers&level=INFO`.
+`GET /api/events?strategy_name=top_signal_entries&level=INFO`.
 
 ### 🧱 Projekt fa
 

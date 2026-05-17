@@ -49,7 +49,7 @@ function summary(lookbackHours = 6): AnalyticsSummaryResponse {
       lookback_hours: lookbackHours,
       total: 3,
       by_status: { NEW: 2, FILLED: 1 },
-      by_strategy: [{ strategy: "top_movers", count: 3 }],
+      by_strategy: [{ strategy: "top_signal_entries", count: 3 }],
     },
     strategy: {
       lookback_hours: lookbackHours,

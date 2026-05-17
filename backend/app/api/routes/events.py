@@ -14,7 +14,9 @@ router = APIRouter(prefix="/events", tags=["events"])
 @router.get("")
 async def list_events(
     level: str | None = Query(default=None, description="DEBUG|INFO|WARNING|ERROR"),
-    event_prefix: str | None = Query(default=None, description="pl. strategy.top_movers"),
+    event_prefix: str | None = Query(
+        default=None, description="pl. strategy.top_signal_entries"
+    ),
     strategy_name: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
     session: AsyncSession = Depends(get_db),

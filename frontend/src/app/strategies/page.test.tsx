@@ -30,11 +30,11 @@ beforeEach(() => {
     if (url.endsWith("/api/strategies")) {
       return jsonResponse([
         {
-          name: "top_movers",
+          name: "top_signal_entries",
           enabled: true,
           last_run: {
             id: 1,
-            strategy_name: "top_movers",
+            strategy_name: "top_signal_entries",
             status: "SUCCESS",
             triggered_by: "manual",
             details: {
@@ -53,7 +53,7 @@ beforeEach(() => {
       return jsonResponse([
         {
           id: 1,
-          strategy_name: "top_movers",
+          strategy_name: "top_signal_entries",
           status: "SUCCESS",
           triggered_by: "manual",
           details: {
@@ -67,7 +67,7 @@ beforeEach(() => {
         },
       ]);
     }
-    if (url.endsWith("/api/strategies/top_movers/run")) {
+    if (url.endsWith("/api/strategies/top_signal_entries/run")) {
       return jsonResponse({ run_id: 42, status: "SUCCESS" });
     }
     return jsonResponse({});
@@ -87,7 +87,7 @@ describe("<StrategiesPage />", () => {
       </WithRefreshProvider>,
     );
     await waitFor(() =>
-      expect(screen.getAllByText("top_movers").length).toBeGreaterThan(0),
+      expect(screen.getAllByText("top_signal_entries").length).toBeGreaterThan(0),
     );
     expect(screen.getAllByText("SUCCESS").length).toBeGreaterThan(0);
     expect(container.textContent).toContain("placed: 2");
@@ -106,7 +106,8 @@ describe("<StrategiesPage />", () => {
       expect(
         calls.some(
           (c) =>
-            c.method === "POST" && c.url.endsWith("/api/strategies/top_movers/run"),
+            c.method === "POST"
+              && c.url.endsWith("/api/strategies/top_signal_entries/run"),
         ),
       ).toBe(true),
     );

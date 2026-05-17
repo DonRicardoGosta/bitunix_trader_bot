@@ -151,41 +151,24 @@ A `Strategy` ABC interfész minimális: `name` + `async run(ctx) -> StrategyResu
 A `registry.STRATEGIES` dict tartalmazza a regisztrált osztályokat – új
 stratégia ide kerül berakásra.
 
-### `TopMoversStrategy` döntéslánc
+### `TopSignalEntriesStrategy` döntéslánc
 
 ```
 GET /futures/market/tickers       ─┐
 GET /futures/market/trading_pairs  ─┤  (párhuzamos)
 GET /futures/account?marginCoin=USDT ┘
             │
-            ▼  _rank_top_movers (abs % csökkenő, top N)
+            ▼  rank_top_movers (mover_ranking, abs % csökkenő, top N)
             │
-            ▼  cooldown check: SELECT MAX(orders.created_at)
-            │  WHERE strategy_name='top_movers' AND symbol=?
+            ▼  kline fetch (első lookahead jelölt) + entry_side_from_mover_and_klines
+            │  opcionális WF gate → TP/SL a variációból
             │
-            ▼  decide_direction(mover, mode, range_threshold)
-            │      trend             → 24h % előjele
-            │      momentum_breakout → 24h % + ár 24h range pozíciója
-            │      mean_revert       → ellenirány
-            │  → ha None: SKIP
+            ▼  cooldown check: orders.strategy_name='top_signal_entries'
             │
-            ▼  change_leverage(symbol, maxLeverage)
+            ▼  change_leverage → margin/qty → TP/SL (kalibráció / ROI)
             │
-            ▼  compute_margin = max(1% × balance, 0.25 USDT)
-            ▼  compute_quantity = (margin × leverage) / price
-            │  [precíziónak megfelelően lefelé kerekítve]
-            │
-            ▼  compute_tp_sl_prices(entry, side, leverage, tp_roi, sl_roi)
-            │      LONG:  TP = entry × (1 + tp_roi/lev/100)
-            │             SL = entry × (1 - sl_roi/lev/100)
-            │      SHORT: ↔
-            │
-            ▼  TradingService.place_order(... tpPrice, slPrice, strategy_name)
-                  ├── INSERT INTO orders
-                  ├── BitunixClient.place_order  → atomi POST /trade/place_order
-                  │                                tpPrice, slPrice mezőkkel
-                  ├── audit.record('trade.order_placed', ...)
-                  └── audit.record('strategy.top_movers.tpsl_set', ...)
+            ▼  TradingService.place_order(... tpPrice, slPrice)
+                  └── audit.record('strategy.top_signal_entries.order_placed', ...)
 ```
 
 ### Miért az "atomi TP/SL"?

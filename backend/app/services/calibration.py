@@ -2,7 +2,7 @@
 
 Algoritmus röviden:
 1. Lekérjük az összes 24h tickert és kiválasztjuk a **top N** szimbólumot
-   ``|24h % változás|`` alapján (konzisztens a top_movers stratégiával).
+   ``|24h % változás|`` alapján (konzisztens a top_signal_entries rangsorolással).
 2. Mindegyikre 2 órányi 1-perces kline-t (=120 gyertya) kérünk le.
 3. Kiszámoljuk a True Range-et (TR) és az ATR-t a closing ár %-ában.
    Az ATR a recent realized volatility robusztus, klasszikus mértéke.
@@ -10,7 +10,7 @@ Algoritmus röviden:
    SL target = ``ATR_pct × sl_atr_multiplier`` (alap: 1.5)
    → R:R ~ 2:1 (matematikailag pozitív várt érték még 40%-os hit rate-nél is).
 5. Tároljuk per-symbol és számolunk globális mediánt (fallback olyan
-   szimbólumokra, amiket a top_movers stratégia idő közben kiválaszt,
+   szimbólumokra, amiket a stratégia idő közben kiválaszt,
    de nem volt a top-N-ben a kalibrációkor). A stratégia a **per-symbol
    kiszámolt TP/SL move %%**-et használja; ha nincs ilyen rekord, a **globális
    mediánt** (``CalibrationResult.lookup``).

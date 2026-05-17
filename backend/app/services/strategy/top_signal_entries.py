@@ -1,7 +1,7 @@
 """Top signal entries stratégia.
 
 A futures piac **top N** (alap: 1000) abszolút 24h mozgású szimbólumát
-rangsoroljuk ugyanazzal a logikával, mint a ``top_movers``. Ezután csak az
+rangsoroljuk a ``mover_ranking`` modul logikájával. Ezután csak az
 első ``kline_lookahead`` jelöltre kérünk **kline**-t (alap: 40, API terhelés
 csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 
@@ -21,7 +21,7 @@ csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 
 Irány: **BUY** (long) és **SELL** (short) is engedélyezett. TP/SL: WF gate
 bekapcsolva a javasolt variáció százalékai; különben kalibráció / ROI fallback
-+ ``compute_tp_sl_prices_from_move_pct``, a ``top_movers``-sel megegyezően.
++ ``compute_tp_sl_prices_from_move_pct`` (kalibráció / ROI fallback).
 """
 
 from __future__ import annotations
@@ -49,14 +49,13 @@ from app.services.coin_analyze import (
 )
 from app.services.risk import compute_margin, compute_quantity, effective_order_leverage
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
-from app.services.strategy.top_movers import (
-    _extract_available_usdt,
-    _index_trading_pairs,
-    _Mover,
-    _PairMeta,
-    _parse_open_position_symbols,
-    _rank_top_movers,
+from app.services.strategy.mover_ranking import (
+    Mover,
+    extract_available_usdt,
+    parse_open_position_symbols,
+    rank_top_movers,
 )
+from app.services.trading_pairs_meta import PairMeta, index_trading_pairs
 from app.services.tpsl import (
     compute_tp_sl_prices_from_move_pct,
     implied_price_move_pct_from_roi,
@@ -67,7 +66,7 @@ from app.services.trading import TradingService
 
 
 def entry_side_from_mover_and_klines(
-    mover: _Mover,
+    mover: Mover,
     klines: list[dict[str, Decimal]],
     *,
     min_abs_change_pct: Decimal,
@@ -76,7 +75,7 @@ def entry_side_from_mover_and_klines(
     """Kline + 24h ticker alapján belépési irány, vagy ``None`` ha nincs jel.
 
     Args:
-        mover: Rangsorolt ticker (``_Mover``).
+        mover: Rangsorolt ticker (``Mover``).
         klines: ``parse_klines`` kimenete, idő szerint növekvő.
         min_abs_change_pct: Minimális ``abs(24h change %%)`` a szűréshez.
         range_threshold: Longhoz ``range_position >= threshold``; shorthoz
@@ -186,13 +185,13 @@ class TopSignalEntriesStrategy(Strategy):
         tickers_raw = await ctx.client.get_all_tickers()
         pairs_raw = await ctx.client.get_trading_pairs()
 
-        movers = _rank_top_movers(tickers_raw, top_n=scan_limit)
-        pair_meta = _index_trading_pairs(pairs_raw)
+        movers = rank_top_movers(tickers_raw, top_n=scan_limit)
+        pair_meta = index_trading_pairs(pairs_raw)
         candidates = movers[: min(lookahead, len(movers))]
 
         try:
             pos_raw = await ctx.client.get_positions()
-            open_syms = _parse_open_position_symbols(pos_raw)
+            open_syms = parse_open_position_symbols(pos_raw)
         except (BitunixAPIError, BitunixSignatureError) as exc:
             await audit.record(
                 ctx.session,
@@ -247,7 +246,7 @@ class TopSignalEntriesStrategy(Strategy):
             )
             raise
 
-        available_balance = _extract_available_usdt(account_raw)
+        available_balance = extract_available_usdt(account_raw)
         margin_usdt = compute_margin(
             available_balance,
             pct_of_balance=pct_of_balance,
@@ -449,10 +448,10 @@ class TopSignalEntriesStrategy(Strategy):
         self,
         ctx: StrategyContext,
         *,
-        mover: _Mover,
+        mover: Mover,
         side: str,
         signal_reason: str,
-        pair_meta: dict[str, _PairMeta],
+        pair_meta: dict[str, PairMeta],
         margin_usdt: Decimal,
         cooldown_after: datetime,
         trading_service: TradingService,

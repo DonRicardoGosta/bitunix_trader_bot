@@ -24,19 +24,19 @@ beforeEach(() => {
       {
         id: 1,
         level: "INFO",
-        event: "strategy.top_movers.ranked",
+        event: "strategy.top_signal_entries.ranked",
         message: "Top 3 mover kiválasztva.",
         payload: null,
-        strategy_name: "top_movers",
+        strategy_name: "top_signal_entries",
         created_at: "2026-05-13T10:00:00Z",
       },
       {
         id: 2,
         level: "ERROR",
-        event: "strategy.top_movers.leverage_error",
+        event: "strategy.top_signal_entries.leverage_error",
         message: "boom",
         payload: null,
-        strategy_name: "top_movers",
+        strategy_name: "top_signal_entries",
         created_at: "2026-05-13T10:00:05Z",
       },
     ]);
@@ -56,7 +56,9 @@ describe("<EventsPage />", () => {
       </WithRefreshProvider>,
     );
     await waitFor(() =>
-      expect(screen.getByText("strategy.top_movers.ranked")).toBeInTheDocument(),
+      expect(
+        screen.getByText("strategy.top_signal_entries.ranked"),
+      ).toBeInTheDocument(),
     );
     // INFO és ERROR is megjelenik a select option-okben + a badge-en is.
     // A táblázat sorának INFO/ERROR badge-ét keressük span elem alapján.
@@ -64,7 +66,7 @@ describe("<EventsPage />", () => {
     expect(badges.some((el) => el.tagName.toLowerCase() === "span" && el.textContent === "INFO")).toBe(true);
     expect(badges.some((el) => el.tagName.toLowerCase() === "span" && el.textContent === "ERROR")).toBe(true);
     expect(
-      screen.getByText("strategy.top_movers.leverage_error"),
+      screen.getByText("strategy.top_signal_entries.leverage_error"),
     ).toBeInTheDocument();
   });
 
@@ -74,7 +76,7 @@ describe("<EventsPage />", () => {
         <EventsPage />
       </WithRefreshProvider>,
     );
-    await screen.findByText("strategy.top_movers.ranked");
+    await screen.findByText("strategy.top_signal_entries.ranked");
     await userEvent.selectOptions(screen.getByLabelText(/Szint/i), "ERROR");
     await waitFor(() => expect(lastUrl).toContain("level=ERROR"));
   });

@@ -106,7 +106,7 @@ export default function EventsPage() {
             <Label htmlFor="prefix">Esemény előtag</Label>
             <Input
               id="prefix"
-              placeholder="pl. strategy.top_movers"
+              placeholder="pl. strategy.top_signal_entries"
               value={prefix}
               onChange={(e) => setPrefix(e.target.value)}
             />
@@ -115,7 +115,7 @@ export default function EventsPage() {
             <Label htmlFor="strategy">Stratégia</Label>
             <Input
               id="strategy"
-              placeholder="pl. top_movers"
+              placeholder="pl. top_signal_entries"
               value={strategy}
               onChange={(e) => setStrategy(e.target.value)}
             />
