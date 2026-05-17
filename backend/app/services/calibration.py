@@ -328,7 +328,10 @@ class CalibrationService:
 
         for symbol, abs_change in top_symbols:
             try:
-                klines_raw = await self._client.get_klines(
+                from app.services.kline_fetch import get_klines_rate_limited
+
+                klines_raw = await get_klines_rate_limited(
+                    self._client,
                     symbol,
                     interval=self._interval,
                     limit=kline_limit,

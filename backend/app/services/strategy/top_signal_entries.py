@@ -279,13 +279,17 @@ class TopSignalEntriesStrategy(Strategy):
         }
 
         placed_run = 0
+        hold_kline_cache: dict[str, list] = {}
         if need > 0:
             sem = asyncio.Semaphore(max_conc)
 
             async def fetch_klines(symbol: str) -> tuple[str, dict[str, Any] | None, str | None]:
                 async with sem:
                     try:
-                        raw = await ctx.client.get_klines(
+                        from app.services.kline_fetch import get_klines_rate_limited
+
+                        raw = await get_klines_rate_limited(
+                            ctx.client,
                             symbol,
                             interval=fetch_interval,
                             limit=fetch_limit,
@@ -358,26 +362,40 @@ class TopSignalEntriesStrategy(Strategy):
                 wf_gate_result: dict[str, Any] | None = None
                 wf_hold_minutes: int | None = None
                 if wf_gate:
+                    cal_hold_minutes: int | None = None
+                    if hold_params.enabled and calibration is not None:
+                        cal_hold_minutes = calibration.lookup_hold_minutes(mover.symbol)
+                    need_hold_grid = (
+                        hold_params.enabled and cal_hold_minutes is None
+                    )
                     hold_klines = None
                     hold_sim_iv: str | None = None
-                    if hold_params.enabled:
+                    if need_hold_grid:
                         from app.services.kline_fetch import (
                             HOLD_SIM_INTERVAL,
                             fetch_hold_simulation_klines,
                         )
 
-                        hold_sim_iv = HOLD_SIM_INTERVAL
-                        hold_klines = await fetch_hold_simulation_klines(
-                            ctx.client,
-                            mover.symbol,
-                            lookback_minutes=wf_lb,
-                            hold_max_minutes=hold_params.max_minutes,
-                        )
+                        cache_key = f"{mover.symbol}:{wf_lb}"
+                        cached = hold_kline_cache.get(cache_key)
+                        if cached is not None:
+                            hold_klines = cached
+                        else:
+                            hold_sim_iv = HOLD_SIM_INTERVAL
+                            hold_klines = await fetch_hold_simulation_klines(
+                                ctx.client,
+                                mover.symbol,
+                                lookback_minutes=wf_lb,
+                                hold_max_minutes=hold_params.max_minutes,
+                            )
+                            hold_kline_cache[cache_key] = hold_klines
+                    elif hold_params.enabled:
+                        wf_hold_minutes = cal_hold_minutes
                     wf = walk_forward_live_gate_from_klines(
                         klines,
                         choppiness_max=Decimal(cfg.wf_choppiness_max),
                         walk_forward_cooldown_minutes=int(cfg.wf_cooldown_minutes),
-                        hold_params=hold_params if hold_params.enabled else None,
+                        hold_params=hold_params if need_hold_grid else None,
                         hold_klines=hold_klines,
                         hold_sim_interval=hold_sim_iv,
                     )

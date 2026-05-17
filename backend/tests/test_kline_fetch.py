@@ -6,12 +6,14 @@ from decimal import Decimal
 
 import pytest
 
+from app.bitunix.exceptions import BitunixAPIError
 from app.services.kline_fetch import (
     HOLD_SIM_BAR_MINUTES,
-    merge_klines_by_time,
+    fetch_hold_simulation_klines,
+    get_klines_rate_limited,
     hold_simulation_span_minutes,
+    merge_klines_by_time,
 )
-from app.services.kline_fetch import fetch_hold_simulation_klines
 
 
 def test_hold_simulation_span_minutes() -> None:
@@ -39,6 +41,27 @@ class _FakeClient:
         if idx < len(self._pages):
             return {"data": self._pages[idx]}
         return {"data": []}
+
+
+@pytest.mark.asyncio
+async def test_get_klines_rate_limited_retries_on_10006() -> None:
+    calls = 0
+
+    class _Client:
+        async def get_klines(self, symbol: str, **kwargs) -> dict:
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise BitunixAPIError(
+                    "request too frequently",
+                    code="10006",
+                    path="/api/v1/futures/market/kline",
+                )
+            return {"data": []}
+
+    out = await get_klines_rate_limited(_Client(), "BTCUSDT", interval="5m", limit=10)
+    assert out == {"data": []}
+    assert calls == 3
 
 
 @pytest.mark.asyncio

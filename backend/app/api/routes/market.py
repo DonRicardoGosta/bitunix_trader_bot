@@ -119,7 +119,10 @@ async def coin_analyze(
 
     interval, limit = plan_kline_interval(body.lookback_minutes)
     try:
-        raw_klines = await client.get_klines(
+        from app.services.kline_fetch import get_klines_rate_limited
+
+        raw_klines = await get_klines_rate_limited(
+            client,
             body.symbol,
             interval=interval,
             limit=limit,
