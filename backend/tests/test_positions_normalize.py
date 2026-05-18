@@ -8,6 +8,7 @@ from app.services.positions_normalize import (
     normalize_open_positions_response,
     normalize_position_row,
 )
+from app.services.order_enrichment import position_row_is_closed
 
 
 def test_normalize_open_position_basic() -> None:
@@ -105,3 +106,38 @@ def test_normalize_open_positions_response_empty() -> None:
     assert out["positions"] == []
     assert out["totals"]["count"] == 0
     assert out["totals"]["unrealized_pnl_usdt"] == "0"
+
+
+def test_normalize_open_positions_excludes_closed_ghost_rows() -> None:
+    """Nulla méretű / lezárt sorok ne jelenjenek meg nyitott listában."""
+    raw = {
+        "code": 0,
+        "data": [
+            {
+                "positionId": "open-1",
+                "symbol": "BTCUSDT",
+                "qty": "1",
+                "side": "BUY",
+                "avgOpenPrice": "100",
+                "margin": "10",
+                "realizedPNL": "0",
+                "unrealizedPNL": "5",
+            },
+            {
+                "positionId": "ghost-closed",
+                "symbol": "ETHUSDT",
+                "qty": "0",
+                "side": "SELL",
+                "avgOpenPrice": "2000",
+                "margin": "0",
+                "realizedPNL": "1",
+                "unrealizedPNL": "99",
+                "closeTime": "1778681865000",
+            },
+        ],
+    }
+    assert position_row_is_closed(raw["data"][1])
+    out = normalize_open_positions_response(raw)
+    assert len(out["positions"]) == 1
+    assert out["positions"][0]["symbol"] == "BTCUSDT"
+    assert Decimal(out["totals"]["unrealized_pnl_usdt"]) == Decimal("5")

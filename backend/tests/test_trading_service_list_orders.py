@@ -154,6 +154,63 @@ async def test_list_orders_uses_open_position_realized_and_unrealized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_orders_matches_by_history_order_position_id() -> None:
+    """Ha a history order tartalmaz positionId-t, az elsődleges párosítás."""
+    when = datetime.fromtimestamp(1778681838.0, tz=UTC)
+    await _seed_orders([
+        {
+            "client_order_id": "bt-by-pid",
+            "bitunix_order_id": "ord-pid",
+            "symbol": "SAGAUSDT",
+            "side": OrderSide.SELL,
+            "quantity": Decimal("100"),
+            "price": None,
+            "leverage": 10,
+            "status": OrderStatus.NEW,
+            "created_at": when,
+        }
+    ])
+    fake = _FakeClient(
+        history_orders={
+            "SAGAUSDT": [
+                {
+                    "orderId": "ord-pid",
+                    "clientId": "bt-by-pid",
+                    "symbol": "SAGAUSDT",
+                    "positionId": "p-from-hist",
+                    "qty": "100",
+                    "status": "FILLED",
+                    "realizedPNL": "0",
+                    "mtime": int(when.timestamp() * 1000),
+                }
+            ]
+        },
+        history_positions={
+            "SAGAUSDT": [
+                {
+                    "positionId": "p-from-hist",
+                    "symbol": "SAGAUSDT",
+                    "side": "SELL",
+                    "maxQty": "100",
+                    "ctime": "1778681500000",
+                    "realizedPNL": "7.25",
+                    "entryPrice": "1",
+                    "closePrice": "1.1",
+                    "leverage": "10",
+                }
+            ]
+        },
+    )
+    async with AsyncSessionLocal() as session:
+        svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
+        rows = await svc.list_orders(lookback_hours=_TEST_LOOKBACK_H)
+    ex = rows[0]["exchange"]
+    assert ex["realized_pnl_usdt"] == "7.25"
+    assert ex["lifecycle"] == "closed"
+    assert ex["position_id"] == "p-from-hist"
+
+
+@pytest.mark.asyncio
 async def test_list_orders_uses_history_position_realized_for_closed() -> None:
     when = datetime.fromtimestamp(1778681838.0, tz=UTC)
     await _seed_orders([

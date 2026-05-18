@@ -37,12 +37,14 @@ from app.services.order_enrichment import (
     earliest_history_start_ms,
     extract_history_position_rows,
     extract_open_position_rows,
+    fetch_history_position_rows_for_symbol,
     index_history_orders_by_client_id,
     last_or_mark_price_from_ticker,
     match_position_for_order,
     normalize_str_id,
     parse_open_symbols_from_positions,
     pick_trade_augment,
+    position_id_from_row,
 )
 
 
@@ -336,14 +338,21 @@ class TradingService:
         # Lezárt pozíciók szimbólumonként – ez adja a valódi realized PnL-t
         # a saját belépő rendeléseinkhez (a hist_orders ott mindig 0-t mutat).
         history_pos_rows: list[dict[str, Any]] = []
+        history_pos_ids: set[tuple[str, str]] = set()
         symbols_for_history = {o.symbol for o in orders if o.symbol}
         for sym in sorted(symbols_for_history):
             start_ms = earliest_history_start_ms(orders, sym)
             try:
-                raw_hp = await self._client.get_history_positions(
-                    symbol=sym, limit=100, start_time_ms=start_ms
-                )
-                history_pos_rows.extend(extract_history_position_rows(raw_hp))
+                for row in await fetch_history_position_rows_for_symbol(
+                    self._client, symbol=sym, start_time_ms=start_ms
+                ):
+                    pid = position_id_from_row(row)
+                    key = (sym.upper(), pid or "")
+                    if pid and key in history_pos_ids:
+                        continue
+                    if pid:
+                        history_pos_ids.add(key)
+                    history_pos_rows.append(row)
                 got_any_exchange = True
             except (BitunixAPIError, BitunixSignatureError) as exc:
                 if sync_err is None:
@@ -409,6 +418,34 @@ class TradingService:
                     sync_err = f"History direct ({o.symbol}): {exc}"[:500]
                 elif len(sync_err) < 450:
                     sync_err = f"{sync_err}; hist {o.symbol}: {exc}"[:500]
+
+        seen_hist_pos_fetch: set[tuple[str, str]] = set()
+        for o in orders:
+            cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
+            hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
+            if not hr:
+                continue
+            pid = position_id_from_row(hr)
+            if not pid:
+                continue
+            pkey = (o.symbol.upper(), pid)
+            if pkey in history_pos_ids or pkey in seen_hist_pos_fetch:
+                continue
+            seen_hist_pos_fetch.add(pkey)
+            start_ms = earliest_history_start_ms(orders, o.symbol)
+            try:
+                raw_hp = await self._client.get_history_positions(
+                    symbol=o.symbol,
+                    position_id=pid,
+                    limit=100,
+                    start_time_ms=start_ms,
+                )
+                for row in extract_history_position_rows(raw_hp):
+                    history_pos_rows.append(row)
+                    history_pos_ids.add(pkey)
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError):
+                pass
 
         seen_trade_oid: set[tuple[str, str]] = set()
         for o in orders:
@@ -534,10 +571,12 @@ class TradingService:
             bitunix_order_id=o.bitunix_order_id,
         )
         aug = best_trade_augment(aug_pos, aug_pick)
+        hint_pid = position_id_from_row(hr) if hr else None
         pos_match: PositionMatch | None = match_position_for_order(
             o,
             open_position_rows=open_pos_rows,
             history_position_rows=history_pos_rows,
+            hint_position_id=hint_pid,
         )
         extras: dict[str, Any] | None = None
         if include_debug:

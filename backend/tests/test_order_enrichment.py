@@ -7,6 +7,8 @@ from decimal import Decimal
 
 from app.db.models import Order, OrderSide, OrderStatus, OrderType
 from app.services.order_enrichment import (
+    find_position_row_by_id,
+    position_row_is_closed,
     PositionMatch,
     TradeAugment,
     aggregate_trades_response,
@@ -307,6 +309,109 @@ def test_position_match_from_row_history_uses_entry_and_close_price() -> None:
     assert pm.close_price == Decimal("0.02804")
     assert pm.qty == Decimal("468.6")
     assert pm.leverage == 50
+
+
+def test_match_position_by_hint_position_id_prefers_history() -> None:
+    when = datetime.fromtimestamp(1778681838.0, tz=UTC)
+    o = _order(
+        client_order_id="bt-hint",
+        symbol="SAGAUSDT",
+        quantity="100",
+        leverage=10,
+        side=OrderSide.SELL,
+        created_at=when,
+    )
+    open_rows = [
+        {
+            "positionId": "hist-1",
+            "symbol": "SAGAUSDT",
+            "side": "SELL",
+            "qty": "0",
+            "ctime": "1778681838000",
+            "realizedPNL": "0",
+            "unrealizedPNL": "50",
+            "margin": "1",
+            "leverage": 10,
+            "avgOpenPrice": "1",
+            "closeTime": "1778681900000",
+        }
+    ]
+    history_rows = [
+        {
+            "positionId": "hist-1",
+            "symbol": "SAGAUSDT",
+            "side": "SELL",
+            "maxQty": "100",
+            "ctime": "1778681838000",
+            "realizedPNL": "12.5",
+            "entryPrice": "1",
+            "closePrice": "1.1",
+            "leverage": "10",
+        }
+    ]
+    pm = match_position_for_order(
+        o,
+        open_position_rows=open_rows,
+        history_position_rows=history_rows,
+        hint_position_id="hist-1",
+    )
+    assert pm is not None
+    assert pm.is_open is False
+    assert pm.realized_pnl == Decimal("12.5")
+
+
+def test_match_position_skips_closed_ghost_in_open_list() -> None:
+    when = datetime.fromtimestamp(1778681838.0, tz=UTC)
+    o = _order(
+        client_order_id="bt-ghost",
+        symbol="ETHUSDT",
+        quantity="1",
+        leverage=10,
+        side=OrderSide.BUY,
+        created_at=when,
+    )
+    open_rows = [
+        {
+            "positionId": "ghost",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "qty": "0",
+            "ctime": "1778681838000",
+            "realizedPNL": "0",
+            "unrealizedPNL": "999",
+            "margin": "1",
+            "leverage": 10,
+            "avgOpenPrice": "1",
+        }
+    ]
+    history_rows = [
+        {
+            "positionId": "real-closed",
+            "symbol": "ETHUSDT",
+            "side": "BUY",
+            "qty": "1",
+            "ctime": "1778681838000",
+            "realizedPNL": "3.5",
+            "entryPrice": "1",
+            "closePrice": "1.05",
+            "leverage": "10",
+        }
+    ]
+    assert position_row_is_closed(open_rows[0])
+    pm = match_position_for_order(
+        o, open_position_rows=open_rows, history_position_rows=history_rows
+    )
+    assert pm is not None
+    assert pm.position_id == "real-closed"
+    assert pm.is_open is False
+    assert pm.realized_pnl == Decimal("3.5")
+
+
+def test_find_position_row_by_id() -> None:
+    hist = [{"positionId": "a", "symbol": "X"}]
+    open_ = [{"positionId": "b", "symbol": "Y"}]
+    assert find_position_row_by_id("a", open_position_rows=open_, history_position_rows=hist)
+    assert find_position_row_by_id("b", open_position_rows=open_, history_position_rows=hist)
 
 
 def test_match_position_for_order_picks_open_within_tolerance() -> None:

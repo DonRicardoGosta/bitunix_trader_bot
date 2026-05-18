@@ -14,6 +14,7 @@ from typing import Any
 
 from app.services.order_enrichment import (
     extract_open_position_rows,
+    position_row_is_closed,
 )
 
 
@@ -81,8 +82,9 @@ def normalize_position_row(row: dict[str, Any]) -> dict[str, Any]:
     updated_ms = _pick(row, ("mtime", "updateTime")) or closed_ms
     symbol = (_pick(row, ("symbol", "symbolName")) or "").upper() or None
 
+    is_closed = position_row_is_closed(row)
     roi_pct: Decimal | None = None
-    pnl_total = realized + unrealized
+    pnl_total = realized if is_closed else realized + unrealized
     if margin is not None and margin > 0:
         roi_pct = (pnl_total / margin) * Decimal(100)
 
@@ -117,7 +119,10 @@ def normalize_open_positions_response(raw: dict[str, Any]) -> dict[str, Any]:
     ``totals``: ``count``, ``unrealized_pnl_usdt``, ``realized_pnl_usdt``,
     ``margin_usdt`` — minden Decimal stringként.
     """
-    rows = [normalize_position_row(r) for r in extract_open_position_rows(raw)]
+    open_raw = [
+        r for r in extract_open_position_rows(raw) if not position_row_is_closed(r)
+    ]
+    rows = [normalize_position_row(r) for r in open_raw]
     sum_unrealized = sum(
         (Decimal(r["unrealized_pnl"]) for r in rows if r["unrealized_pnl"] is not None),
         Decimal(0),
