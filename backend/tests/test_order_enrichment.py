@@ -16,7 +16,9 @@ from app.services.order_enrichment import (
     build_order_api_dict,
     build_trade_augment_indices,
     earliest_history_start_ms,
+    history_position_pages_for_lookback,
     extract_history_position_rows,
+    symbols_needing_bulk_history_positions,
     extract_open_position_rows,
     index_history_orders_by_client_id,
     last_or_mark_price_from_ticker,
@@ -235,6 +237,25 @@ def test_earliest_history_start_ms() -> None:
     o = _order(client_order_id="a", symbol="S", quantity="1", price="1")
     ms = earliest_history_start_ms([o], "S")
     assert ms is not None
+    ms_lb = earliest_history_start_ms([o], "S", lookback_hours=6)
+    assert ms_lb is not None
+    assert ms_lb >= ms - 1  # lookback nem nyúlik 14 napnál régebbre a friss ordernél
+
+
+def test_history_position_pages_for_lookback_short_window() -> None:
+    assert history_position_pages_for_lookback(6) == 2
+    assert history_position_pages_for_lookback(200) == 5
+
+
+def test_symbols_needing_bulk_history_positions() -> None:
+    o_with = _order(client_order_id="a", symbol="BTCUSDT", quantity="1", price="1")
+    o_without = _order(client_order_id="b", symbol="ETHUSDT", quantity="1", price="1")
+    hist = {
+        "a": {"clientId": "a", "positionId": "p1"},
+        "b": {"clientId": "b", "status": "FILLED"},
+    }
+    need = symbols_needing_bulk_history_positions([o_with, o_without], hist)
+    assert need == {"ETHUSDT"}
 
 
 def test_pick_trade_augment_prefers_client_with_price() -> None:

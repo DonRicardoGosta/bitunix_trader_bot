@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -589,7 +589,15 @@ def best_trade_augment(*parts: TradeAugment | None) -> TradeAugment | None:
     return max(cand, key=lambda p: (abs(p.realized_sum), int(p.avg_price > 0)))
 
 
-HISTORY_POSITION_PAGES_PER_SYMBOL = 8
+def history_position_pages_for_lookback(lookback_hours: int | None) -> int:
+    """Lapozás mértéke — rövid UI ablaknál kevesebb Bitunix hívás."""
+    if lookback_hours is None:
+        return 5
+    if lookback_hours <= 24:
+        return 2
+    if lookback_hours <= 168:
+        return 3
+    return 5
 
 
 async def fetch_history_position_rows_for_symbol(
@@ -597,17 +605,23 @@ async def fetch_history_position_rows_for_symbol(
     *,
     symbol: str,
     start_time_ms: int | None,
-    pages: int = HISTORY_POSITION_PAGES_PER_SYMBOL,
+    end_time_ms: int | None = None,
+    pages: int | None = None,
+    lookback_hours: int | None = None,
 ) -> list[dict[str, Any]]:
     """Lapozott ``get_history_positions`` — több lezárt pozíció illesztéséhez."""
+    page_count = pages if pages is not None else history_position_pages_for_lookback(
+        lookback_hours
+    )
     out: list[dict[str, Any]] = []
     page_size = 100
-    for page in range(max(1, pages)):
+    for page in range(max(1, page_count)):
         raw = await client.get_history_positions(
             symbol=symbol,
             limit=page_size,
             skip=page * page_size,
             start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
         )
         rows = extract_history_position_rows(raw)
         if not rows:
@@ -618,14 +632,48 @@ async def fetch_history_position_rows_for_symbol(
     return out
 
 
-def earliest_history_start_ms(orders: list[Order], symbol: str) -> int | None:
-    """``startTime`` Bitunixhez: a szimbólumhoz tartozó legrégebbi DB rendelés − 14 nap."""
-    times = [o.created_at for o in orders if o.symbol == symbol]
-    if not times:
+def earliest_history_start_ms(
+    orders: list[Order],
+    symbol: str,
+    *,
+    lookback_hours: int | None = None,
+) -> int | None:
+    """``startTime`` Bitunixhez — lookback ablakra korlátozva, ne 14 nap minden szimbólumra."""
+    now = datetime.now(UTC)
+    window_floor: datetime | None = None
+    if lookback_hours is not None:
+        window_floor = now - timedelta(hours=max(1, lookback_hours) + 2)
+
+    times = [
+        o.created_at
+        for o in orders
+        if o.symbol == symbol and o.created_at is not None
+    ]
+    if not times and window_floor is None:
         return None
-    t = min(times)
+    t = min(times) if times else now
     t = t.replace(tzinfo=UTC) if t.tzinfo is None else t.astimezone(UTC)
-    return int((t - timedelta(days=14)).timestamp() * 1000)
+    start = t - timedelta(days=14)
+    if window_floor is not None and start < window_floor:
+        start = window_floor
+    return int(start.timestamp() * 1000)
+
+
+def symbols_needing_bulk_history_positions(
+    orders: list[Order],
+    hist_by_client: dict[str, dict[str, Any]],
+) -> set[str]:
+    """Belépő rendelések, ahol nincs ``positionId`` a history orderben → szimbólum bulk fetch."""
+    need: set[str] = set()
+    for o in orders:
+        if o.reduce_only or not o.symbol:
+            continue
+        cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
+        hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
+        if hr and position_id_from_row(hr):
+            continue
+        need.add(o.symbol.upper())
+    return need
 
 
 def margin_usdt_linear(
