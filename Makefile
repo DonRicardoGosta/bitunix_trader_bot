@@ -68,3 +68,8 @@ dev-backend: ## Backend lokálisan / Backend locally
 
 dev-frontend: ## Frontend lokálisan / Frontend locally
 	cd frontend && npm run dev
+
+.PHONY: frontend-clean
+frontend-clean: ## Next.js cache törlése (ChunkLoadError után) / Clear .next cache
+	$(COMPOSE) exec frontend sh -c "rm -rf .next" 2>/dev/null || rm -rf frontend/.next
+	@echo "frontend/.next törölve — futtasd: make restart"
