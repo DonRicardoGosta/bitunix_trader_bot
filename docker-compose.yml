@@ -107,24 +107,26 @@ services:
       NODE_ENV: ${APP_ENV:-development}
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
       NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Bitunix Trader}
+      WATCHPACK_POLLING: ${WATCHPACK_POLLING:-true}
+      WATCHPACK_POLLING_MS: ${WATCHPACK_POLLING_MS:-1000}
+      NODE_OPTIONS: ${FRONTEND_NODE_OPTIONS:---max-old-space-size=1536}
     ports:
       - "3000:3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
-      - /app/.next
-    command: sh -c "npm install && npm run dev"
+    command: npm run dev:docker
     deploy:
       resources:
         limits:
-          cpus: "${FRONTEND_CPU_LIMIT:-1.0}"
-          memory: ${FRONTEND_MEM_LIMIT:-1G}
+          cpus: "${FRONTEND_CPU_LIMIT:-1.5}"
+          memory: ${FRONTEND_MEM_LIMIT:-2G}
         reservations:
           cpus: "0.25"
           memory: 256M
-    cpus: ${FRONTEND_CPU_LIMIT:-1.0}
-    mem_limit: ${FRONTEND_MEM_LIMIT:-1G}
-    mem_reservation: 256M
+    cpus: ${FRONTEND_CPU_LIMIT:-1.5}
+    mem_limit: ${FRONTEND_MEM_LIMIT:-2G}
+    mem_reservation: 512M
 
 volumes:
   postgres-data:

@@ -68,3 +68,13 @@ dev-backend: ## Backend lokálisan / Backend locally
 
 dev-frontend: ## Frontend lokálisan / Frontend locally
 	cd frontend && npm run dev
+
+.PHONY: frontend-clean frontend-restart
+frontend-clean: ## Next.js cache törlése (ChunkLoadError után) / Clear .next cache
+	rm -rf frontend/.next
+	$(COMPOSE) exec frontend sh -c "rm -rf .next" 2>/dev/null || true
+	@echo "frontend/.next törölve"
+
+frontend-restart: frontend-clean ## Frontend cache törlés + újraindítás
+	$(COMPOSE) up -d --force-recreate frontend
+	@echo "Frontend újraindítva — várj ~30 mp-et a first compile-ra, majd hard refresh (Ctrl+Shift+R)"

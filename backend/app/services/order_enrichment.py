@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -179,6 +179,64 @@ def _pos_decimal(row: dict[str, Any], keys: tuple[str, ...]) -> Decimal | None:
     return None
 
 
+def position_qty_from_row(row: dict[str, Any]) -> Decimal | None:
+    """Pozíció méret a Bitunix sor többféle mezőnevéből."""
+    return _pos_decimal(
+        row,
+        (
+            "positionAmt",
+            "qty",
+            "positionQty",
+            "holdVol",
+            "size",
+            "volume",
+            "positionSize",
+            "maxQty",
+        ),
+    )
+
+
+def position_row_is_closed(row: dict[str, Any]) -> bool:
+    """True ha a sor lezárt / nulla méretű pozíciót jelöl (pl. pending listában maradt szellem)."""
+    qty = position_qty_from_row(row)
+    if qty is not None and qty == 0:
+        return True
+    for key in ("closeTime", "close_time", "endTime", "end_time"):
+        if row.get(key) not in (None, "", 0, "0"):
+            return True
+    status = str(row.get("status") or row.get("positionStatus") or "").upper()
+    if status in ("CLOSED", "CLOSE", "LIQUIDATED", "LIQUIDATION"):
+        return True
+    return False
+
+
+def position_id_from_row(row: dict[str, Any]) -> str | None:
+    for key in ("positionId", "position_id"):
+        val = row.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return None
+
+
+def find_position_row_by_id(
+    position_id: str,
+    *,
+    open_position_rows: list[dict[str, Any]],
+    history_position_rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any], bool] | None:
+    """``(row, from_open_list)`` — history előbb, mert pontosabb lezárt PnL-hez."""
+    pid = str(position_id).strip()
+    if not pid:
+        return None
+    for row in history_position_rows:
+        if position_id_from_row(row) == pid:
+            return row, False
+    for row in open_position_rows:
+        if position_id_from_row(row) == pid:
+            return row, True
+    return None
+
+
 def _pos_int(row: dict[str, Any], keys: tuple[str, ...]) -> int | None:
     for k in keys:
         v = row.get(k)
@@ -244,6 +302,7 @@ def match_position_for_order(
     *,
     open_position_rows: list[dict[str, Any]],
     history_position_rows: list[dict[str, Any]],
+    hint_position_id: str | None = None,
     tolerance_ms: int = POSITION_MATCH_TOLERANCE_MS,
 ) -> PositionMatch | None:
     """DB rendelés ↔ Bitunix pozíció párosítás.
@@ -262,6 +321,18 @@ def match_position_for_order(
     """
     if order.reduce_only:
         return None
+
+    if hint_position_id:
+        found = find_position_row_by_id(
+            hint_position_id,
+            open_position_rows=open_position_rows,
+            history_position_rows=history_position_rows,
+        )
+        if found is not None:
+            row, from_open = found
+            is_open = from_open and not position_row_is_closed(row)
+            return position_match_from_row(row, is_open=is_open)
+
     order_ts = _order_created_at_ms(order)
     if order_ts is None:
         return None
@@ -270,8 +341,10 @@ def match_position_for_order(
 
     best: tuple[dict[str, Any], bool, int] | None = None  # (row, is_open, diff_ms)
 
-    def _consider(row: dict[str, Any], is_open: bool) -> None:
+    def _consider(row: dict[str, Any], from_open_list: bool) -> None:
         nonlocal best
+        if from_open_list and position_row_is_closed(row):
+            return
         if str(row.get("symbol", "")).upper() != sym_u:
             return
         row_side = str(row.get("side", "")).upper()
@@ -283,7 +356,11 @@ def match_position_for_order(
         diff = abs(ct - order_ts)
         if diff > tolerance_ms:
             return
+        is_open = from_open_list and not position_row_is_closed(row)
         if best is None or diff < best[2]:
+            best = (row, is_open, diff)
+        elif diff == best[2] and not is_open and best[1]:
+            # Ugyanaz a ctime: lezárt history előnyben a pending szellemhez képest.
             best = (row, is_open, diff)
 
     for row in open_position_rows:
@@ -512,14 +589,91 @@ def best_trade_augment(*parts: TradeAugment | None) -> TradeAugment | None:
     return max(cand, key=lambda p: (abs(p.realized_sum), int(p.avg_price > 0)))
 
 
-def earliest_history_start_ms(orders: list[Order], symbol: str) -> int | None:
-    """``startTime`` Bitunixhez: a szimbólumhoz tartozó legrégebbi DB rendelés − 14 nap."""
-    times = [o.created_at for o in orders if o.symbol == symbol]
-    if not times:
+def history_position_pages_for_lookback(lookback_hours: int | None) -> int:
+    """Lapozás mértéke — rövid UI ablaknál kevesebb Bitunix hívás."""
+    if lookback_hours is None:
+        return 5
+    if lookback_hours <= 24:
+        return 2
+    if lookback_hours <= 168:
+        return 3
+    return 5
+
+
+async def fetch_history_position_rows_for_symbol(
+    client: Any,
+    *,
+    symbol: str,
+    start_time_ms: int | None,
+    end_time_ms: int | None = None,
+    pages: int | None = None,
+    lookback_hours: int | None = None,
+) -> list[dict[str, Any]]:
+    """Lapozott ``get_history_positions`` — több lezárt pozíció illesztéséhez."""
+    page_count = pages if pages is not None else history_position_pages_for_lookback(
+        lookback_hours
+    )
+    out: list[dict[str, Any]] = []
+    page_size = 100
+    for page in range(max(1, page_count)):
+        raw = await client.get_history_positions(
+            symbol=symbol,
+            limit=page_size,
+            skip=page * page_size,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
+        )
+        rows = extract_history_position_rows(raw)
+        if not rows:
+            break
+        out.extend(rows)
+        if len(rows) < page_size:
+            break
+    return out
+
+
+def earliest_history_start_ms(
+    orders: list[Order],
+    symbol: str,
+    *,
+    lookback_hours: int | None = None,
+) -> int | None:
+    """``startTime`` Bitunixhez — lookback ablakra korlátozva, ne 14 nap minden szimbólumra."""
+    now = datetime.now(UTC)
+    window_floor: datetime | None = None
+    if lookback_hours is not None:
+        window_floor = now - timedelta(hours=max(1, lookback_hours) + 2)
+
+    times = [
+        o.created_at
+        for o in orders
+        if o.symbol == symbol and o.created_at is not None
+    ]
+    if not times and window_floor is None:
         return None
-    t = min(times)
+    t = min(times) if times else now
     t = t.replace(tzinfo=UTC) if t.tzinfo is None else t.astimezone(UTC)
-    return int((t - timedelta(days=14)).timestamp() * 1000)
+    start = t - timedelta(days=14)
+    if window_floor is not None and start < window_floor:
+        start = window_floor
+    return int(start.timestamp() * 1000)
+
+
+def symbols_needing_bulk_history_positions(
+    orders: list[Order],
+    hist_by_client: dict[str, dict[str, Any]],
+) -> set[str]:
+    """Belépő rendelések, ahol nincs ``positionId`` a history orderben → szimbólum bulk fetch."""
+    need: set[str] = set()
+    for o in orders:
+        if o.reduce_only or not o.symbol:
+            continue
+        cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
+        hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
+        if hr and position_id_from_row(hr):
+            continue
+        need.add(o.symbol.upper())
+    return need
 
 
 def margin_usdt_linear(

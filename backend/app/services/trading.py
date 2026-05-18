@@ -7,7 +7,9 @@ Itt történik az audit naplózás (DB), a saját ``client_order_id`` generálá
 from __future__ import annotations
 
 import json
+import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -37,18 +39,70 @@ from app.services.order_enrichment import (
     earliest_history_start_ms,
     extract_history_position_rows,
     extract_open_position_rows,
+    fetch_history_position_rows_for_symbol,
+    history_position_pages_for_lookback,
     index_history_orders_by_client_id,
     last_or_mark_price_from_ticker,
     match_position_for_order,
     normalize_str_id,
     parse_open_symbols_from_positions,
     pick_trade_augment,
+    position_id_from_row,
+    symbols_needing_bulk_history_positions,
 )
+
+ORDERS_ENRICHMENT_MAX = 500
+ENRICHMENT_CACHE_TTL_SEC = 45.0
+MAX_DIRECT_HIST_ORDER_LOOKUPS = 50
+MAX_DIRECT_TRADE_BY_ORDER_LOOKUPS = 50
+
+_enrichment_cache: dict[str, tuple[float, EnrichmentSyncState]] = {}
+
+
+@dataclass
+class EnrichmentSyncState:
+    """Bitunix szinkron eredménye — cache-elhető, soronkénti build külön."""
+
+    open_syms: set[str]
+    open_pos_rows: list[dict[str, Any]]
+    history_pos_rows: list[dict[str, Any]]
+    hist_by_client: dict[str, dict[str, Any]]
+    trade_by_client: dict[str, TradeAugment]
+    trade_by_order: dict[str, TradeAugment]
+    trade_by_position: dict[tuple[str, str], TradeAugment]
+    mark_by_symbol: dict[str, Decimal]
+    global_sync_error: str | None
+    sync_index_meta: dict[str, Any]
 
 
 def clear_orders_enrichment_cache() -> None:
-    """Kompatibilitás tesztekkel / place_order után (nincs in-memory cache)."""
-    return None
+    """Új rendelés után / tesztek előtt — közös enrichment cache ürítése."""
+    _enrichment_cache.clear()
+
+
+def _enrichment_cache_key(orders: list[Order], lookback_hours: int | None) -> str:
+    syms = ",".join(sorted({o.symbol.upper() for o in orders if o.symbol}))
+    newest = ""
+    if orders:
+        times = [o.created_at for o in orders if o.created_at is not None]
+        if times:
+            newest = max(times).isoformat()
+    return f"lb={lookback_hours}:n={len(orders)}:s={syms}:t={newest}"
+
+
+def _get_cached_enrichment(key: str) -> EnrichmentSyncState | None:
+    entry = _enrichment_cache.get(key)
+    if entry is None:
+        return None
+    ts, state = entry
+    if time.monotonic() - ts > ENRICHMENT_CACHE_TTL_SEC:
+        _enrichment_cache.pop(key, None)
+        return None
+    return state
+
+
+def _set_cached_enrichment(key: str, state: EnrichmentSyncState) -> None:
+    _enrichment_cache[key] = (time.monotonic(), state)
 
 
 def _filter_rows_by_lifecycle(
@@ -253,7 +307,9 @@ class TradingService:
         stmt = stmt.offset(offset).limit(limit)
         result = await self._session.execute(stmt)
         orders = list(result.scalars().all())
-        rows = await self._enriched_order_api_rows(orders, debug_sync=debug_sync)
+        rows = await self._enriched_order_api_rows(
+            orders, debug_sync=debug_sync, lookback_hours=lookback_hours
+        )
         filtered = _filter_rows_by_lifecycle(rows, lifecycle)
         if lifecycle:
             return filtered[offset : offset + limit] if offset else filtered[:limit]
@@ -272,9 +328,12 @@ class TradingService:
         if lookback_hours is not None:
             since = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
             stmt = stmt.where(Order.created_at >= since)
+        stmt = stmt.limit(ORDERS_ENRICHMENT_MAX)
         result = await self._session.execute(stmt)
         orders = list(result.scalars().all())
-        rows = await self._enriched_order_api_rows(orders, debug_sync=False)
+        rows = await self._enriched_order_api_rows(
+            orders, debug_sync=False, lookback_hours=lookback_hours
+        )
         rows = _filter_rows_by_lifecycle(rows, lifecycle)
         total_r = Decimal(0)
         total_u = Decimal(0)
@@ -305,6 +364,7 @@ class TradingService:
         orders: list[Order],
         *,
         debug_sync: bool,
+        lookback_hours: int | None = None,
     ) -> list[dict[str, Any]]:
         settings = get_settings()
 
@@ -321,10 +381,51 @@ class TradingService:
                 for o in orders
             ]
 
+        if not orders:
+            return []
+
+        cache_key = _enrichment_cache_key(orders, lookback_hours)
+        sync_state: EnrichmentSyncState | None = None
+        if not debug_sync:
+            sync_state = _get_cached_enrichment(cache_key)
+        if sync_state is None:
+            sync_state = await self._build_enrichment_sync_state(
+                orders, lookback_hours=lookback_hours
+            )
+            if not debug_sync:
+                _set_cached_enrichment(cache_key, sync_state)
+
+        return [
+            self._order_api_row(
+                o,
+                hist_by_client=sync_state.hist_by_client,
+                open_syms=sync_state.open_syms,
+                global_sync_error=sync_state.global_sync_error,
+                trade_by_client=sync_state.trade_by_client,
+                trade_by_order=sync_state.trade_by_order,
+                trade_by_position=sync_state.trade_by_position,
+                mark_by_symbol=sync_state.mark_by_symbol,
+                open_pos_rows=sync_state.open_pos_rows,
+                history_pos_rows=sync_state.history_pos_rows,
+                include_debug=debug_sync,
+                sync_index_meta=sync_state.sync_index_meta,
+            )
+            for o in orders
+        ]
+
+    async def _build_enrichment_sync_state(
+        self,
+        orders: list[Order],
+        *,
+        lookback_hours: int | None,
+    ) -> EnrichmentSyncState:
+        """Bitunix adatok összegyűjtése — positionId első, bulk history csak fallback."""
         open_syms: set[str] = set()
         open_pos_rows: list[dict[str, Any]] = []
         got_any_exchange = False
         sync_err: str | None = None
+        end_ms = int(datetime.now(UTC).timestamp() * 1000)
+
         try:
             pos_raw = await self._client.get_positions()
             open_syms = parse_open_symbols_from_positions(pos_raw)
@@ -333,34 +434,19 @@ class TradingService:
         except (BitunixAPIError, BitunixSignatureError) as exc:
             sync_err = f"Pozíciók lekérése: {exc}"[:500]
 
-        # Lezárt pozíciók szimbólumonként – ez adja a valódi realized PnL-t
-        # a saját belépő rendeléseinkhez (a hist_orders ott mindig 0-t mutat).
-        history_pos_rows: list[dict[str, Any]] = []
-        symbols_for_history = {o.symbol for o in orders if o.symbol}
-        for sym in sorted(symbols_for_history):
-            start_ms = earliest_history_start_ms(orders, sym)
-            try:
-                raw_hp = await self._client.get_history_positions(
-                    symbol=sym, limit=100, start_time_ms=start_ms
-                )
-                history_pos_rows.extend(extract_history_position_rows(raw_hp))
-                got_any_exchange = True
-            except (BitunixAPIError, BitunixSignatureError) as exc:
-                if sync_err is None:
-                    sync_err = f"History pozíciók ({sym}): {exc}"[:500]
-                elif len(sync_err) < 450:
-                    sync_err = f"{sync_err}; hist_pos {sym}: {exc}"[:500]
-
         hist_by_client: dict[str, dict[str, Any]] = {}
         trade_by_client: dict[str, TradeAugment] = {}
         trade_by_order: dict[str, TradeAugment] = {}
         mark_by_symbol: dict[str, Decimal] = {}
         symbols = {o.symbol for o in orders if o.symbol}
+
         for sym in sorted(symbols):
-            start_ms = earliest_history_start_ms(orders, sym)
+            start_ms = earliest_history_start_ms(
+                orders, sym, lookback_hours=lookback_hours
+            )
             try:
                 raw = await self._client.get_history_orders(
-                    symbol=sym, limit=100, start_time_ms=start_ms
+                    symbol=sym, limit=100, start_time_ms=start_ms, end_time_ms=end_ms
                 )
                 hist_by_client.update(index_history_orders_by_client_id(raw))
                 got_any_exchange = True
@@ -371,10 +457,15 @@ class TradingService:
                     sync_err = f"{sync_err}; {sym}: {exc}"[:500]
 
         for sym in sorted(symbols):
-            start_ms = earliest_history_start_ms(orders, sym)
+            start_ms = earliest_history_start_ms(
+                orders, sym, lookback_hours=lookback_hours
+            )
             try:
                 raw_t = await self._client.get_history_trades(
-                    symbol=sym, limit=100, start_time_ms=start_ms
+                    symbol=sym,
+                    limit=100,
+                    start_time_ms=start_ms,
+                    end_time_ms=end_ms,
                 )
                 bc, bo = build_trade_augment_indices(raw_t)
                 trade_by_client.update(bc)
@@ -386,21 +477,27 @@ class TradingService:
                 elif len(sync_err) < 450:
                     sync_err = f"{sync_err}; trades {sym}: {exc}"[:500]
 
-        # Célzott lekérések: a top-100-as lista gyakran nem tartalmazza a saját clientId-t.
         seen_hist_pair: set[tuple[str, str]] = set()
+        direct_hist_lookups = 0
         for o in orders:
+            if direct_hist_lookups >= MAX_DIRECT_HIST_ORDER_LOOKUPS:
+                break
             cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
             key = (o.symbol, cid_key)
             if cid_key in hist_by_client or key in seen_hist_pair:
                 continue
             seen_hist_pair.add(key)
-            start_ms = earliest_history_start_ms(orders, o.symbol)
+            direct_hist_lookups += 1
+            start_ms = earliest_history_start_ms(
+                orders, o.symbol, lookback_hours=lookback_hours
+            )
             try:
                 raw = await self._client.get_history_orders(
                     symbol=o.symbol,
                     client_id=o.client_order_id,
                     limit=100,
                     start_time_ms=start_ms,
+                    end_time_ms=end_ms,
                 )
                 hist_by_client.update(index_history_orders_by_client_id(raw))
                 got_any_exchange = True
@@ -410,8 +507,74 @@ class TradingService:
                 elif len(sync_err) < 450:
                     sync_err = f"{sync_err}; hist {o.symbol}: {exc}"[:500]
 
-        seen_trade_oid: set[tuple[str, str]] = set()
+        history_pos_rows: list[dict[str, Any]] = []
+        history_pos_ids: set[tuple[str, str]] = set()
+        seen_hist_pos_fetch: set[tuple[str, str]] = set()
+
         for o in orders:
+            if o.reduce_only:
+                continue
+            cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
+            hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
+            pid = position_id_from_row(hr) if hr else None
+            if not pid:
+                continue
+            pkey = (o.symbol.upper(), pid)
+            if pkey in history_pos_ids or pkey in seen_hist_pos_fetch:
+                continue
+            seen_hist_pos_fetch.add(pkey)
+            start_ms = earliest_history_start_ms(
+                orders, o.symbol, lookback_hours=lookback_hours
+            )
+            try:
+                raw_hp = await self._client.get_history_positions(
+                    symbol=o.symbol,
+                    position_id=pid,
+                    limit=100,
+                    start_time_ms=start_ms,
+                    end_time_ms=end_ms,
+                )
+                for row in extract_history_position_rows(raw_hp):
+                    history_pos_rows.append(row)
+                    history_pos_ids.add(pkey)
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError):
+                pass
+
+        bulk_symbols = symbols_needing_bulk_history_positions(orders, hist_by_client)
+        pages = history_position_pages_for_lookback(lookback_hours)
+        for sym in sorted(bulk_symbols):
+            start_ms = earliest_history_start_ms(
+                orders, sym, lookback_hours=lookback_hours
+            )
+            try:
+                for row in await fetch_history_position_rows_for_symbol(
+                    self._client,
+                    symbol=sym,
+                    start_time_ms=start_ms,
+                    end_time_ms=end_ms,
+                    pages=pages,
+                    lookback_hours=lookback_hours,
+                ):
+                    pid = position_id_from_row(row)
+                    key = (sym.upper(), pid or "")
+                    if pid and key in history_pos_ids:
+                        continue
+                    if pid:
+                        history_pos_ids.add(key)
+                    history_pos_rows.append(row)
+                got_any_exchange = True
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                if sync_err is None:
+                    sync_err = f"History pozíciók ({sym}): {exc}"[:500]
+                elif len(sync_err) < 450:
+                    sync_err = f"{sync_err}; hist_pos {sym}: {exc}"[:500]
+
+        seen_trade_oid: set[tuple[str, str]] = set()
+        direct_trade_lookups = 0
+        for o in orders:
+            if direct_trade_lookups >= MAX_DIRECT_TRADE_BY_ORDER_LOOKUPS:
+                break
             if not o.bitunix_order_id:
                 continue
             oid = str(o.bitunix_order_id)
@@ -419,10 +582,17 @@ class TradingService:
             if key in seen_trade_oid:
                 continue
             seen_trade_oid.add(key)
-            start_ms = earliest_history_start_ms(orders, o.symbol)
+            direct_trade_lookups += 1
+            start_ms = earliest_history_start_ms(
+                orders, o.symbol, lookback_hours=lookback_hours
+            )
             try:
                 raw_t = await self._client.get_history_trades(
-                    symbol=o.symbol, order_id=oid, limit=100, start_time_ms=start_ms
+                    symbol=o.symbol,
+                    order_id=oid,
+                    limit=100,
+                    start_time_ms=start_ms,
+                    end_time_ms=end_ms,
                 )
                 bc, bo = build_trade_augment_indices(raw_t)
                 trade_by_client.update(bc)
@@ -439,22 +609,23 @@ class TradingService:
         for o in orders:
             cid_key = normalize_str_id(o.client_order_id) or o.client_order_id
             hr = hist_by_client.get(cid_key) or hist_by_client.get(o.client_order_id)
-            if not hr:
-                continue
-            pid = hr.get("positionId") or hr.get("position_id")
+            pid = position_id_from_row(hr) if hr else None
             if not pid:
                 continue
-            pkey = (o.symbol.upper(), str(pid))
+            pkey = (o.symbol.upper(), pid)
             if pkey in seen_pos:
                 continue
             seen_pos.add(pkey)
-            start_ms = earliest_history_start_ms(orders, o.symbol)
+            start_ms = earliest_history_start_ms(
+                orders, o.symbol, lookback_hours=lookback_hours
+            )
             try:
                 raw_p = await self._client.get_history_trades(
                     symbol=o.symbol,
-                    position_id=str(pid),
+                    position_id=pid,
                     limit=100,
                     start_time_ms=start_ms,
+                    end_time_ms=end_ms,
                 )
                 trade_by_position[pkey] = aggregate_trades_response(raw_p)
                 got_any_exchange = True
@@ -478,7 +649,6 @@ class TradingService:
             sync_err = "Bitunix szinkron sikertelen."
 
         global_sync_error = None if got_any_exchange else sync_err
-
         sync_index_meta = {
             "hist_by_client_count": len(hist_by_client),
             "trade_by_client_count": len(trade_by_client),
@@ -487,25 +657,21 @@ class TradingService:
             "open_pos_count": len(open_pos_rows),
             "history_pos_count": len(history_pos_rows),
             "hist_client_id_prefix_sample": sorted(hist_by_client.keys())[:20],
+            "bulk_history_symbols": sorted(bulk_symbols),
         }
 
-        return [
-            self._order_api_row(
-                o,
-                hist_by_client=hist_by_client,
-                open_syms=open_syms,
-                global_sync_error=global_sync_error,
-                trade_by_client=trade_by_client,
-                trade_by_order=trade_by_order,
-                trade_by_position=trade_by_position,
-                mark_by_symbol=mark_by_symbol,
-                open_pos_rows=open_pos_rows,
-                history_pos_rows=history_pos_rows,
-                include_debug=debug_sync,
-                sync_index_meta=sync_index_meta,
-            )
-            for o in orders
-        ]
+        return EnrichmentSyncState(
+            open_syms=open_syms,
+            open_pos_rows=open_pos_rows,
+            history_pos_rows=history_pos_rows,
+            hist_by_client=hist_by_client,
+            trade_by_client=trade_by_client,
+            trade_by_order=trade_by_order,
+            trade_by_position=trade_by_position,
+            mark_by_symbol=mark_by_symbol,
+            global_sync_error=global_sync_error,
+            sync_index_meta=sync_index_meta,
+        )
 
     def _order_api_row(
         self,
@@ -534,10 +700,12 @@ class TradingService:
             bitunix_order_id=o.bitunix_order_id,
         )
         aug = best_trade_augment(aug_pos, aug_pick)
+        hint_pid = position_id_from_row(hr) if hr else None
         pos_match: PositionMatch | None = match_position_for_order(
             o,
             open_position_rows=open_pos_rows,
             history_position_rows=history_pos_rows,
+            hint_position_id=hint_pid,
         )
         extras: dict[str, Any] | None = None
         if include_debug:

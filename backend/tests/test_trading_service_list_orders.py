@@ -21,7 +21,11 @@ import sqlalchemy as sa
 from app.db.base import Base
 from app.db.models import Order, OrderSide, OrderStatus, OrderType
 from app.db.session import AsyncSessionLocal, engine
-from app.services.trading import TradingService, clear_orders_enrichment_cache
+from app.services.trading import (
+    TradingService,
+    _enrichment_cache,
+    clear_orders_enrichment_cache,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -51,29 +55,38 @@ class _FakeClient:
         self._history_orders = history_orders or {}
         self._history_trades = history_trades or {}
         self._tickers = tickers or {}
+        self.bitunix_call_count = 0
+
+    def _bump(self) -> None:
+        self.bitunix_call_count += 1
 
     async def get_positions(self, symbol: str | None = None) -> dict[str, Any]:
+        self._bump()
         return {"code": 0, "data": list(self._positions)}
 
     async def get_history_positions(
         self, *, symbol: str | None = None, **_: Any
     ) -> dict[str, Any]:
+        self._bump()
         rows = self._history_positions.get(symbol or "", [])
         return {"code": 0, "data": {"total": str(len(rows)), "positionList": list(rows)}}
 
     async def get_history_orders(
         self, *, symbol: str | None = None, **_: Any
     ) -> dict[str, Any]:
+        self._bump()
         rows = self._history_orders.get(symbol or "", [])
         return {"code": 0, "data": {"total": str(len(rows)), "orderList": list(rows)}}
 
     async def get_history_trades(
         self, *, symbol: str | None = None, **_: Any
     ) -> dict[str, Any]:
+        self._bump()
         rows = self._history_trades.get(symbol or "", [])
         return {"code": 0, "data": {"total": str(len(rows)), "tradeList": list(rows)}}
 
     async def get_ticker(self, symbol: str) -> dict[str, Any]:
+        self._bump()
         price = self._tickers.get(symbol)
         return (
             {"code": 0, "data": [{"symbol": symbol, "lastPrice": price, "markPrice": price}]}
@@ -151,6 +164,63 @@ async def test_list_orders_uses_open_position_realized_and_unrealized() -> None:
     assert ex["position_id"] == "p-open-1"
     # (-0.007679658 + 0.05229) / 0.263668258 * 100 ≈ 16.92
     assert ex["roi_pct"] == "16.92"
+
+
+@pytest.mark.asyncio
+async def test_list_orders_matches_by_history_order_position_id() -> None:
+    """Ha a history order tartalmaz positionId-t, az elsődleges párosítás."""
+    when = datetime.fromtimestamp(1778681838.0, tz=UTC)
+    await _seed_orders([
+        {
+            "client_order_id": "bt-by-pid",
+            "bitunix_order_id": "ord-pid",
+            "symbol": "SAGAUSDT",
+            "side": OrderSide.SELL,
+            "quantity": Decimal("100"),
+            "price": None,
+            "leverage": 10,
+            "status": OrderStatus.NEW,
+            "created_at": when,
+        }
+    ])
+    fake = _FakeClient(
+        history_orders={
+            "SAGAUSDT": [
+                {
+                    "orderId": "ord-pid",
+                    "clientId": "bt-by-pid",
+                    "symbol": "SAGAUSDT",
+                    "positionId": "p-from-hist",
+                    "qty": "100",
+                    "status": "FILLED",
+                    "realizedPNL": "0",
+                    "mtime": int(when.timestamp() * 1000),
+                }
+            ]
+        },
+        history_positions={
+            "SAGAUSDT": [
+                {
+                    "positionId": "p-from-hist",
+                    "symbol": "SAGAUSDT",
+                    "side": "SELL",
+                    "maxQty": "100",
+                    "ctime": "1778681500000",
+                    "realizedPNL": "7.25",
+                    "entryPrice": "1",
+                    "closePrice": "1.1",
+                    "leverage": "10",
+                }
+            ]
+        },
+    )
+    async with AsyncSessionLocal() as session:
+        svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
+        rows = await svc.list_orders(lookback_hours=_TEST_LOOKBACK_H)
+    ex = rows[0]["exchange"]
+    assert ex["realized_pnl_usdt"] == "7.25"
+    assert ex["lifecycle"] == "closed"
+    assert ex["position_id"] == "p-from-hist"
 
 
 @pytest.mark.asyncio
@@ -350,6 +420,47 @@ async def test_orders_pnl_totals_matches_sum_of_list_orders_rows() -> None:
     assert Decimal(totals["realized_pnl_usdt"]) == sum_r
     assert Decimal(totals["unrealized_pnl_usdt"]) == sum_u
     assert Decimal(totals["total_pnl_usdt"]) == sum_r + sum_u
+
+
+@pytest.mark.asyncio
+async def test_list_orders_and_pnl_totals_share_enrichment_cache() -> None:
+    """Párhuzamos UI hívások ne duplázzák a Bitunix szinkront."""
+    when = datetime.fromtimestamp(1778681838.0, tz=UTC)
+    await _seed_orders([
+        {
+            "client_order_id": "bt-cache-1",
+            "symbol": "MLNUSDT",
+            "side": OrderSide.SELL,
+            "quantity": Decimal("1"),
+            "price": None,
+            "leverage": 10,
+            "status": OrderStatus.NEW,
+            "created_at": when,
+        }
+    ])
+    fake = _FakeClient(
+        positions=[
+            {
+                "positionId": "p-cache",
+                "symbol": "MLNUSDT",
+                "side": "SELL",
+                "qty": "1",
+                "leverage": 10,
+                "ctime": "1778681838000",
+                "realizedPNL": "0",
+                "unrealizedPNL": "0.1",
+                "margin": "1",
+                "avgOpenPrice": "1",
+            }
+        ],
+    )
+    _enrichment_cache.clear()
+    async with AsyncSessionLocal() as session:
+        svc = TradingService(client=fake, session=session)  # type: ignore[arg-type]
+        await svc.list_orders(lookback_hours=_TEST_LOOKBACK_H)
+        calls_after_list = fake.bitunix_call_count
+        await svc.orders_pnl_totals(lookback_hours=_TEST_LOOKBACK_H)
+    assert fake.bitunix_call_count == calls_after_list
 
 
 @pytest.mark.asyncio
