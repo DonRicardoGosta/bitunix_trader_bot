@@ -10,6 +10,8 @@ import pytest
 from app.services.entry_order_prep import (
     attach_full_position_tp_sl,
     position_id_from_place_order_response,
+    position_qty_from_row,
+    resolve_open_position_for_exit,
     resolve_open_position_id,
 )
 
@@ -69,6 +71,32 @@ async def test_position_id_from_place_order_response_helper() -> None:
         )
         == "abc123"
     )
+
+
+def test_position_qty_from_row_reads_hold_vol() -> None:
+    assert position_qty_from_row({"symbol": "PNUTUSDT", "holdVol": "-12.5"}) == Decimal(
+        "12.5"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_open_position_for_exit_returns_id_and_qty() -> None:
+    client = AsyncMock()
+    client.get_positions.return_value = {
+        "data": [
+            {
+                "symbol": "IRYSUSDT",
+                "side": "SELL",
+                "positionId": "p-irys",
+                "qty": "7.25",
+            }
+        ]
+    }
+    pid, qty = await resolve_open_position_for_exit(
+        client, symbol="IRYSUSDT", side="SELL", max_attempts=1, delay_seconds=0
+    )
+    assert pid == "p-irys"
+    assert qty == Decimal("7.25")
 
 
 @pytest.mark.asyncio

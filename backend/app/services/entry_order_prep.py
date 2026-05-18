@@ -277,7 +277,32 @@ async def _wait_entry_order_history_row(
     return None
 
 
-async def resolve_open_position_id(
+def position_qty_from_row(row: dict[str, Any]) -> Decimal:
+    """Nyitott pozíció méret a Bitunix pozíciósorból (abszolút érték)."""
+    sym = str(row.get("symbol", "")).upper() or "?"
+    for key in (
+        "qty",
+        "positionAmt",
+        "positionQty",
+        "holdVol",
+        "size",
+        "volume",
+        "positionSize",
+        "maxQty",
+    ):
+        val = row.get(key)
+        if val is None:
+            continue
+        try:
+            qty = Decimal(str(val))
+        except Exception:
+            continue
+        if qty != 0:
+            return abs(qty)
+    raise OpenEntryPreparationError(f"Pozíció mérete nem olvasható: {sym}")
+
+
+async def _resolve_open_position_row(
     client: BitunixClient,
     *,
     symbol: str,
@@ -286,8 +311,8 @@ async def resolve_open_position_id(
     place_order_response: dict[str, Any] | None = None,
     max_attempts: int | None = None,
     delay_seconds: float | None = None,
-) -> str:
-    """Nyitott pozíció ``positionId`` a belépő fill után (TP/SL position attach)."""
+) -> dict[str, Any]:
+    """Nyitott pozíció sor a tőzsdén (TP/SL attach vagy CLOSE mennyiséghez)."""
     settings = get_settings()
     default_attempts, default_delay = _position_tpsl_poll_settings(settings)
     attempts = max_attempts if max_attempts is not None else default_attempts
@@ -296,7 +321,7 @@ async def resolve_open_position_id(
     sym = symbol.upper()
     from_response = position_id_from_place_order_response(place_order_response)
     if from_response:
-        return from_response
+        return {"symbol": sym, "positionId": from_response}
 
     history_row: dict[str, Any] | None = None
     if client_order_id:
@@ -322,7 +347,7 @@ async def resolve_open_position_id(
                 )
             pid_hist = position_id_from_history_order_row(history_row)
             if pid_hist:
-                return pid_hist
+                return {"symbol": sym, "positionId": pid_hist}
 
     for attempt in range(attempts):
         raw = await client.get_positions(symbol=sym)
@@ -331,7 +356,7 @@ async def resolve_open_position_id(
         if picked is not None:
             pid = picked.get("positionId") or picked.get("position_id")
             if pid is not None:
-                return str(pid)
+                return picked
         if attempt + 1 < attempts:
             await asyncio.sleep(pause)
 
@@ -341,6 +366,59 @@ async def resolve_open_position_id(
     raise OpenEntryPreparationError(
         f"Nyitott pozíció nem található TP/SL rögzítéshez: {detail}"
     )
+
+
+async def resolve_open_position_id(
+    client: BitunixClient,
+    *,
+    symbol: str,
+    side: str,
+    client_order_id: str | None = None,
+    place_order_response: dict[str, Any] | None = None,
+    max_attempts: int | None = None,
+    delay_seconds: float | None = None,
+) -> str:
+    """Nyitott pozíció ``positionId`` a belépő fill után (TP/SL position attach)."""
+    row = await _resolve_open_position_row(
+        client,
+        symbol=symbol,
+        side=side,
+        client_order_id=client_order_id,
+        place_order_response=place_order_response,
+        max_attempts=max_attempts,
+        delay_seconds=delay_seconds,
+    )
+    pid = row.get("positionId") or row.get("position_id")
+    if pid is not None:
+        return str(pid)
+    raise OpenEntryPreparationError(
+        f"Nyitott pozíció nem található TP/SL rögzítéshez: {symbol.upper()} {side}"
+    )
+
+
+async def resolve_open_position_for_exit(
+    client: BitunixClient,
+    *,
+    symbol: str,
+    side: str,
+    max_attempts: int | None = None,
+    delay_seconds: float | None = None,
+) -> tuple[str, Decimal]:
+    """Nyitott pozíció azonosító + tényleges méret hold-window CLOSE-hoz."""
+    row = await _resolve_open_position_row(
+        client,
+        symbol=symbol,
+        side=side,
+        max_attempts=max_attempts,
+        delay_seconds=delay_seconds,
+    )
+    pid = row.get("positionId") or row.get("position_id")
+    if pid is None:
+        sym = symbol.upper()
+        raise OpenEntryPreparationError(
+            f"Nyitott pozíció nem található TP/SL rögzítéshez: {sym} {side}"
+        )
+    return str(pid), position_qty_from_row(row)
 
 
 async def attach_full_position_tp_sl(
