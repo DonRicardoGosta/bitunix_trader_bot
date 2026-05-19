@@ -1,7 +1,7 @@
 """TP/SL jelölt-kalibráció (7 napos backtest, :15 belépés).
 
 Algoritmus röviden:
-1. Top ``scan_limit`` (alap 200) abszolút 24h mozgó szimbólum, egyesével a
+1. Top ``scan_limit`` (alap 500) abszolút 24h mozgó szimbólum, egyesével a
    legnagyobbtól.
 2. Mindegyikre 7 nap 15 perces kline (paginált lekérés).
 3. Fix TP/SL margin-ROI variációk (50/50, 100/50, 150/100, 200/100) – csak

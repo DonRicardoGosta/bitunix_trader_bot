@@ -120,7 +120,7 @@ async def list_run_symbols(
     symbol: str | None = None,
     qualified_only: bool | None = None,
     order_by: str = "scan_rank",
-    limit: int = 200,
+    limit: int = 500,
     offset: int = 0,
     session: AsyncSession = Depends(get_db),
 ) -> dict:

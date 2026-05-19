@@ -40,8 +40,9 @@ async def test_default_config_when_db_empty() -> None:
     async with AsyncSessionLocal() as session:
         cfg = await get_top_signal_entries_config(session)
     assert cfg.count == DEFAULT_TOP_SIGNAL_ENTRIES_CONFIG.count
-    assert cfg.kline_lookahead == 1000
-    assert cfg.wf_gate_enabled is True
+    assert cfg.scan_limit == 500
+    assert cfg.kline_lookahead == 200
+    assert cfg.wf_gate_enabled is False
     assert cfg.wf_lookback_minutes == 4320
 
 

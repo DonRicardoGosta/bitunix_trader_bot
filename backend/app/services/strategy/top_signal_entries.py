@@ -8,20 +8,21 @@ csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 * A 24h ticker alapján van **range** adat, és az ár a mozgás irányához illő
   extrém zónában van (long: felső ``range_threshold``, short: alsó zóna).
 * A **|24h % változás|** ≥ konfigurálható minimum.
-* **Walk-forward gate (opcionális):** ha a runtime konfig ``wf_gate_enabled`` be van kapcsolva,
+* **Kalibráció (alap):** ha ``wf_gate_enabled`` ki van kapcsolva (alapértelmezés),
+  a legutóbbi sikeres 7 napos backtest kalibráció szűri a mozgókat és adja a
+  szimbólumonkénti TP/SL ROI-t (≥80% TP win variáció).
+* **Walk-forward gate (opcionális):** ha ``wf_gate_enabled`` be van kapcsolva,
   a kline lekérés a ``plan_kline_interval(WF_LOOKBACK)`` szerinti intervallum/limit
   (alap 48h) alapján történik; minden jelöltre lefut a coin-analyze WF variációs
-  ajánlás. Csak akkor nyitunk, ha van **ajánlott** variáció (≥80% TP win cél,
-  profil + 48h aktivitás; feloldatlan trade nem számít sikernek), a WF irány egyezik a kline belépővel, és a TP/SL
-  a WF ``best_current_signal`` százalékai alapján kerül számításra (nem
-  kalibrációból).
+  ajánlás. Csak akkor nyitunk, ha van **ajánlott** variáció, a WF irány egyezik
+  a kline belépővel, és a TP/SL a WF százalékai alapján kerül számításra.
 * A **utolsó lezárt gyertya** (a lista utolsó előtti eleme) **megerősíti** az
   irányt: long esetén bullish zárás és záró > előző gyertya maximuma;
   shortnál bearish zárás és záró < előző gyertya minimuma.
 
-Irány: **BUY** (long) és **SELL** (short) is engedélyezett. TP/SL: WF gate
-bekapcsolva a javasolt variáció százalékai; különben kalibráció / ROI fallback
-+ ``compute_tp_sl_prices_from_move_pct`` (kalibráció / ROI fallback).
+Irány: **BUY** (long) és **SELL** (short) is engedélyezett. TP/SL: alapból
+kalibráció backtest variáció; WF gate bekapcsolva a WF százalékai; egyébként
+ROI fallback + ``compute_tp_sl_prices_from_move_pct``.
 """
 
 from __future__ import annotations

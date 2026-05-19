@@ -37,7 +37,9 @@ def test_top_signal_entries_config_get_put() -> None:
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["config"]["count"] == 10
-        assert body["config"]["kline_lookahead"] == 1000
+        assert body["config"]["scan_limit"] == 500
+        assert body["config"]["kline_lookahead"] == 200
+        assert body["config"]["wf_gate_enabled"] is False
         assert body["enabled"] is True
         assert body["live_trading"] is False
 

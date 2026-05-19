@@ -296,7 +296,7 @@ async def list_symbol_runs_for_calibration(
     *,
     symbol: str | None = None,
     qualified_only: bool | None = None,
-    limit: int = 200,
+    limit: int = 500,
     offset: int = 0,
     order_by: str = "scan_rank",
 ) -> tuple[list[TpSlCalibrationSymbolRun], int]:

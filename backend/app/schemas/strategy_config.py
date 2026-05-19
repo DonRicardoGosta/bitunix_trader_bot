@@ -11,8 +11,8 @@ class TopSignalEntriesConfig(BaseModel):
     """Effektív stratégia paraméterek — alapértelmezés kódban, felülírás DB-ben."""
 
     count: int = Field(ge=1, le=100, default=10)
-    scan_limit_max: int = Field(ge=1, le=5000, default=200)
-    scan_limit: int = Field(ge=1, le=5000, default=200)
+    scan_limit_max: int = Field(ge=1, le=5000, default=1000)
+    scan_limit: int = Field(ge=1, le=5000, default=500)
     kline_lookahead: int = Field(ge=1, le=5000, default=200)
     kline_interval: str = "15m"
     kline_limit: int = Field(ge=3, le=500, default=80)
@@ -20,7 +20,7 @@ class TopSignalEntriesConfig(BaseModel):
     min_abs_change_pct: str = "1.0"
     range_threshold: str = "0.60"
     max_kline_concurrency: int = Field(ge=1, le=50, default=10)
-    wf_gate_enabled: bool = True
+    wf_gate_enabled: bool = False
     wf_lookback_minutes: int = Field(ge=60, le=20160, default=4320)
     wf_cooldown_minutes: int = Field(ge=0, le=10080, default=60)
     wf_choppiness_max: str = "1.72"

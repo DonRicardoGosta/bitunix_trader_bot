@@ -90,7 +90,7 @@ export default function CalibrationPage() {
       if (calId) {
         const sr = await api.calibrationSymbolRuns(calId, {
           order_by: "max_win_rate",
-          limit: 200,
+          limit: 500,
         });
         setSymbolRuns(sr.items);
         setSymbolRunsTotal(sr.total);
@@ -137,7 +137,7 @@ export default function CalibrationPage() {
         <CardHeader>
           <CardTitle>Jelölt-kalibráció (7 nap backtest)</CardTitle>
           <span className="text-xs text-muted">
-            Top 200 mozgó · belépés óránként :15 · TP/SL variációk · ≥80% win
+            Top 500 mozgó · belépés óránként :15 · TP/SL variációk · ≥80% win
           </span>
         </CardHeader>
         <CardContent>

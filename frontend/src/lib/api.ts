@@ -926,7 +926,7 @@ export const api = {
       usp.set("qualified_only", String(params.qualified_only));
     }
     if (params?.order_by) usp.set("order_by", params.order_by);
-    usp.set("limit", String(params?.limit ?? 200));
+    usp.set("limit", String(params?.limit ?? 500));
     usp.set("offset", String(params?.offset ?? 0));
     const q = usp.toString();
     return request<{
