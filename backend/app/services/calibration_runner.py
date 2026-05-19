@@ -1,11 +1,8 @@
 """Kalibrációs scheduler és perzisztens állapot lekérdezése.
 
-Két felelősség:
-1. ``CalibrationRunner`` – asyncio task, ami az induláskor egyszer lefuttatja
-   a kalibrációt, majd óránként (vagy a beállított intervallumban) ismét.
-2. ``get_latest_successful_calibration()`` – a stratégia és az API ezen
-   keresztül nézi meg, hogy van-e érvényes kalibráció. A "trading
-   engedélyezett" állapot ennek a függvénynek a kimenetén áll vagy bukik.
+A ``CalibrationRunner`` minden óra **:30**-kor indul (ha van szabad slot),
+és annyi jelöltet keres, amennyi pozícióhely üres (max. a stratégia
+``count`` értéke).
 """
 
 from __future__ import annotations
@@ -33,57 +30,131 @@ from app.services.calibration import (
     CalibrationService,
     load_result_from_summary,
 )
-from app.services.hold_window import hold_window_from_strategy_config
+from app.services.candidate_backtest import BACKTEST_LOOKBACK_DAYS
 from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 from app.services.strategy_runtime_config import get_top_signal_entries_config
 
 
+def seconds_until_next_half_hour(now: datetime | None = None) -> float:
+    """Másodperc a következő óra :30 percéig (UTC)."""
+    now = now or datetime.now(UTC)
+    target = now.replace(minute=30, second=0, microsecond=0)
+    if now.minute > 30 or (now.minute == 30 and now.second > 0):
+        target += timedelta(hours=1)
+    elif now.minute < 30:
+        pass
+    elif now.second == 0 and now.microsecond == 0:
+        return 0.0
+    delta = (target - now).total_seconds()
+    return max(0.0, delta)
+
+
+async def count_open_strategy_slots(
+    client: BitunixClient,
+    *,
+    target_slots: int,
+) -> tuple[int, int]:
+    """``(nyitott_pozíciók, kitöltendő_slot)``."""
+    from app.services.strategy.mover_ranking import parse_open_position_symbols
+
+    try:
+        pos_raw = await client.get_positions()
+        open_syms = parse_open_position_symbols(pos_raw)
+    except Exception:  # noqa: BLE001
+        open_syms = set()
+    total_open = len(open_syms)
+    need = max(0, target_slots - total_open)
+    return total_open, need
+
+
 async def _build_service(
-    client: BitunixClient, session: AsyncSession
+    client: BitunixClient,
+    session: AsyncSession,
+    *,
+    candidates_target: int,
+    scan_limit: int,
 ) -> CalibrationService:
-    settings = get_settings()
-    tse_cfg = await get_top_signal_entries_config(session)
-    hold_params = hold_window_from_strategy_config(tse_cfg)
-    lookback = settings.calibration_lookback_minutes
-    if hold_params.enabled:
-        lookback = max(
-            lookback,
-            hold_params.max_minutes + 120,
-        )
+    lookback_minutes = BACKTEST_LOOKBACK_DAYS * 24 * 60
     return CalibrationService(
         client=client,
-        lookback_minutes=lookback,
-        top_n=settings.calibration_top_n,
-        tp_atr_mult=Decimal(settings.calibration_tp_atr_mult),
-        sl_atr_mult=Decimal(settings.calibration_sl_atr_mult),
-        kline_interval=settings.calibration_kline_interval,
-        hold_params=hold_params,
-        wf_choppiness_max=Decimal(tse_cfg.wf_choppiness_max),
-        wf_cooldown_minutes=int(tse_cfg.wf_cooldown_minutes),
+        lookback_minutes=lookback_minutes,
+        top_n=scan_limit,
+        candidates_target=candidates_target,
+        kline_interval="15m",
+        wf_choppiness_max=Decimal(
+            (await get_top_signal_entries_config(session)).wf_choppiness_max
+        ),
     )
 
 
-async def run_calibration(*, triggered_by: str = "scheduler") -> dict[str, object]:
-    """Egy teljes kalibrációs futás (új ``TpSlCalibration`` rekord)."""
+async def run_calibration(
+    *,
+    triggered_by: str = "scheduler",
+    candidates_target: int | None = None,
+    scan_limit: int | None = None,
+) -> dict[str, object]:
+    """Egy teljes jelölt-kalibrációs futás (új ``TpSlCalibration`` rekord)."""
     settings = get_settings()
+    async with AsyncSessionLocal() as session:
+        tse_cfg = await get_top_signal_entries_config(session)
+        target_slots = max(1, int(tse_cfg.count))
+        scan = scan_limit if scan_limit is not None else int(tse_cfg.scan_limit)
+
+        if candidates_target is None:
+            client_probe = await create_bitunix_client(session, settings=settings)
+            try:
+                _open, need = await count_open_strategy_slots(
+                    client_probe, target_slots=target_slots
+                )
+                candidates_target = need
+            finally:
+                await client_probe.close()
+
+    lookback_minutes = BACKTEST_LOOKBACK_DAYS * 24 * 60
     async with AsyncSessionLocal() as session:
         row = TpSlCalibration(
             status=CalibrationStatus.RUNNING,
             triggered_by=triggered_by,
-            lookback_minutes=settings.calibration_lookback_minutes,
-            top_n=settings.calibration_top_n,
+            lookback_minutes=lookback_minutes,
+            top_n=scan,
         )
         session.add(row)
         await session.flush()
         row_id = row.id
         await session.commit()
 
+    if candidates_target is not None and candidates_target <= 0:
+        async with AsyncSessionLocal() as session:
+            db_row = await session.get(TpSlCalibration, row_id)
+            if db_row is not None:
+                db_row.finished_at = datetime.now(UTC)
+                db_row.status = CalibrationStatus.SUCCESS
+                db_row.summary = {
+                    "mode": "candidate_backtest",
+                    "candidates_target": 0,
+                    "candidates_found": 0,
+                    "skipped_reason": "slots_full",
+                }
+                await session.commit()
+        await publish_invalidate(DEFAULT_INVALIDATION_TOPICS)
+        return {
+            "calibration_id": row_id,
+            "status": CalibrationStatus.SUCCESS.value,
+            "skipped": True,
+            "reason": "slots_full",
+        }
+
     error: str | None = None
     result: CalibrationResult | None = None
     async with AsyncSessionLocal() as session:
         client = await create_bitunix_client(session, settings=settings)
         try:
-            service = await _build_service(client, session)
+            service = await _build_service(
+                client,
+                session,
+                candidates_target=int(candidates_target or 0),
+                scan_limit=scan,
+            )
             result = await service.run()
         except Exception as exc:  # noqa: BLE001
             error = f"{type(exc).__name__}: {exc}"
@@ -98,11 +169,9 @@ async def run_calibration(*, triggered_by: str = "scheduler") -> dict[str, objec
             if error:
                 db_row.status = CalibrationStatus.FAILED
                 db_row.error = error
-            elif result is None or not result.per_symbol:
+            elif result is None:
                 db_row.status = CalibrationStatus.FAILED
-                db_row.error = "no_symbols_calibrated"
-                if result is not None:
-                    db_row.summary = result.to_dict()
+                db_row.error = "no_result"
             else:
                 db_row.status = CalibrationStatus.SUCCESS
                 db_row.summary = result.to_dict()
@@ -113,16 +182,20 @@ async def run_calibration(*, triggered_by: str = "scheduler") -> dict[str, objec
                 if db_row.status == CalibrationStatus.FAILED
                 else AuditLevel.INFO,
                 message=(
-                    f"Kalibráció {db_row.status.value} (triggered_by={triggered_by})."
+                    f"Kalibráció {db_row.status.value} (triggered_by={triggered_by}, "
+                    f"jelöltek={result.candidates_found if result else 0}/"
+                    f"{result.candidates_target if result else 0})."
                 ),
                 payload={
                     "calibration_id": row_id,
                     "status": db_row.status.value,
-                    "lookback_minutes": db_row.lookback_minutes,
-                    "top_n": db_row.top_n,
-                    "calibrated_symbols": (len(result.per_symbol) if result else 0),
-                    "failed_symbols": (len(result.failed_symbols) if result else 0),
-                    "global": (result.to_dict()["global"] if result else None),
+                    "candidates_target": (
+                        result.candidates_target if result else None
+                    ),
+                    "candidates_found": (
+                        result.candidates_found if result else None
+                    ),
+                    "scanned_symbols": result.scanned_symbols if result else None,
                     "error": db_row.error,
                 },
             )
@@ -144,11 +217,7 @@ async def get_latest_successful_calibration(
     *,
     max_age_minutes: int | None = None,
 ) -> TpSlCalibration | None:
-    """A legutóbbi SIKERES kalibráció lekérdezése.
-
-    Ha ``max_age_minutes`` meg van adva, akkor csak akkor adja vissza,
-    ha a finished_at fiatalabb a megadott küszöbnél.
-    """
+    """A legutóbbi SIKERES kalibráció lekérdezése."""
     stmt = (
         sa.select(TpSlCalibration)
         .where(TpSlCalibration.status == CalibrationStatus.SUCCESS)
@@ -174,12 +243,7 @@ async def get_latest_successful_calibration(
 async def get_active_calibration_result(
     session: AsyncSession,
 ) -> CalibrationResult | None:
-    """A trading szempontjából 'aktív' kalibráció betöltve in-memory DTO-ba.
-
-    A "max age" alapból = ``calibration_interval_seconds × 2`` (1h-ás futásnál
-    = 2h). Ezzel akkor sem trade-elünk vakon, ha a scheduler valamiért
-    megakadt.
-    """
+    """A trading szempontjából aktív kalibráció betöltve."""
     settings = get_settings()
     max_age = max(
         settings.calibration_interval_seconds * 2 // 60,
@@ -192,7 +256,7 @@ async def get_active_calibration_result(
 
 
 class CalibrationRunner:
-    """Asyncio scheduler ami az induláskor és aztán óránként kalibrál."""
+    """Asyncio scheduler: minden óra :30-kor, ha van szabad pozícióslot."""
 
     def __init__(self, *, interval_seconds: int = 3600) -> None:
         self._interval = max(60, int(interval_seconds))
@@ -212,8 +276,8 @@ class CalibrationRunner:
         self._task = asyncio.create_task(self._loop(), name="calibration-runner")
         await audit.record_isolated(
             "calibration.runner.started",
-            message=f"Kalibrációs scheduler elindítva ({self._interval}s).",
-            payload={"interval_seconds": self._interval},
+            message="Kalibrációs scheduler elindítva (óra :30, szabad slot).",
+            payload={"schedule": "hourly_at_minute_30"},
         )
 
     async def stop(self) -> None:
@@ -229,7 +293,6 @@ class CalibrationRunner:
         )
 
     async def wait_initial(self, timeout_seconds: float | None = None) -> bool:
-        """Blokkol amíg az első futás be nem fejeződik (vagy timeout)."""
         try:
             await asyncio.wait_for(self._initial_done.wait(), timeout=timeout_seconds)
             return True
@@ -239,6 +302,12 @@ class CalibrationRunner:
     async def _loop(self) -> None:
         try:
             while not self._stop.is_set():
+                wait_s = seconds_until_next_half_hour()
+                if wait_s > 0:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._stop.wait(), timeout=wait_s)
+                    if self._stop.is_set():
+                        break
                 try:
                     await run_calibration(triggered_by="scheduler")
                 except Exception as exc:  # noqa: BLE001
@@ -249,7 +318,9 @@ class CalibrationRunner:
                     )
                 finally:
                     self._initial_done.set()
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
+                wait_next = seconds_until_next_half_hour()
+                if wait_next > 0:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._stop.wait(), timeout=wait_next)
         except asyncio.CancelledError:
             return

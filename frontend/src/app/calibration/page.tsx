@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type CalibrationRun } from "@/lib/api";
@@ -9,6 +9,58 @@ import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 
 type Latest = Awaited<ReturnType<typeof api.calibrationLatest>>;
 
+type QualifiedCandidate = {
+  symbol: string;
+  rank: number;
+  abs_change_24h_pct: string;
+  tp_roi_pct: string;
+  sl_roi_pct: string;
+  backtest_win_rate_pct: string;
+  variation_label: string;
+  trade_count: number;
+  variations?: VariationRow[];
+};
+
+type VariationRow = {
+  label: string;
+  tp_roi_pct: string;
+  sl_roi_pct: string;
+  resolved_tp_win_rate_pct: string | null;
+  meets_target: boolean;
+  summary?: {
+    total_trades: number;
+    tp_wins: number;
+    sl_losses: number;
+    no_result: number;
+  };
+};
+
+type CalibrationSummary = {
+  mode?: string;
+  candidates_target?: number;
+  candidates_found?: number;
+  scanned_symbols?: number;
+  qualified_candidates?: QualifiedCandidate[];
+  global?: {
+    tp_move_pct?: string | null;
+    sl_move_pct?: string | null;
+    symbol_count?: number;
+  };
+  per_symbol?: Record<
+    string,
+    {
+      tp_move_pct: string;
+      sl_move_pct: string;
+      tp_roi_pct?: string | null;
+      sl_roi_pct?: string | null;
+      backtest_win_rate_pct?: string | null;
+      variation_label?: string | null;
+      abs_change_24h_pct?: string;
+      backtest_variations?: VariationRow[];
+    }
+  >;
+};
+
 export default function CalibrationPage() {
   const { refreshIntervalMs } = useRefreshInterval();
   const calEpoch = useLiveEpoch("calibration");
@@ -16,6 +68,7 @@ export default function CalibrationPage() {
   const [runs, setRuns] = useState<CalibrationRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -49,17 +102,17 @@ export default function CalibrationPage() {
     }
   }
 
-  const status = latest?.latest_successful?.status ?? null;
   const tradingEnabled = latest?.trading_enabled ?? false;
+  const summary = latest?.latest_successful?.summary as CalibrationSummary | undefined;
+  const qualified = summary?.qualified_candidates ?? [];
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>TP/SL Kalibráció</CardTitle>
+          <CardTitle>Jelölt-kalibráció (7 nap backtest)</CardTitle>
           <span className="text-xs text-muted">
-            top {latest?.latest?.top_n ?? "?"} coin, lookback {" "}
-            {latest?.latest?.lookback_minutes ?? "?"} perc
+            Top 200 mozgó · belépés óránként :15 · TP/SL variációk · ≥80% win
           </span>
         </CardHeader>
         <CardContent>
@@ -82,19 +135,39 @@ export default function CalibrationPage() {
               tone={latest?.latest_successful ? "ok" : "bad"}
             />
             <Status
-              label="Aktuális státusz"
-              value={status ?? "—"}
-              tone={
-                status === "SUCCESS" ? "ok" : status === "FAILED" ? "bad" : "neutral"
+              label="Következő futás (:30)"
+              value={
+                latest?.next_run_after
+                  ? new Date(latest.next_run_after).toLocaleString("hu-HU", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : "—"
               }
+              tone="neutral"
             />
           </div>
-
-          <div className="flex items-center justify-between">
+          {summary && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
+              <Metric
+                label="Jelöltek"
+                value={`${summary.candidates_found ?? 0} / ${summary.candidates_target ?? "?"}`}
+              />
+              <Metric
+                label="Átvizsgált coin"
+                value={String(summary.scanned_symbols ?? 0)}
+              />
+              <Metric
+                label="Lookback"
+                value={`${Math.round((latest?.latest_successful?.lookback_minutes ?? 0) / 60 / 24)} nap`}
+              />
+              <Metric label="Mód" value={summary.mode ?? "—"} />
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-4">
             <p className="text-sm text-muted">
-              A kalibrációs scheduler az app indulásakor egyszer, majd óránként
-              fut. A trading csak akkor engedélyezett, ha legalább egy friss
-              SIKERES kalibráció van.
+              A scheduler minden óra <strong>:30</strong>-kor indul, ha van szabad
+              pozícióslot. Csak a backtesten átment coinokra nyit a stratégia.
             </p>
             <Button
               variant="primary"
@@ -108,91 +181,70 @@ export default function CalibrationPage() {
         </CardContent>
       </Card>
 
-      {latest?.latest_successful?.summary?.global && (
+      {qualified.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Globális TP/SL célok (medián)</CardTitle>
+            <CardTitle>Minősített jelöltek (≥80% TP win)</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-              <Metric
-                label="TP move %"
-                value={latest.latest_successful.summary.global.tp_move_pct ?? "—"}
-              />
-              <Metric
-                label="SL move %"
-                value={latest.latest_successful.summary.global.sl_move_pct ?? "—"}
-              />
-              <Metric
-                label="Kalibrált coin"
-                value={String(
-                  latest.latest_successful.summary.global.symbol_count ?? 0,
-                )}
-              />
-              <Metric
-                label="R:R"
-                value={(() => {
-                  const tp = parseFloat(
-                    latest.latest_successful.summary.global.tp_move_pct ?? "0",
-                  );
-                  const sl = parseFloat(
-                    latest.latest_successful.summary.global.sl_move_pct ?? "0",
-                  );
-                  if (!sl) return "—";
-                  return `${(tp / sl).toFixed(2)}:1`;
-                })()}
-              />
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase text-muted border-b border-border">
+                  <tr>
+                    <th className="text-left py-2 pr-3">#</th>
+                    <th className="text-left py-2 pr-3">Szimbólum</th>
+                    <th className="text-right py-2 pr-3">Win %</th>
+                    <th className="text-right py-2 pr-3">TP ROI</th>
+                    <th className="text-right py-2 pr-3">SL ROI</th>
+                    <th className="text-left py-2 pr-3">Variáció</th>
+                    <th className="text-right py-2 pr-3">|24h %|</th>
+                    <th className="text-right py-2 pr-3">Trade</th>
+                    <th className="text-left py-2 pr-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {qualified.map((c) => (
+                    <Fragment key={c.symbol}>
+                      <tr
+                        className="border-b border-border/50 cursor-pointer hover:bg-bg-subtle/50"
+                        onClick={() =>
+                          setExpandedSymbol(
+                            expandedSymbol === c.symbol ? null : c.symbol,
+                          )
+                        }
+                      >
+                        <td className="py-2 pr-3 num text-muted">{c.rank}</td>
+                        <td className="py-2 pr-3 font-medium">{c.symbol}</td>
+                        <td className="py-2 pr-3 text-right num text-profit">
+                          {c.backtest_win_rate_pct}%
+                        </td>
+                        <td className="py-2 pr-3 text-right num">{c.tp_roi_pct}%</td>
+                        <td className="py-2 pr-3 text-right num">{c.sl_roi_pct}%</td>
+                        <td className="py-2 pr-3 text-muted">{c.variation_label}</td>
+                        <td className="py-2 pr-3 text-right num">
+                          {c.abs_change_24h_pct}%
+                        </td>
+                        <td className="py-2 pr-3 text-right num">{c.trade_count}</td>
+                        <td className="py-2 pr-3 text-xs text-muted">
+                          {expandedSymbol === c.symbol ? "▲" : "▼"} variációk
+                        </td>
+                      </tr>
+                      {expandedSymbol === c.symbol &&
+                        (c.variations?.length ?? 0) > 0 && (
+                          <tr className="bg-bg-subtle/30">
+                            <td colSpan={9} className="py-2 px-2">
+                              <VariationTable rows={c.variations ?? []} />
+                            </td>
+                          </tr>
+                        )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </CardContent>
         </Card>
       )}
-
-      {latest?.latest_successful?.summary?.per_symbol &&
-        Object.keys(latest.latest_successful.summary.per_symbol).length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Per-szimbólum kalibráció</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-xs uppercase text-muted border-b border-border">
-                    <tr>
-                      <th className="text-left py-2 pr-3">Szimbólum</th>
-                      <th className="text-right py-2 pr-3">ATR %</th>
-                      <th className="text-right py-2 pr-3">TP move %</th>
-                      <th className="text-right py-2 pr-3">SL move %</th>
-                      <th className="text-right py-2 pr-3">|24h %|</th>
-                      <th className="text-right py-2 pr-3">Mintaszám</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(
-                      latest.latest_successful.summary.per_symbol,
-                    ).map(([sym, s]) => (
-                      <tr key={sym} className="border-b border-border/50">
-                        <td className="py-2 pr-3 font-medium">{sym}</td>
-                        <td className="py-2 pr-3 text-right num">{s.atr_pct}</td>
-                        <td className="py-2 pr-3 text-right num text-profit">
-                          {s.tp_move_pct}
-                        </td>
-                        <td className="py-2 pr-3 text-right num text-loss">
-                          {s.sl_move_pct}
-                        </td>
-                        <td className="py-2 pr-3 text-right num text-muted">
-                          {s.abs_change_24h_pct}
-                        </td>
-                        <td className="py-2 pr-3 text-right num text-muted">
-                          {s.samples}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
       <Card>
         <CardHeader>
@@ -211,40 +263,43 @@ export default function CalibrationPage() {
                     <th className="text-left py-2 pr-3">Indítás</th>
                     <th className="text-left py-2 pr-3">Státusz</th>
                     <th className="text-left py-2 pr-3">Forrás</th>
-                    <th className="text-right py-2 pr-3">Lookback</th>
-                    <th className="text-right py-2 pr-3">Top N</th>
-                    <th className="text-left py-2 pr-3">Hiba / összegzés</th>
+                    <th className="text-right py-2 pr-3">Jelöltek</th>
+                    <th className="text-right py-2 pr-3">Scan</th>
+                    <th className="text-left py-2 pr-3">Összegzés</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((r) => (
-                    <tr key={r.id} className="border-b border-border/50 align-top">
-                      <td className="py-2 pr-3 text-muted num">
-                        {r.started_at
-                          ? new Date(r.started_at).toLocaleString("hu-HU")
-                          : "—"}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <StatusBadge status={r.status} />
-                      </td>
-                      <td className="py-2 pr-3 text-muted">{r.triggered_by}</td>
-                      <td className="py-2 pr-3 text-right num">
-                        {r.lookback_minutes}m
-                      </td>
-                      <td className="py-2 pr-3 text-right num">{r.top_n}</td>
-                      <td className="py-2 pr-3 text-xs">
-                        {r.error ? (
-                          <span className="text-loss">{r.error}</span>
-                        ) : (
-                          <span className="text-muted">
-                            {r.summary?.global?.symbol_count ?? 0} symbol,{" "}
-                            tp {r.summary?.global?.tp_move_pct ?? "—"}% / sl{" "}
-                            {r.summary?.global?.sl_move_pct ?? "—"}%
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {runs.map((r) => {
+                    const s = r.summary as CalibrationSummary | undefined;
+                    return (
+                      <tr key={r.id} className="border-b border-border/50 align-top">
+                        <td className="py-2 pr-3 text-muted num">
+                          {r.started_at
+                            ? new Date(r.started_at).toLocaleString("hu-HU")
+                            : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <StatusBadge status={r.status} />
+                        </td>
+                        <td className="py-2 pr-3 text-muted">{r.triggered_by}</td>
+                        <td className="py-2 pr-3 text-right num">
+                          {s?.candidates_found ?? "—"}/{s?.candidates_target ?? "—"}
+                        </td>
+                        <td className="py-2 pr-3 text-right num">
+                          {s?.scanned_symbols ?? "—"}
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted">
+                          {r.error ? (
+                            <span className="text-loss">{r.error}</span>
+                          ) : (
+                            <span>
+                              {s?.qualified_candidates?.length ?? 0} minősített
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -252,6 +307,44 @@ export default function CalibrationPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+
+function VariationTable({ rows }: { rows: VariationRow[] }) {
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted">
+          <th className="text-left py-1">Variáció</th>
+          <th className="text-right py-1">Win %</th>
+          <th className="text-right py-1">TP ROI</th>
+          <th className="text-right py-1">SL ROI</th>
+          <th className="text-right py-1">Trade</th>
+          <th className="text-center py-1">≥80%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((v) => (
+          <tr key={v.label} className="border-t border-border/30">
+            <td className="py-1">{v.label}</td>
+            <td className="py-1 text-right num">
+              {v.resolved_tp_win_rate_pct ?? "—"}%
+            </td>
+            <td className="py-1 text-right num">{v.tp_roi_pct}%</td>
+            <td className="py-1 text-right num">{v.sl_roi_pct}%</td>
+            <td className="py-1 text-right num">{v.summary?.total_trades ?? "—"}</td>
+            <td className="py-1 text-center">
+              {v.meets_target ? (
+                <span className="text-profit">✓</span>
+              ) : (
+                <span className="text-muted">—</span>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

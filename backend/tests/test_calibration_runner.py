@@ -20,6 +20,7 @@ from app.services.calibration_runner import (
     get_active_calibration_result,
     get_latest_successful_calibration,
     run_calibration,
+    seconds_until_next_half_hour,
 )
 
 
@@ -55,6 +56,17 @@ def _candle(o: str, h: str, low: str, c: str, t: int) -> dict:
     return {"open": o, "high": h, "low": low, "close": c, "time": t}
 
 
+def test_seconds_until_next_half_hour() -> None:
+    from datetime import UTC, datetime
+
+    at_29 = datetime(2025, 1, 1, 10, 29, 0, tzinfo=UTC)
+    assert 0 < seconds_until_next_half_hour(at_29) <= 120
+    at_30 = datetime(2025, 1, 1, 10, 30, 0, tzinfo=UTC)
+    assert seconds_until_next_half_hour(at_30) == 0.0
+    at_45 = datetime(2025, 1, 1, 10, 45, 0, tzinfo=UTC)
+    assert seconds_until_next_half_hour(at_45) > 2400
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _create_schema() -> None:
     asyncio.run(_create_all())
@@ -65,45 +77,69 @@ async def _create_all() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
+def _synth_15m_klines(n: int = 80) -> list[dict]:
+    from datetime import UTC, datetime
+
+    from app.services.calibration import parse_klines
+
+    rows = []
+    for i in range(n):
+        h, m = divmod(i * 15, 60)
+        dt = datetime(2025, 6, 1, h % 24, m, 0, tzinfo=UTC)
+        ms = int(dt.timestamp() * 1000)
+        rows.append(_candle("100", "101", "99", "100.5", ms))
+    return parse_klines({"data": rows})
+
+
 @pytest.mark.asyncio
-async def test_calibration_service_run_calibrates_top_symbols() -> None:
-    """A service-nek a top-N szimbólumra kell kalibrációt készítenie."""
+async def test_calibration_service_run_calibrates_top_symbols(monkeypatch) -> None:
+    """Top mozgók közül a backtesten átment jelöltek kerülnek per_symbol-ba."""
+    from app.services import candidate_backtest as cb_mod
+    from app.services import kline_fetch as kf_mod
+
+    async def _fake_fetch(_client, symbol, **kwargs):
+        return _synth_15m_klines()
+
+    def _fake_eval(_klines, **kwargs):
+        return {
+            "ok": True,
+            "reason": "qualified",
+            "variations": [{"meets_target": True}],
+            "best_variation": {
+                "label": "TP100/SL50",
+                "tp_roi_pct": "100",
+                "sl_roi_pct": "50",
+                "resolved_tp_win_rate_pct": "85.00",
+                "summary": {"total_trades": 5},
+            },
+        }
+
+    monkeypatch.setattr(kf_mod, "fetch_lookback_klines", _fake_fetch)
+    monkeypatch.setattr(cb_mod, "evaluate_symbol_variations", _fake_eval)
+
     tickers = {
         "data": [
-            _ticker_pair("AAA", "110", "100"),  # +10%
-            _ticker_pair("BBB", "60", "100"),   # -40% (top)
-            _ticker_pair("CCC", "125", "100"),  # +25%
+            _ticker_pair("AAA", "110", "100"),
+            _ticker_pair("BBB", "60", "100"),
+            _ticker_pair("CCC", "125", "100"),
         ]
     }
-    klines = {
-        sym: {
-            "data": [
-                _candle("100", "100.5", "99.5", "100.1", 0),
-                _candle("100.1", "100.6", "99.6", "100.2", 1),
-                _candle("100.2", "100.7", "99.7", "100.3", 2),
-                _candle("100.3", "100.8", "99.8", "100.4", 3),
-            ]
-        }
-        for sym in ("AAA", "BBB", "CCC")
-    }
-    fake = _FakeClient(tickers=tickers, klines_by_symbol=klines)
+    fake = _FakeClient(tickers=tickers, klines_by_symbol={})
 
     service = CalibrationService(
         client=fake,  # type: ignore[arg-type]
-        lookback_minutes=10,
+        lookback_minutes=10080,
         top_n=2,
-        tp_atr_mult=Decimal("3"),
-        sl_atr_mult=Decimal("1.5"),
+        candidates_target=2,
     )
     result = await service.run()
 
     assert set(result.per_symbol.keys()) == {"BBB", "CCC"}
-    assert fake.kline_calls == ["BBB", "CCC"]
+    assert result.candidates_found == 2
     for sc in result.per_symbol.values():
-        assert sc.atr_pct > 0
-        assert sc.tp_move_pct > sc.sl_move_pct  # R:R = 3:1.5 = 2:1
+        assert sc.backtest_win_rate_pct is not None
+        assert sc.tp_roi_pct == Decimal("100")
     assert result.global_tp_move_pct is not None
-    assert result.global_sl_move_pct is not None
 
 
 @pytest.mark.asyncio
@@ -116,44 +152,71 @@ async def test_calibration_service_returns_empty_when_no_data() -> None:
 
 
 @pytest.mark.asyncio
-async def test_calibration_lookup_falls_back_to_global() -> None:
-    tickers = {"data": [_ticker_pair("AAA", "110", "100")]}
-    klines = {
-        "AAA": {
-            "data": [
-                _candle("100", "100.5", "99.5", "100.1", 0),
-                _candle("100.1", "100.6", "99.6", "100.2", 1),
-            ]
+async def test_calibration_lookup_falls_back_to_global(monkeypatch) -> None:
+    from app.services import candidate_backtest as cb_mod
+    from app.services import kline_fetch as kf_mod
+
+    async def _fake_fetch(_client, symbol, **kwargs):
+        return _synth_15m_klines()
+
+    def _fake_eval(_klines, **kwargs):
+        return {
+            "ok": True,
+            "variations": [],
+            "best_variation": {
+                "label": "TP50/SL50",
+                "tp_roi_pct": "50",
+                "sl_roi_pct": "50",
+                "resolved_tp_win_rate_pct": "80.00",
+                "summary": {"total_trades": 3},
+            },
         }
-    }
-    fake = _FakeClient(tickers=tickers, klines_by_symbol=klines)
-    service = CalibrationService(client=fake, top_n=1)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(kf_mod, "fetch_lookback_klines", _fake_fetch)
+    monkeypatch.setattr(cb_mod, "evaluate_symbol_variations", _fake_eval)
+
+    tickers = {"data": [_ticker_pair("AAA", "110", "100")]}
+    fake = _FakeClient(tickers=tickers, klines_by_symbol={})
+    service = CalibrationService(
+        client=fake, top_n=1, candidates_target=1  # type: ignore[arg-type]
+    )
     result = await service.run()
 
     direct = result.lookup("AAA")
     fallback = result.lookup("UNKNOWN")
     assert direct is not None
-    assert fallback is not None  # globális mediánnal pótolva
+    assert fallback is not None
     assert fallback == (result.global_tp_move_pct, result.global_sl_move_pct)
 
 
 @pytest.mark.asyncio
 async def test_run_calibration_persists_row_and_audit_events(monkeypatch) -> None:
     """A run_calibration() egy SIKERES TpSlCalibration rekordot ír DB-be."""
-    tickers = {"data": [_ticker_pair("AAA", "110", "100")]}
-    klines = {
-        "AAA": {
-            "data": [
-                _candle("100", "100.5", "99.5", "100.1", 0),
-                _candle("100.1", "100.6", "99.6", "100.2", 1),
-                _candle("100.2", "100.7", "99.7", "100.3", 2),
-            ]
-        }
-    }
-    fake = _FakeClient(tickers=tickers, klines_by_symbol=klines)
-
-    # Monkeypatcheljük a BitunixClient konstruktort hogy a fake-et adja vissza.
+    from app.services import candidate_backtest as cb_mod
     from app.services import calibration_runner as cr
+    from app.services import kline_fetch as kf_mod
+
+    async def _fake_fetch(_client, symbol, **kwargs):
+        return _synth_15m_klines()
+
+    def _fake_eval(_klines, **kwargs):
+        return {
+            "ok": True,
+            "variations": [],
+            "best_variation": {
+                "label": "TP50/SL50",
+                "tp_roi_pct": "50",
+                "sl_roi_pct": "50",
+                "resolved_tp_win_rate_pct": "90.00",
+                "summary": {"total_trades": 4},
+            },
+        }
+
+    monkeypatch.setattr(kf_mod, "fetch_lookback_klines", _fake_fetch)
+    monkeypatch.setattr(cb_mod, "evaluate_symbol_variations", _fake_eval)
+
+    tickers = {"data": [_ticker_pair("AAA", "110", "100")]}
+    fake = _FakeClient(tickers=tickers, klines_by_symbol={})
 
     class _ClientFactory:
         def __init__(self, *args, **kwargs):
@@ -162,13 +225,11 @@ async def test_run_calibration_persists_row_and_audit_events(monkeypatch) -> Non
         async def get_all_tickers(self):
             return await self._wrapped.get_all_tickers()
 
-        async def get_klines(self, symbol, **kwargs):
-            return await self._wrapped.get_klines(symbol, **kwargs)
+        async def get_positions(self):
+            return {"data": []}
 
         async def close(self):
             await self._wrapped.close()
-
-    monkeypatch.setattr(cr, "BitunixClient", _ClientFactory)
 
     async def _fake_create_client(session, *, settings=None):
         return _ClientFactory()
@@ -181,7 +242,11 @@ async def test_run_calibration_persists_row_and_audit_events(monkeypatch) -> Non
         await session.execute(sa.delete(AuditEvent))
         await session.commit()
 
-    response = await run_calibration(triggered_by="unit_test")
+    response = await run_calibration(
+        triggered_by="unit_test",
+        candidates_target=1,
+        scan_limit=5,
+    )
 
     assert response["status"] == CalibrationStatus.SUCCESS.value
     assert response["summary"]["per_symbol"]["AAA"]["tp_move_pct"]

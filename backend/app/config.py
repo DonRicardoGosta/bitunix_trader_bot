@@ -53,8 +53,8 @@ class Settings(BaseSettings):
     # -- TP/SL automatikus belövő / calibration --
     calibration_enabled: bool = True
     calibration_interval_seconds: int = 3600  # 1 óra
-    calibration_lookback_minutes: int = 120  # 2 óra
-    calibration_top_n: int = 20
+    calibration_lookback_minutes: int = 10080  # 7 nap (15m backtest)
+    calibration_top_n: int = 200
     calibration_kline_interval: str = "1m"
     calibration_tp_atr_mult: str = "3.0"
     calibration_sl_atr_mult: str = "1.5"

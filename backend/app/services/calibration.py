@@ -1,24 +1,15 @@
-"""TP/SL automatikus belövő (kalibrációs) service.
+"""TP/SL jelölt-kalibráció (7 napos backtest, :15 belépés).
 
 Algoritmus röviden:
-1. Lekérjük az összes 24h tickert és kiválasztjuk a **top N** szimbólumot
-   ``|24h % változás|`` alapján (konzisztens a top_signal_entries rangsorolással).
-2. Mindegyikre 2 órányi 1-perces kline-t (=120 gyertya) kérünk le.
-3. Kiszámoljuk a True Range-et (TR) és az ATR-t a closing ár %-ában.
-   Az ATR a recent realized volatility robusztus, klasszikus mértéke.
-4. TP target = ``ATR_pct × tp_atr_multiplier`` (alap: 3.0)
-   SL target = ``ATR_pct × sl_atr_multiplier`` (alap: 1.5)
-   → R:R ~ 2:1 (matematikailag pozitív várt érték még 40%-os hit rate-nél is).
-5. Tároljuk per-symbol és számolunk globális mediánt (fallback olyan
-   szimbólumokra, amiket a stratégia idő közben kiválaszt,
-   de nem volt a top-N-ben a kalibrációkor). A stratégia a **per-symbol
-   kiszámolt TP/SL move %%**-et használja; ha nincs ilyen rekord, a **globális
-   mediánt** (``CalibrationResult.lookup``).
-
-Megjegyzés: az output **price move %** (leverage-független). A stratégia
-ebből számol konkrét TP/SL árat: ``tp_price = entry × (1 + tp_pct/100)``
-LONG-nál. Ez tisztább, mint ROI % alapon dolgozni, és nem érzékeny a
-leverage változására két futtatás között.
+1. Top ``scan_limit`` (alap 200) abszolút 24h mozgó szimbólum, egyesével a
+   legnagyobbtól.
+2. Mindegyikre 7 nap 15 perces kline (paginált lekérés).
+3. Fix TP/SL margin-ROI variációk (50/50, 100/50, 150/100, 200/100) – csak
+   TP és SL zárhat; belépés csak óránként :15-kor.
+4. Ha legalább egy variáció ≥80%% TP win rate → jelölt; megállunk, ha elértük
+   a ``candidates_target`` darabot (szabad slot) vagy a scan végét.
+5. A summary ``qualified_candidates`` + per-symbol TP/SL move %% a stratégia
+   és a UI számára.
 """
 
 from __future__ import annotations
@@ -32,11 +23,12 @@ from typing import Any
 from app.bitunix.client import BitunixClient
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
 from app.services.hold_window import HoldWindowParams, optimize_hold_window_for_sequence
+from app.services.tpsl import implied_price_move_pct_from_roi
 
 
 @dataclass
 class SymbolCalibration:
-    """Egy szimbólum kalibrációs eredménye."""
+    """Egy szimbólum kalibrációs eredménye (backtest jelölt)."""
 
     symbol: str
     tp_move_pct: Decimal
@@ -47,6 +39,11 @@ class SymbolCalibration:
     abs_change_24h_pct: Decimal
     best_hold_minutes: int | None = None
     hold_good_rate_pct: Decimal | None = None
+    tp_roi_pct: Decimal | None = None
+    sl_roi_pct: Decimal | None = None
+    backtest_win_rate_pct: Decimal | None = None
+    variation_label: str | None = None
+    backtest_variations: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -59,15 +56,25 @@ class CalibrationResult:
     global_tp_move_pct: Decimal | None = None
     global_sl_move_pct: Decimal | None = None
     failed_symbols: list[dict[str, Any]] = field(default_factory=list)
+    qualified_candidates: list[dict[str, Any]] = field(default_factory=list)
     lookback_minutes: int = 120
     top_n: int = 20
     tp_atr_mult: Decimal = Decimal("3.0")
     sl_atr_mult: Decimal = Decimal("1.5")
+    candidates_target: int = 0
+    candidates_found: int = 0
+    scanned_symbols: int = 0
+    mode: str = "candidate_backtest"
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "mode": self.mode,
             "lookback_minutes": self.lookback_minutes,
             "top_n": self.top_n,
+            "candidates_target": self.candidates_target,
+            "candidates_found": self.candidates_found,
+            "scanned_symbols": self.scanned_symbols,
+            "qualified_candidates": self.qualified_candidates,
             "tp_atr_mult": str(self.tp_atr_mult),
             "sl_atr_mult": str(self.sl_atr_mult),
             "global": {
@@ -97,6 +104,19 @@ class CalibrationResult:
                         if s.hold_good_rate_pct is not None
                         else None
                     ),
+                    "tp_roi_pct": (
+                        str(s.tp_roi_pct) if s.tp_roi_pct is not None else None
+                    ),
+                    "sl_roi_pct": (
+                        str(s.sl_roi_pct) if s.sl_roi_pct is not None else None
+                    ),
+                    "backtest_win_rate_pct": (
+                        str(s.backtest_win_rate_pct)
+                        if s.backtest_win_rate_pct is not None
+                        else None
+                    ),
+                    "variation_label": s.variation_label,
+                    "backtest_variations": s.backtest_variations,
                 }
                 for sym, s in self.per_symbol.items()
             },
@@ -282,7 +302,7 @@ def rank_top_symbols(tickers_raw: Any, *, top_n: int) -> list[tuple[str, Decimal
 
 
 class CalibrationService:
-    """Top N szimbólum kalibrációja a Bitunix kline adataiból."""
+    """Top mozgók 7 napos backtest kalibrációja (:15 belépés, fix TP/SL rács)."""
 
     def __init__(
         self,
@@ -290,52 +310,59 @@ class CalibrationService:
         *,
         lookback_minutes: int = 120,
         top_n: int = 20,
+        candidates_target: int = 10,
         tp_atr_mult: Decimal = Decimal("3.0"),
         sl_atr_mult: Decimal = Decimal("1.5"),
-        kline_interval: str = "1m",
-        hold_params: HoldWindowParams | None = None,
+        kline_interval: str = "15m",
         wf_choppiness_max: Decimal = Decimal("1.72"),
-        wf_cooldown_minutes: int = 60,
     ) -> None:
         self._client = client
         self._lookback_minutes = lookback_minutes
         self._top_n = top_n
+        self._candidates_target = max(0, int(candidates_target))
         self._tp_atr_mult = tp_atr_mult
         self._sl_atr_mult = sl_atr_mult
         self._interval = kline_interval
-        self._hold_params = hold_params or HoldWindowParams()
         self._wf_choppiness_max = wf_choppiness_max
-        self._wf_cooldown_minutes = wf_cooldown_minutes
 
     async def run(self) -> CalibrationResult:
-        """A teljes kalibrációs ciklust lefuttatja."""
+        """Top coinok végigjárása, amíg meg nem van a cél számú jelölt."""
+        from app.services.candidate_backtest import (
+            QualifiedCandidate,
+            evaluate_symbol_variations,
+        )
+        from app.services.kline_fetch import fetch_lookback_klines
+
         result = CalibrationResult(
             started_at=datetime.now(UTC),
             lookback_minutes=self._lookback_minutes,
             top_n=self._top_n,
+            candidates_target=self._candidates_target,
             tp_atr_mult=self._tp_atr_mult,
             sl_atr_mult=self._sl_atr_mult,
+            mode="candidate_backtest",
         )
+
+        if self._candidates_target <= 0:
+            result.finished_at = datetime.now(UTC)
+            return result
 
         tickers_raw = await self._client.get_all_tickers()
         top_symbols = rank_top_symbols(tickers_raw, top_n=self._top_n)
-
-        # kline lekérés visszafelé számolt időablakkal (utolsó 2 óra)
         end_ms = int(datetime.now(UTC).timestamp() * 1000)
-        start_ms = end_ms - self._lookback_minutes * 60 * 1000
-        # 1m gyertyák → max 200 a Bitunix limit, 120 fér el bőven
-        kline_limit = min(200, self._lookback_minutes + 5)
+        qualified: list[QualifiedCandidate] = []
 
-        for symbol, abs_change in top_symbols:
+        for rank, (symbol, abs_change) in enumerate(top_symbols, start=1):
+            if len(qualified) >= self._candidates_target:
+                break
+            result.scanned_symbols += 1
             try:
-                from app.services.kline_fetch import get_klines_rate_limited
-
-                klines_raw = await get_klines_rate_limited(
+                klines = await fetch_lookback_klines(
                     self._client,
                     symbol,
+                    lookback_minutes=self._lookback_minutes,
                     interval=self._interval,
-                    limit=kline_limit,
-                    start_time_ms=start_ms,
+                    bar_minutes=15,
                     end_time_ms=end_ms,
                 )
             except (BitunixAPIError, BitunixSignatureError) as exc:
@@ -344,45 +371,59 @@ class CalibrationService:
                 )
                 continue
 
-            calibration = compute_calibration_for_symbol(
-                symbol,
-                klines_raw,
-                tp_atr_mult=self._tp_atr_mult,
-                sl_atr_mult=self._sl_atr_mult,
-                abs_change_24h_pct=abs_change,
+            eval_out = evaluate_symbol_variations(
+                klines, choppiness_max=self._wf_choppiness_max
             )
-            if calibration is None:
+            best = eval_out.get("best_variation")
+            if not eval_out.get("ok") or best is None:
                 result.failed_symbols.append(
-                    {"symbol": symbol, "reason": "insufficient_kline_data"}
+                    {
+                        "symbol": symbol,
+                        "reason": eval_out.get("reason", "not_qualified"),
+                        "variations": eval_out.get("variations"),
+                    }
                 )
                 continue
-            hold_klines = None
-            hold_sim_interval: str | None = None
-            if self._hold_params.enabled:
-                from app.services.kline_fetch import (
-                    HOLD_SIM_INTERVAL,
-                    fetch_hold_simulation_klines,
-                )
 
-                hold_sim_interval = HOLD_SIM_INTERVAL
-                hold_klines = await fetch_hold_simulation_klines(
-                    self._client,
-                    symbol,
-                    lookback_minutes=self._lookback_minutes,
-                    hold_max_minutes=self._hold_params.max_minutes,
-                    end_time_ms=end_ms,
-                )
-            apply_hold_window_to_symbol_calibration(
-                calibration,
-                klines_raw,
-                choppiness_max=self._wf_choppiness_max,
-                cooldown_minutes=self._wf_cooldown_minutes,
-                hold_params=self._hold_params,
-                hold_klines=hold_klines,
-                hold_sim_interval=hold_sim_interval,
+            tp_roi = Decimal(str(best["tp_roi_pct"]))
+            sl_roi = Decimal(str(best["sl_roi_pct"]))
+            win_rate = Decimal(str(best["resolved_tp_win_rate_pct"]))
+            tp_move, sl_move = implied_price_move_pct_from_roi(
+                leverage=20,
+                tp_roi_pct=tp_roi,
+                sl_roi_pct=sl_roi,
             )
-            result.per_symbol[symbol] = calibration
+            last_close = klines[-1]["close"] if klines else Decimal(0)
+            sym_cal = SymbolCalibration(
+                symbol=symbol,
+                tp_move_pct=tp_move,
+                sl_move_pct=sl_move,
+                atr_pct=Decimal(0),
+                samples=len(klines),
+                last_close=last_close,
+                abs_change_24h_pct=abs_change,
+                tp_roi_pct=tp_roi,
+                sl_roi_pct=sl_roi,
+                backtest_win_rate_pct=win_rate,
+                variation_label=str(best.get("label", "")),
+                backtest_variations=list(eval_out.get("variations") or []),
+            )
+            result.per_symbol[symbol] = sym_cal
+            cand = QualifiedCandidate(
+                symbol=symbol,
+                rank=rank,
+                abs_change_24h_pct=abs_change,
+                tp_roi_pct=tp_roi,
+                sl_roi_pct=sl_roi,
+                win_rate_pct=win_rate,
+                variation_label=str(best.get("label", "")),
+                trade_count=int((best.get("summary") or {}).get("total_trades", 0)),
+                variations=list(eval_out.get("variations") or []),
+            )
+            qualified.append(cand)
 
+        result.candidates_found = len(qualified)
+        result.qualified_candidates = [c.to_summary_dict() for c in qualified]
         if result.per_symbol:
             tp_values = [s.tp_move_pct for s in result.per_symbol.values()]
             sl_values = [s.sl_move_pct for s in result.per_symbol.values()]
@@ -400,6 +441,11 @@ def load_result_from_summary(summary: dict[str, Any]) -> CalibrationResult:
         top_n=int(summary.get("top_n", 20)),
         tp_atr_mult=Decimal(str(summary.get("tp_atr_mult", "3.0"))),
         sl_atr_mult=Decimal(str(summary.get("sl_atr_mult", "1.5"))),
+        mode=str(summary.get("mode", "candidate_backtest")),
+        candidates_target=int(summary.get("candidates_target", 0)),
+        candidates_found=int(summary.get("candidates_found", 0)),
+        scanned_symbols=int(summary.get("scanned_symbols", 0)),
+        qualified_candidates=list(summary.get("qualified_candidates") or []),
     )
     global_data = summary.get("global") or {}
     gtp = global_data.get("tp_move_pct")
@@ -413,6 +459,9 @@ def load_result_from_summary(summary: dict[str, Any]) -> CalibrationResult:
         try:
             bh = payload.get("best_hold_minutes")
             hgr = payload.get("hold_good_rate_pct")
+            tpr = payload.get("tp_roi_pct")
+            slr = payload.get("sl_roi_pct")
+            bwr = payload.get("backtest_win_rate_pct")
             result.per_symbol[sym] = SymbolCalibration(
                 symbol=sym,
                 tp_move_pct=Decimal(str(payload["tp_move_pct"])),
@@ -427,6 +476,13 @@ def load_result_from_summary(summary: dict[str, Any]) -> CalibrationResult:
                 hold_good_rate_pct=(
                     Decimal(str(hgr)) if hgr is not None else None
                 ),
+                tp_roi_pct=Decimal(str(tpr)) if tpr is not None else None,
+                sl_roi_pct=Decimal(str(slr)) if slr is not None else None,
+                backtest_win_rate_pct=(
+                    Decimal(str(bwr)) if bwr is not None else None
+                ),
+                variation_label=payload.get("variation_label"),
+                backtest_variations=payload.get("backtest_variations"),
             )
         except (KeyError, TypeError, ValueError):
             continue

@@ -11,9 +11,9 @@ class TopSignalEntriesConfig(BaseModel):
     """Effektív stratégia paraméterek — alapértelmezés kódban, felülírás DB-ben."""
 
     count: int = Field(ge=1, le=100, default=10)
-    scan_limit_max: int = Field(ge=1, le=5000, default=1000)
-    scan_limit: int = Field(ge=1, le=5000, default=1000)
-    kline_lookahead: int = Field(ge=1, le=5000, default=1000)
+    scan_limit_max: int = Field(ge=1, le=5000, default=200)
+    scan_limit: int = Field(ge=1, le=5000, default=200)
+    kline_lookahead: int = Field(ge=1, le=5000, default=200)
     kline_interval: str = "15m"
     kline_limit: int = Field(ge=3, le=500, default=80)
     cooldown_minutes: int = Field(ge=0, le=10080, default=240)

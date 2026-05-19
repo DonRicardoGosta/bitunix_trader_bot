@@ -138,3 +138,55 @@ async def fetch_hold_simulation_klines(
             await asyncio.sleep(_PAGE_PAUSE_SEC)
 
     return merge_klines_by_time(chunks)
+
+
+async def fetch_lookback_klines(
+    client: BitunixClient,
+    symbol: str,
+    *,
+    lookback_minutes: int,
+    interval: str = "15m",
+    bar_minutes: int = 15,
+    end_time_ms: int | None = None,
+) -> list[dict[str, Decimal]]:
+    """Paginált gyertyák egy lookback ablakra (pl. 7 nap 15m)."""
+    end_ms = (
+        end_time_ms
+        if end_time_ms is not None
+        else int(datetime.now(UTC).timestamp() * 1000)
+    )
+    span_min = max(5, int(lookback_minutes))
+    start_ms = end_ms - span_min * 60_000
+    bar_ms = max(1, int(bar_minutes)) * 60_000
+    chunk_span_ms = _KLINE_MAX_LIMIT * bar_ms
+
+    chunks: list[list[dict[str, Decimal]]] = []
+    cursor_end = end_ms
+    while cursor_end > start_ms:
+        cursor_start = max(start_ms, cursor_end - chunk_span_ms + bar_ms)
+        raw = await get_klines_rate_limited(
+            client,
+            symbol,
+            interval=interval,
+            limit=_KLINE_MAX_LIMIT,
+            start_time_ms=cursor_start,
+            end_time_ms=cursor_end,
+        )
+        parsed = parse_klines(raw)
+        if parsed:
+            chunks.append(parsed)
+        if cursor_start <= start_ms:
+            break
+        cursor_end = cursor_start - bar_ms
+        if cursor_end > start_ms:
+            await asyncio.sleep(_PAGE_PAUSE_SEC)
+
+    merged = merge_klines_by_time(chunks)
+    return [k for k in merged if _to_int_ms(k["time"]) >= start_ms]
+
+
+def _to_int_ms(time_val: Decimal) -> int:
+    v = int(time_val)
+    if v < 10**11:
+        return v * 1000
+    return v

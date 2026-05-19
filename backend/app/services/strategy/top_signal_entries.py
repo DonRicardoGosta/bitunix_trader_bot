@@ -133,6 +133,24 @@ class TopSignalEntriesStrategy(Strategy):
 
         calibration = await get_active_calibration_result(ctx.session)
         require_cal = await effective_require_calibration(ctx.session, settings)
+        if (
+            require_cal
+            and calibration is not None
+            and not calibration.per_symbol
+            and calibration.candidates_target > 0
+        ):
+            await audit.record(
+                ctx.session,
+                "strategy.top_signal_entries.no_qualified_candidates",
+                level=AuditLevel.INFO,
+                message=(
+                    "Nincs ≥80% backtest jelölt a legutóbbi kalibrációban – "
+                    "új belépés kihagyva."
+                ),
+                strategy_name=self.name,
+            )
+            result.details["reason"] = "no_qualified_candidates"
+            return result
         if require_cal and calibration is None:
             await audit.record(
                 ctx.session,
@@ -186,7 +204,15 @@ class TopSignalEntriesStrategy(Strategy):
 
         movers = rank_top_movers(tickers_raw, top_n=scan_limit)
         pair_meta = index_trading_pairs(pairs_raw)
-        candidates = movers[: min(lookahead, len(movers))]
+        qualified_symbols: set[str] = set()
+        if calibration is not None and calibration.per_symbol:
+            qualified_symbols = set(calibration.per_symbol.keys())
+        if qualified_symbols:
+            movers_filtered = [m for m in movers if m.symbol in qualified_symbols]
+            candidates = movers_filtered[: min(lookahead, len(movers_filtered))]
+            result.details["calibration_qualified_symbols"] = sorted(qualified_symbols)
+        else:
+            candidates = movers[: min(lookahead, len(movers))]
 
         try:
             pos_raw = await ctx.client.get_positions()
@@ -564,19 +590,28 @@ class TopSignalEntriesStrategy(Strategy):
                 tp_move_pct, sl_move_pct = wf_move_pct_pair
                 tp_source = "walk_forward_recommendation"
             elif calibration is not None:
-                moves = calibration.lookup(symbol)
-                if moves is not None:
-                    tp_move_pct, sl_move_pct = moves
-                    if symbol in calibration.per_symbol:
-                        tp_source = "calibration_symbol"
-                    else:
-                        tp_source = "calibration_global"
-                else:
+                sym_cal = calibration.per_symbol.get(symbol)
+                if sym_cal is not None and sym_cal.tp_roi_pct is not None:
                     tp_move_pct, sl_move_pct = implied_price_move_pct_from_roi(
                         leverage=leverage,
-                        tp_roi_pct=tp_roi,
-                        sl_roi_pct=sl_roi,
+                        tp_roi_pct=sym_cal.tp_roi_pct,
+                        sl_roi_pct=sym_cal.sl_roi_pct or Decimal("100"),
                     )
+                    tp_source = "calibration_backtest"
+                else:
+                    moves = calibration.lookup(symbol)
+                    if moves is not None:
+                        tp_move_pct, sl_move_pct = moves
+                        if symbol in calibration.per_symbol:
+                            tp_source = "calibration_symbol"
+                        else:
+                            tp_source = "calibration_global"
+                    else:
+                        tp_move_pct, sl_move_pct = implied_price_move_pct_from_roi(
+                            leverage=leverage,
+                            tp_roi_pct=tp_roi,
+                            sl_roi_pct=sl_roi,
+                        )
             else:
                 tp_move_pct, sl_move_pct = implied_price_move_pct_from_roi(
                     leverage=leverage,

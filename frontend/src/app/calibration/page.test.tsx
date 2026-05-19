@@ -63,13 +63,42 @@ beforeEach(() => {
           lookback_minutes: 120,
           top_n: 20,
           summary: {
-            global: { tp_move_pct: "1.50", sl_move_pct: "0.75", symbol_count: 2 },
+            mode: "candidate_backtest",
+            candidates_target: 2,
+            candidates_found: 1,
+            scanned_symbols: 5,
+            qualified_candidates: [
+              {
+                symbol: "BTCUSDT",
+                rank: 1,
+                abs_change_24h_pct: "2.5",
+                tp_roi_pct: "100",
+                sl_roi_pct: "50",
+                backtest_win_rate_pct: "85.00",
+                variation_label: "TP100/SL50",
+                trade_count: 6,
+                variations: [
+                  {
+                    label: "TP100/SL50",
+                    tp_roi_pct: "100",
+                    sl_roi_pct: "50",
+                    resolved_tp_win_rate_pct: "85.00",
+                    meets_target: true,
+                    summary: { total_trades: 6, tp_wins: 5, sl_losses: 1, no_result: 0 },
+                  },
+                ],
+              },
+            ],
             per_symbol: {
               BTCUSDT: {
-                tp_move_pct: "1.20",
-                sl_move_pct: "0.60",
-                atr_pct: "0.40",
-                samples: 120,
+                tp_move_pct: "5.0",
+                sl_move_pct: "2.5",
+                tp_roi_pct: "100",
+                sl_roi_pct: "50",
+                backtest_win_rate_pct: "85.00",
+                variation_label: "TP100/SL50",
+                atr_pct: "0",
+                samples: 672,
                 last_close: "50000",
                 abs_change_24h_pct: "2.5",
               },
@@ -97,19 +126,19 @@ afterEach(() => {
 });
 
 describe("<CalibrationPage />", () => {
-  it("shows trading enabled banner and global TP/SL", async () => {
+  it("shows trading enabled and qualified backtest candidates", async () => {
     render(
       <WithRefreshProvider>
         <CalibrationPage />
       </WithRefreshProvider>,
     );
     await waitFor(() =>
-      expect(screen.getByText(/Trading/i)).toBeInTheDocument(),
+      expect(screen.getByText(/Tradelés/i)).toBeInTheDocument(),
     );
     expect(screen.getByText("engedélyezve")).toBeInTheDocument();
-    // R:R = 1.5 / 0.75 = 2.00
-    expect(screen.getByText("2.00:1")).toBeInTheDocument();
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+    expect(screen.getByText("85.00%")).toBeInTheDocument();
+    expect(screen.getByText(/Minősített jelöltek/i)).toBeInTheDocument();
   });
 
   it("triggers calibration on button click", async () => {

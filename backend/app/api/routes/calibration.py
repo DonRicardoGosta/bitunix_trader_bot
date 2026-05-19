@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.services.calibration_runner import (
     get_latest_successful_calibration,
     run_calibration,
+    seconds_until_next_half_hour,
 )
 from app.services.runtime_settings import effective_require_calibration, is_trading_paused
 from app.services.trading_gate import is_calibration_trading_allowed
@@ -61,14 +62,9 @@ async def get_latest(
     trading_enabled = cal_allowed and not paused
     require_cal = await effective_require_calibration(session, settings)
 
-    next_run_after = None
-    if latest_any and latest_any.finished_at is not None:
-        finished = latest_any.finished_at
-        if finished.tzinfo is None:
-            finished = finished.replace(tzinfo=UTC)
-        next_run_after = (
-            finished + timedelta(seconds=settings.calibration_interval_seconds)
-        ).isoformat()
+    next_run_after = (
+        datetime.now(UTC) + timedelta(seconds=seconds_until_next_half_hour())
+    ).isoformat()
 
     return {
         "trading_enabled": trading_enabled,
