@@ -137,7 +137,7 @@ export default function CalibrationPage() {
         <CardHeader>
           <CardTitle>Jelölt-kalibráció (7 nap backtest)</CardTitle>
           <span className="text-xs text-muted">
-            Top 500 mozgó · belépés óránként :15 · TP/SL variációk · ≥80% win
+            Top 500 mozgó · live belépés :15/:20 · kalibráció :15 · ≥80% win
           </span>
         </CardHeader>
         <CardContent>

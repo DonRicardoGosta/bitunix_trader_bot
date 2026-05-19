@@ -32,7 +32,7 @@ from tests.strategy_test_context import make_strategy_context
 @pytest.fixture(autouse=True)
 def _allow_entry_window(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "app.services.strategy.top_signal_entries.is_hour_quarter_entry_now",
+        "app.services.strategy.top_signal_entries.is_live_entry_window_now",
         lambda *_a, **_k: True,
     )
 
@@ -129,7 +129,7 @@ async def _create_all() -> None:
 @pytest.mark.asyncio
 async def test_strategy_skips_outside_entry_window(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "app.services.strategy.top_signal_entries.is_hour_quarter_entry_now",
+        "app.services.strategy.top_signal_entries.is_live_entry_window_now",
         lambda *_a, **_k: False,
     )
     fake = FakeBitunixClient()
