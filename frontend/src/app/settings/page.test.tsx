@@ -29,7 +29,7 @@ describe("SettingsPage", () => {
               require_calibration_for_trading: true,
               strategy_runner_paused: false,
               strategy_runner_active: true,
-              live_trading: true,
+              live_trading: false,
               strategies: { top_signal_entries: true },
               new_position_open_allowed: true,
               new_position_block_reason: null,

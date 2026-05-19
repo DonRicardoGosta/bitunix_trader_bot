@@ -52,7 +52,7 @@ beforeEach(() => {
           tpsl_stop_type: "MARK_PRICE",
         },
         enabled: true,
-        live_trading: true,
+        live_trading: false,
       });
     }
     if (url.endsWith("/api/settings")) {
@@ -69,7 +69,7 @@ beforeEach(() => {
           require_calibration_for_trading: true,
           strategy_runner_paused: false,
           strategy_runner_active: true,
-          live_trading: true,
+          live_trading: false,
           strategies: { top_signal_entries: true },
           new_position_open_allowed: true,
           new_position_block_reason: null,

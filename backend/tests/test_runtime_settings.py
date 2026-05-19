@@ -42,15 +42,15 @@ async def test_live_trading_runtime_override() -> None:
     await _clear_runtime()
     settings = get_settings()
     async with AsyncSessionLocal() as session:
-        assert await effective_live_trading(session, settings) is True
-        await apply_settings_patch(session, {"bitunix_live_trading": False})
-        await session.commit()
-    async with AsyncSessionLocal() as session:
         assert await effective_live_trading(session, settings) is False
         await apply_settings_patch(session, {"bitunix_live_trading": True})
         await session.commit()
     async with AsyncSessionLocal() as session:
         assert await effective_live_trading(session, settings) is True
+        await apply_settings_patch(session, {"bitunix_live_trading": False})
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        assert await effective_live_trading(session, settings) is False
 
 
 @pytest.mark.asyncio

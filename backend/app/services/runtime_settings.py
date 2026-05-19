@@ -113,12 +113,12 @@ async def is_strategy_runner_paused(session: AsyncSession, settings: Settings) -
 async def effective_live_trading(
     session: AsyncSession, settings: Settings
 ) -> bool:
-    """Élő order küldés engedélyezve (DB runtime; alapértelmezés: True)."""
+    """Élő order küldés engedélyezve (DB runtime; alapértelmezés: False = dry-run)."""
     return await effective_bool(
         session,
         settings,
         runtime_key="bitunix_live_trading",
-        default=True,
+        default=False,
     )
 
 

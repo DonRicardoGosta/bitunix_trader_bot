@@ -56,8 +56,8 @@ const TOGGLES: {
     key: "bitunix_live_trading",
     label: "Élő trading (Bitunix)",
     hint:
-      "Bekapcsolva: a backend valódi place_order hívást küld a Bitunix felé (API kulcs kell). Kikapcsolva: dry-run — naplózás és mock válasz, nincs tőzsdei order.",
-    example: "Teszthez kapcsold ki; éleshez be + érvényes BITUNIX_API_KEY/SECRET a .env-ben.",
+      "Alapértelmezés: kikapcsolva (dry-run). Bekapcsolva: valódi place_order a Bitunix felé (API kulcs kell). Kikapcsolva: naplózás és mock válasz, nincs tőzsdei order.",
+    example: "Éleshez kapcsold be + érvényes BITUNIX_API_KEY/SECRET a .env-ben.",
   },
   {
     key: "strategy_top_signal_entries_enabled",

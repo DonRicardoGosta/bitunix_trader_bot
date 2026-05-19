@@ -39,7 +39,7 @@ def test_top_signal_entries_config_get_put() -> None:
         assert body["config"]["count"] == 10
         assert body["config"]["kline_lookahead"] == 1000
         assert body["enabled"] is True
-        assert body["live_trading"] is True
+        assert body["live_trading"] is False
 
         r2 = client.put(
             "/api/strategies/top_signal_entries/config",
