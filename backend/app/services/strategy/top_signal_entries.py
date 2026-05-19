@@ -44,6 +44,11 @@ from app.schemas.trading import OrderRequest
 from app.services.calibration import parse_klines
 from app.services.candidate_backtest import live_entry_side_from_backtest_logic
 from app.services.calibration_runner import get_active_calibration_result
+from app.services.openapi_unsupported import (
+    is_openapi_trading_unsupported_error,
+    load_openapi_unsupported_symbols,
+    remember_openapi_unsupported_symbol,
+)
 from app.services.runtime_settings import (
     effective_require_calibration,
     is_strategy_enabled,
@@ -231,9 +236,14 @@ class TopSignalEntriesStrategy(Strategy):
         pairs_raw = await ctx.client.get_trading_pairs()
 
         pair_meta = index_trading_pairs(pairs_raw)
+        openapi_blocked = await load_openapi_unsupported_symbols(ctx.session)
+        if openapi_blocked:
+            result.details["openapi_unsupported_symbols"] = sorted(openapi_blocked)
         qualified_symbols: set[str] = set()
         if calibration is not None and calibration.per_symbol:
-            qualified_symbols = set(calibration.per_symbol.keys())
+            qualified_symbols = {
+                s for s in calibration.per_symbol.keys() if s not in openapi_blocked
+            }
         if qualified_symbols:
             calibrated_movers = movers_for_symbols(tickers_raw, qualified_symbols)
             calibrated_movers.sort(
@@ -537,6 +547,7 @@ class TopSignalEntriesStrategy(Strategy):
                     wf_gate_result=wf_gate_result,
                     hold_window_minutes=wf_hold_minutes,
                     hold_params=hold_params,
+                    openapi_blocked=openapi_blocked,
                 )
                 if decision.get("placed"):
                     placed_run += 1
@@ -579,6 +590,7 @@ class TopSignalEntriesStrategy(Strategy):
         wf_gate_result: dict[str, Any] | None = None,
         hold_window_minutes: int | None = None,
         hold_params: Any | None = None,
+        openapi_blocked: set[str] | None = None,
     ) -> dict[str, Any]:
         symbol = mover.symbol
         out: dict[str, Any] = {
@@ -589,6 +601,20 @@ class TopSignalEntriesStrategy(Strategy):
         }
         if wf_audit:
             out.update(wf_audit)
+
+        blocked = openapi_blocked or set()
+        if symbol in blocked:
+            out["placed"] = False
+            out["reason"] = "openapi_trading_unsupported"
+            await audit.record(
+                ctx.session,
+                "strategy.top_signal_entries.openapi_unsupported_skip",
+                level=AuditLevel.INFO,
+                message=f"{symbol} kihagyva: OpenAPI kereskedés nem támogatott.",
+                payload=out,
+                strategy_name=self.name,
+            )
+            return out
 
         last = await self._last_order_at(ctx, symbol)
         if last and last > cooldown_after:
@@ -671,7 +697,13 @@ class TopSignalEntriesStrategy(Strategy):
                     sl_roi_pct=sl_roi,
                 )
             min_tp_roi = Decimal(ctx.top_signal_entries.min_tp_roi_pct)
-            if min_tp_roi > 0:
+            # Kalibrált TP/SL: a backtest már kiválasztotta a variációt (pl. TP50) —
+            # a min_tp_roi csak ROI fallback / WF esetén szűr, ne vágja le a jelölteket.
+            if min_tp_roi > 0 and tp_source not in (
+                "calibration_backtest",
+                "calibration_symbol",
+                "calibration_global",
+            ):
                 implied_tp_roi = implied_tp_roi_pct_from_price_move_pct(
                     tp_move_pct=tp_move_pct, leverage=leverage
                 )
@@ -784,6 +816,9 @@ class TopSignalEntriesStrategy(Strategy):
             out["placed"] = False
             out["reason"] = "place_order_rejected"
             out["error"] = str(exc)
+            if is_openapi_trading_unsupported_error(exc):
+                await remember_openapi_unsupported_symbol(ctx.session, symbol)
+                out["reason"] = "openapi_trading_unsupported"
             await audit.record(
                 ctx.session,
                 "strategy.top_signal_entries.place_order_failed",

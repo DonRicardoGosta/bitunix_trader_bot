@@ -270,6 +270,75 @@ async def test_strategy_uses_per_symbol_calibration_when_available() -> None:
     assert result.details["calibration_used"] is True
 
 
+@pytest.mark.asyncio
+async def test_strategy_calibrated_tp50_not_blocked_by_min_tp_roi() -> None:
+    """Kalibrált TP50 variáció: a min_tp_roi_pct nem szűri ki (backtest már választott)."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.execute(sa.delete(TpSlCalibration))
+        await session.execute(sa.delete(AuditEvent))
+        summary = {
+            "lookback_minutes": 120,
+            "top_n": 20,
+            "tp_atr_mult": "3.0",
+            "sl_atr_mult": "1.5",
+            "global": {"tp_move_pct": "1.0", "sl_move_pct": "0.5", "symbol_count": 1},
+            "per_symbol": {
+                "BBB": {
+                    "tp_move_pct": "0.6666666666666666666666666667",
+                    "sl_move_pct": "0.6666666666666666666666666667",
+                    "tp_roi_pct": "50",
+                    "sl_roi_pct": "50",
+                    "leverage": 75,
+                    "atr_pct": "0.66",
+                    "samples": 120,
+                    "last_close": "60",
+                    "abs_change_24h_pct": "40",
+                }
+            },
+            "failed_symbols": [],
+        }
+        session.add(
+            TpSlCalibration(
+                status=CalibrationStatus.SUCCESS,
+                triggered_by="unit_test",
+                lookback_minutes=120,
+                top_n=20,
+                summary=summary,
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    fake = FakeBitunixClient()
+    strategy = TopSignalEntriesStrategy()
+    async with AsyncSessionLocal() as session:
+        await set_runtime_bool(session, "strategy_top_signal_entries_enabled", True)
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        ctx = make_strategy_context(
+            session,
+            fake,
+            triggered_by="test",
+            count=1,
+            scan_limit=10,
+            kline_lookahead=10,
+            wf_gate_enabled=False,
+            min_tp_roi_pct="60",
+        )
+        result = await strategy.run(ctx)
+        await session.commit()
+
+    assert len(result.placed_orders) == 1
+    placed = result.placed_orders[0]
+    assert placed["symbol"] == "BBB"
+    assert placed["tp_source"] == "calibration_backtest"
+    assert placed["tp_move_pct"] == "5"
+    skipped_reasons = [s.get("reason") for s in result.skipped]
+    assert "tp_roi_below_min" not in skipped_reasons
+
+
 def test_orders_endpoint_blocked_without_calibration() -> None:
     """A /api/orders POST 409-et ad ha nincs friss kalibráció."""
 
