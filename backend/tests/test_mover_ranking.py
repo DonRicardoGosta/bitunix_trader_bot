@@ -8,6 +8,7 @@ from app.services.strategy.mover_ranking import (
     Mover,
     decide_direction,
     extract_available_usdt,
+    movers_for_symbols,
     parse_open_position_symbols,
     rank_top_movers,
 )
@@ -42,6 +43,18 @@ def test_rank_top_movers_skips_invalid_rows() -> None:
     }
     top = rank_top_movers(raw, top_n=10)
     assert [m.symbol for m in top] == ["AAA"]
+
+
+def test_movers_for_symbols_filters_and_sorts() -> None:
+    raw = {
+        "data": [
+            {"symbol": "AAA", "lastPrice": "110", "open": "100"},
+            {"symbol": "BBB", "lastPrice": "70", "open": "100"},
+            {"symbol": "CCC", "lastPrice": "105", "open": "100"},
+        ]
+    }
+    out = movers_for_symbols(raw, {"BBB", "CCC"})
+    assert [m.symbol for m in out] == ["BBB", "CCC"]
 
 
 def test_rank_top_movers_accepts_bare_list() -> None:

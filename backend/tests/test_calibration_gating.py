@@ -29,6 +29,14 @@ from app.services.strategy.top_signal_entries import TopSignalEntriesStrategy
 from tests.strategy_test_context import make_strategy_context
 
 
+@pytest.fixture(autouse=True)
+def _allow_entry_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.services.strategy.top_signal_entries.is_hour_quarter_entry_now",
+        lambda *_a, **_k: True,
+    )
+
+
 def _bbb_klines_raw() -> dict:
     return {
         "data": [
@@ -116,6 +124,24 @@ def _create_schema() -> None:
 async def _create_all() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+@pytest.mark.asyncio
+async def test_strategy_skips_outside_entry_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.services.strategy.top_signal_entries.is_hour_quarter_entry_now",
+        lambda *_a, **_k: False,
+    )
+    fake = FakeBitunixClient()
+    strategy = TopSignalEntriesStrategy()
+    async with AsyncSessionLocal() as session:
+        await set_runtime_bool(session, "strategy_top_signal_entries_enabled", True)
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        ctx = make_strategy_context(session, fake, triggered_by="test")
+        result = await strategy.run(ctx)
+    assert result.details.get("reason") == "outside_entry_window"
+    assert fake.place_order_calls == []
 
 
 @pytest.mark.asyncio

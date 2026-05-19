@@ -191,6 +191,53 @@ async def test_calibration_service_run_calibrates_top_symbols(
 
 
 @pytest.mark.asyncio
+async def test_calibration_stores_all_backtest_qualified_in_per_symbol(
+    monkeypatch, _noop_symbol_persist
+) -> None:
+    """A slot limit nem vágja le a per_symbol listát – minden ≥80% coin benne van."""
+    from app.services import candidate_backtest as cb_mod
+    from app.services import kline_fetch as kf_mod
+
+    async def _fake_fetch(_client, symbol, **kwargs):
+        return _synth_15m_klines()
+
+    def _fake_eval(_klines, **kwargs):
+        return {
+            "ok": True,
+            "reason": "qualified",
+            "variations": [],
+            "best_variation": {
+                "label": "TP50/SL50",
+                "tp_roi_pct": "50",
+                "sl_roi_pct": "50",
+                "resolved_tp_win_rate_pct": "85.00",
+                "summary": {"total_trades": 3},
+            },
+        }
+
+    monkeypatch.setattr(kf_mod, "fetch_lookback_klines", _fake_fetch)
+    monkeypatch.setattr(cb_mod, "evaluate_symbol_variations", _fake_eval)
+
+    tickers = {
+        "data": [
+            _ticker_pair("AAA", "110", "100"),
+            _ticker_pair("BBB", "60", "100"),
+            _ticker_pair("CCC", "125", "100"),
+        ]
+    }
+    fake = _FakeClient(tickers=tickers, klines_by_symbol={})
+    service = CalibrationService(
+        client=fake,  # type: ignore[arg-type]
+        calibration_id=1,
+        top_n=3,
+        candidates_target=1,
+    )
+    result = await service.run()
+    assert set(result.per_symbol.keys()) == {"AAA", "BBB", "CCC"}
+    assert result.candidates_found == 3
+
+
+@pytest.mark.asyncio
 async def test_calibration_skips_symbol_without_trading_pair_meta(
     monkeypatch, _noop_symbol_persist
 ) -> None:

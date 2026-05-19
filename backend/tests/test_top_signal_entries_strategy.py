@@ -30,6 +30,14 @@ from app.services.strategy.top_signal_entries import (
 from tests.strategy_test_context import make_strategy_context
 
 
+@pytest.fixture(autouse=True)
+def _allow_entry_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.services.strategy.top_signal_entries.is_hour_quarter_entry_now",
+        lambda *_a, **_k: True,
+    )
+
+
 async def _seed_fresh_calibration() -> None:
     async with AsyncSessionLocal() as session:
         await session.execute(sa.delete(TpSlCalibration))

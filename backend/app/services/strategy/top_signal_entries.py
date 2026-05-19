@@ -7,6 +7,7 @@ csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 
 * A 24h ticker alapján van **range** adat, és az ár a mozgás irányához illő
   extrém zónában van (long: felső ``range_threshold``, short: alsó zóna).
+* **Belépési idő:** új pozíció csak UTC óránként **:15**-kor (mint a kalibrációs backtest).
 * A **|24h % változás|** ≥ konfigurálható minimum.
 * **Kalibráció (alap):** ha ``wf_gate_enabled`` ki van kapcsolva (alapértelmezés),
   a legutóbbi sikeres 7 napos backtest kalibráció szűri a mozgókat és adja a
@@ -50,9 +51,11 @@ from app.services.coin_analyze import (
 )
 from app.services.risk import compute_margin, compute_quantity, effective_order_leverage
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
+from app.services.entry_schedule import is_hour_quarter_entry_now
 from app.services.strategy.mover_ranking import (
     Mover,
     extract_available_usdt,
+    movers_for_symbols,
     parse_open_position_symbols,
     rank_top_movers,
 )
@@ -132,6 +135,24 @@ class TopSignalEntriesStrategy(Strategy):
             result.details["reason"] = "disabled"
             return result
 
+        now_utc = datetime.now(UTC)
+        if not is_hour_quarter_entry_now(now_utc):
+            await audit.record(
+                ctx.session,
+                "strategy.top_signal_entries.outside_entry_window",
+                level=AuditLevel.INFO,
+                message=(
+                    "Új belépés csak óránként :15-kor (UTC) – "
+                    f"jelenleg {now_utc.strftime('%H:%M')}."
+                ),
+                payload={"utc_minute": now_utc.minute, "entry_minute": 15},
+                strategy_name=self.name,
+            )
+            result.details["reason"] = "outside_entry_window"
+            result.details["entry_minute_utc"] = 15
+            result.details["now_utc"] = now_utc.isoformat()
+            return result
+
         calibration = await get_active_calibration_result(ctx.session)
         require_cal = await effective_require_calibration(ctx.session, settings)
         if (
@@ -203,17 +224,23 @@ class TopSignalEntriesStrategy(Strategy):
         tickers_raw = await ctx.client.get_all_tickers()
         pairs_raw = await ctx.client.get_trading_pairs()
 
-        movers = rank_top_movers(tickers_raw, top_n=scan_limit)
         pair_meta = index_trading_pairs(pairs_raw)
         qualified_symbols: set[str] = set()
         if calibration is not None and calibration.per_symbol:
             qualified_symbols = set(calibration.per_symbol.keys())
         if qualified_symbols:
-            movers_filtered = [m for m in movers if m.symbol in qualified_symbols]
-            candidates = movers_filtered[: min(lookahead, len(movers_filtered))]
+            calibrated_movers = movers_for_symbols(tickers_raw, qualified_symbols)
+            calibrated_movers.sort(
+                key=lambda m: calibration.per_symbol[m.symbol].abs_change_24h_pct,  # type: ignore[union-attr]
+                reverse=True,
+            )
+            candidates = calibrated_movers[: min(lookahead, len(calibrated_movers))]
             result.details["calibration_qualified_symbols"] = sorted(qualified_symbols)
+            result.details["calibration_entry_mode"] = True
         else:
+            movers = rank_top_movers(tickers_raw, top_n=scan_limit)
             candidates = movers[: min(lookahead, len(movers))]
+            result.details["calibration_entry_mode"] = False
 
         try:
             pos_raw = await ctx.client.get_positions()
@@ -247,13 +274,15 @@ class TopSignalEntriesStrategy(Strategy):
             "strategy.top_signal_entries.ranked",
             level=AuditLevel.INFO,
             message=(
-                f"Top {len(movers)} / scan={scan_limit}, kline jelöltek: {len(candidates)}, "
+                f"Belépési jelöltek: {len(candidates)} "
+                f"({'kalibrált' if qualified_symbols else f'scan={scan_limit}'}), "
                 f"nyitott: {total_open}, kitöltendő slot: {need}."
             ),
             payload={
                 "target_slots": target_slots,
                 "scan_limit": scan_limit,
                 "kline_lookahead": lookahead,
+                "calibration_symbols": len(qualified_symbols),
                 "open_symbols_sample": sorted(open_syms)[:40],
                 "slots_to_fill": need,
             },

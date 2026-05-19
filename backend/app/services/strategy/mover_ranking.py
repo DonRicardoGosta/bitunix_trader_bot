@@ -120,6 +120,37 @@ def parse_open_position_symbols(raw: Any) -> set[str]:
     return out
 
 
+def movers_for_symbols(raw: Any, symbols: set[str] | frozenset[str]) -> list[Mover]:
+    """Ticker válaszból csak a megadott szimbólumok ``Mover`` listája."""
+    if not symbols:
+        return []
+    wanted = {str(s).upper() for s in symbols}
+    items = _extract_list(raw)
+    movers: list[Mover] = []
+    for item in items:
+        symbol = item.get("symbol")
+        if not symbol or str(symbol).upper() not in wanted:
+            continue
+        last = to_decimal(item.get("lastPrice") or item.get("last"))
+        open_p = to_decimal(item.get("open"))
+        if last is None or open_p is None or open_p == 0:
+            continue
+        change_pct = ((last - open_p) / open_p) * Decimal(100)
+        high = to_decimal(item.get("high") or item.get("high24h"))
+        low = to_decimal(item.get("low") or item.get("low24h"))
+        movers.append(
+            Mover(
+                symbol=str(symbol),
+                last_price=last,
+                change_pct=change_pct,
+                high=high,
+                low=low,
+            )
+        )
+    movers.sort(key=lambda m: abs(m.change_pct), reverse=True)
+    return movers
+
+
 def rank_top_movers(raw: Any, *, top_n: int) -> list[Mover]:
     """Bitunix ticker válaszból top-N mover lista (abszolút % csökkenő)."""
     items = _extract_list(raw)

@@ -469,9 +469,6 @@ class CalibrationService:
             )
             best = eval_out.get("best_variation")
             meets_backtest = bool(eval_out.get("ok") and best is not None)
-            take_as_candidate = (
-                meets_backtest and len(qualified) < self._candidates_target
-            )
 
             draft = draft_from_evaluation(
                 symbol=symbol,
@@ -479,7 +476,7 @@ class CalibrationService:
                 abs_change_24h_pct=abs_change,
                 kline_samples=len(klines),
                 eval_out=eval_out,
-                is_selected_candidate=take_as_candidate,
+                is_selected_candidate=meets_backtest,
                 leverage=leverage,
             )
             result.symbol_run_drafts.append(draft)
@@ -492,10 +489,6 @@ class CalibrationService:
                         "variations": eval_out.get("variations"),
                     }
                 )
-                await _flush_symbol_run(draft)
-                continue
-
-            if not take_as_candidate:
                 await _flush_symbol_run(draft)
                 continue
 
