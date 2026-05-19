@@ -7,8 +7,9 @@ csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 
 * A 24h ticker alapján van **range** adat, és az ár a mozgás irányához illő
   extrém zónában van (long: felső ``range_threshold``, short: alsó zóna).
-* **Belépési idő (live):** új pozíció csak UTC óránként **:15**, **:20** és **:25** percben
-  (a kalibrációs backtest továbbra is :15).
+* **Belépési idő (live):** új pozíció csak UTC óránként **:15**, **:20** és **:25** percben.
+* **Kalibrált coinoknál** (WF gate nélkül) az irány a backtesttel egyezik
+  (``predict_side_from_train_clean_legs``), nem a 24h range + kline breakout szűrő.
 * A **|24h % változás|** ≥ konfigurálható minimum.
 * **Kalibráció (alap):** ha ``wf_gate_enabled`` ki van kapcsolva (alapértelmezés),
   a legutóbbi sikeres 7 napos backtest kalibráció szűri a mozgókat és adja a
@@ -41,6 +42,7 @@ from app.db import audit
 from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
 from app.services.calibration import parse_klines
+from app.services.candidate_backtest import live_entry_side_from_backtest_logic
 from app.services.calibration_runner import get_active_calibration_result
 from app.services.runtime_settings import (
     effective_require_calibration,
@@ -399,12 +401,23 @@ class TopSignalEntriesStrategy(Strategy):
                     continue
 
                 klines = parse_klines(raw_k)
-                side, signal_reason = entry_side_from_mover_and_klines(
-                    mover,
-                    klines,
-                    min_abs_change_pct=min_abs_change,
-                    range_threshold=range_threshold,
+                use_cal_backtest_entry = (
+                    not wf_gate
+                    and calibration is not None
+                    and mover.symbol in calibration.per_symbol
                 )
+                if use_cal_backtest_entry:
+                    side, signal_reason = live_entry_side_from_backtest_logic(
+                        klines,
+                        choppiness_max=Decimal(cfg.wf_choppiness_max),
+                    )
+                else:
+                    side, signal_reason = entry_side_from_mover_and_klines(
+                        mover,
+                        klines,
+                        min_abs_change_pct=min_abs_change,
+                        range_threshold=range_threshold,
+                    )
                 if side is None:
                     result.skipped.append(
                         {
@@ -412,6 +425,11 @@ class TopSignalEntriesStrategy(Strategy):
                             "placed": False,
                             "reason": "no_entry_signal",
                             "signal_detail": signal_reason,
+                            "entry_signal_source": (
+                                "calibration_backtest"
+                                if use_cal_backtest_entry
+                                else "mover_kline"
+                            ),
                             "change_pct": str(mover.change_pct),
                         }
                     )

@@ -49,6 +49,26 @@ def is_hour_quarter_entry_bar(kline: dict[str, Decimal], *, minute: int = 15) ->
     return bar_datetime_utc(kline).minute == minute
 
 
+def live_entry_side_from_backtest_logic(
+    klines: list[dict[str, Decimal]],
+    *,
+    choppiness_max: Decimal = Decimal("1.72"),
+) -> tuple[str | None, str]:
+    """Live belépési irány — ugyanaz a logika, mint a kalibrációs backtestnél.
+
+    ``predict_side_from_train_clean_legs`` + clean legs (nem 24h range/kline breakout).
+    """
+    if len(klines) < BACKTEST_MIN_TRAIN_BARS + 1:
+        return None, "insufficient_klines"
+    train_clean, _ = analyze_clean_legs(klines, choppiness_max=choppiness_max)
+    predicted, reason = predict_side_from_train_clean_legs(klines, train_clean)
+    if predicted == "long":
+        return "BUY", f"calibration_backtest:{reason}"
+    if predicted == "short":
+        return "SELL", f"calibration_backtest:{reason}"
+    return None, f"calibration_backtest_no_side:{reason}"
+
+
 def entry_bar_indices(
     klines: list[dict[str, Decimal]],
     *,

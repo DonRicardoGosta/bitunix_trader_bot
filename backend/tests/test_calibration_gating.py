@@ -38,14 +38,21 @@ def _allow_entry_window(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _bbb_klines_raw() -> dict:
-    return {
-        "data": [
-            {"time": 1000, "open": "70", "high": "71", "low": "69", "close": "70"},
-            {"time": 2000, "open": "61.5", "high": "61.6", "low": "58", "close": "59"},
-            {"time": 3000, "open": "60", "high": "60.1", "low": "57", "close": "56"},
-            {"time": 4000, "open": "56", "high": "57", "low": "55", "close": "56.5"},
-        ]
-    }
+    """≥16 gyertya (backtest irányhoz), lefelé trend → short/SELL."""
+    rows = []
+    close = Decimal("70")
+    for i in range(20):
+        close -= Decimal("0.4")
+        rows.append(
+            {
+                "time": 1000 + i * 900_000,
+                "open": str(close + Decimal("0.2")),
+                "high": str(close + Decimal("0.5")),
+                "low": str(close - Decimal("0.5")),
+                "close": str(close),
+            }
+        )
+    return {"data": rows}
 
 
 class FakeBitunixClient:

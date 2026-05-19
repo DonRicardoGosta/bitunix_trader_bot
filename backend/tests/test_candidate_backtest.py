@@ -14,6 +14,7 @@ from app.services.candidate_backtest import (
     evaluate_symbol_best_leverage,
     evaluate_symbol_variations,
     is_hour_quarter_entry_bar,
+    live_entry_side_from_backtest_logic,
     simulate_variation_on_klines,
 )
 
@@ -75,6 +76,26 @@ def test_simulate_only_tp_or_sl_closure() -> None:
     )
     for t in row["trades"]:
         assert t["first_touch"] in ("tp", "sl", "none")
+
+
+def test_live_entry_side_from_backtest_logic_maps_long_short() -> None:
+    klines = []
+    base_ms = int(datetime(2025, 1, 1, 0, 0, tzinfo=UTC).timestamp() * 1000)
+    price = Decimal("100")
+    for i in range(20):
+        price += Decimal("0.5")
+        klines.append(
+            {
+                "time": Decimal(base_ms + i * 900_000),
+                "open": price,
+                "high": price + Decimal("1"),
+                "low": price - Decimal("1"),
+                "close": price,
+            }
+        )
+    side, reason = live_entry_side_from_backtest_logic(klines)
+    assert side == "BUY"
+    assert reason.startswith("calibration_backtest:")
 
 
 def test_evaluate_symbol_variations_insufficient_data() -> None:
