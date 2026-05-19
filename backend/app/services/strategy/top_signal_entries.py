@@ -7,7 +7,7 @@ csökkentése), és **csak akkor** nyitunk pozíciót, ha egyszerre teljesül:
 
 * A 24h ticker alapján van **range** adat, és az ár a mozgás irányához illő
   extrém zónában van (long: felső ``range_threshold``, short: alsó zóna).
-* **Belépési idő (live):** új pozíció csak UTC óránként **:15** és **:20** percben
+* **Belépési idő (live):** új pozíció csak UTC óránként **:15**, **:20** és **:25** percben
   (a kalibrációs backtest továbbra is :15).
 * A **|24h % változás|** ≥ konfigurálható minimum.
 * **Kalibráció (alap):** ha ``wf_gate_enabled`` ki van kapcsolva (alapértelmezés),
@@ -143,7 +143,7 @@ class TopSignalEntriesStrategy(Strategy):
                 "strategy.top_signal_entries.outside_entry_window",
                 level=AuditLevel.INFO,
                 message=(
-                    "Új belépés csak óránként :15 és :20 percben (UTC) – "
+                    "Új belépés csak óránként :15, :20 és :25 percben (UTC) – "
                     f"jelenleg {now_utc.strftime('%H:%M')}."
                 ),
                 payload={
