@@ -15,12 +15,14 @@ from app.db.models import (
     TpSlCalibrationSymbolRun,
 )
 from app.db.session import AsyncSessionLocal, engine
+from app.services.calibration_runner import supersede_stale_running_calibrations
 from app.services.calibration_symbol_runs import (
     SymbolRunDraft,
     draft_from_evaluation,
     list_symbol_runs_for_calibration,
     max_variation_win_rate_pct,
     persist_symbol_runs,
+    resolve_symbol_runs_calibration_id,
 )
 
 
@@ -101,6 +103,50 @@ async def test_persist_and_list_symbol_runs() -> None:
         )
         assert total == 2
         assert all_rows[0].symbol == "BBBUSDT"
+
+
+@pytest.mark.asyncio
+async def test_supersede_stale_running_calibrations() -> None:
+    async with AsyncSessionLocal() as session:
+        old = TpSlCalibration(
+            status=CalibrationStatus.RUNNING,
+            triggered_by="test",
+            lookback_minutes=120,
+            top_n=10,
+        )
+        new = TpSlCalibration(
+            status=CalibrationStatus.RUNNING,
+            triggered_by="test",
+            lookback_minutes=120,
+            top_n=10,
+        )
+        session.add_all([old, new])
+        await session.flush()
+        n = await supersede_stale_running_calibrations(session, keep_id=new.id)
+        await session.commit()
+        assert n == 1
+        await session.refresh(old)
+        assert old.status == CalibrationStatus.FAILED
+        assert "superseded_by_calibration" in (old.error or "")
+
+
+def test_resolve_symbol_runs_calibration_id() -> None:
+    running = TpSlCalibration(
+        id=2,
+        status=CalibrationStatus.RUNNING,
+        triggered_by="t",
+        lookback_minutes=1,
+        top_n=1,
+    )
+    success = TpSlCalibration(
+        id=1,
+        status=CalibrationStatus.SUCCESS,
+        triggered_by="t",
+        lookback_minutes=1,
+        top_n=1,
+    )
+    assert resolve_symbol_runs_calibration_id(running, success) == 2
+    assert resolve_symbol_runs_calibration_id(None, success) == 1
 
 
 def test_draft_from_evaluation_not_selected() -> None:

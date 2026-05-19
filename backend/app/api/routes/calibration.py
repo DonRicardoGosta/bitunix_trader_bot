@@ -17,8 +17,10 @@ from app.services.calibration_runner import (
     seconds_until_next_half_hour,
 )
 from app.services.calibration_symbol_runs import (
+    count_symbol_runs,
     list_symbol_history,
     list_symbol_runs_for_calibration,
+    resolve_symbol_runs_calibration_id,
     symbol_run_to_dict,
 )
 from app.services.runtime_settings import effective_require_calibration, is_trading_paused
@@ -71,6 +73,15 @@ async def get_latest(
         datetime.now(UTC) + timedelta(seconds=seconds_until_next_half_hour())
     ).isoformat()
 
+    symbol_runs_calibration_id = resolve_symbol_runs_calibration_id(
+        latest_any, latest_success
+    )
+    symbol_runs_persisted = 0
+    if symbol_runs_calibration_id is not None:
+        symbol_runs_persisted = await count_symbol_runs(
+            session, symbol_runs_calibration_id
+        )
+
     return {
         "trading_enabled": trading_enabled,
         "trading_paused": paused,
@@ -79,6 +90,8 @@ async def get_latest(
         "max_age_minutes": max_age,
         "now": datetime.now(UTC).isoformat(),
         "next_run_after": next_run_after,
+        "symbol_runs_calibration_id": symbol_runs_calibration_id,
+        "symbol_runs_persisted": symbol_runs_persisted,
         "latest": _row_to_dict(latest_any) if latest_any else None,
         "latest_successful": (
             _row_to_dict(latest_success) if latest_success else None

@@ -29,6 +29,8 @@ beforeEach(() => {
         max_age_minutes: 180,
         now: "2026-05-13T10:00:00Z",
         next_run_after: "2026-05-13T11:00:00Z",
+        symbol_runs_calibration_id: 1,
+        symbol_runs_persisted: 2,
         latest: {
           id: 1,
           status: "SUCCESS",

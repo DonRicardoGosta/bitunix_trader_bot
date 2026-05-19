@@ -92,8 +92,21 @@ def _synth_15m_klines(n: int = 80) -> list[dict]:
     return parse_klines({"data": rows})
 
 
+@pytest.fixture
+def _noop_symbol_persist(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _noop(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "app.services.calibration.persist_symbol_run_committed",
+        _noop,
+    )
+
+
 @pytest.mark.asyncio
-async def test_calibration_service_run_calibrates_top_symbols(monkeypatch) -> None:
+async def test_calibration_service_run_calibrates_top_symbols(
+    monkeypatch, _noop_symbol_persist
+) -> None:
     """Top mozgók közül a backtesten átment jelöltek kerülnek per_symbol-ba."""
     from app.services import candidate_backtest as cb_mod
     from app.services import kline_fetch as kf_mod
@@ -129,6 +142,7 @@ async def test_calibration_service_run_calibrates_top_symbols(monkeypatch) -> No
 
     service = CalibrationService(
         client=fake,  # type: ignore[arg-type]
+        calibration_id=1,
         lookback_minutes=10080,
         top_n=2,
         candidates_target=2,
@@ -144,16 +158,22 @@ async def test_calibration_service_run_calibrates_top_symbols(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_calibration_service_returns_empty_when_no_data() -> None:
+async def test_calibration_service_returns_empty_when_no_data(
+    _noop_symbol_persist,
+) -> None:
     fake = _FakeClient(tickers={"data": []}, klines_by_symbol={})
-    service = CalibrationService(client=fake, top_n=5)  # type: ignore[arg-type]
+    service = CalibrationService(
+        client=fake, calibration_id=1, top_n=5
+    )  # type: ignore[arg-type]
     result = await service.run()
     assert result.per_symbol == {}
     assert result.global_tp_move_pct is None
 
 
 @pytest.mark.asyncio
-async def test_calibration_lookup_falls_back_to_global(monkeypatch) -> None:
+async def test_calibration_lookup_falls_back_to_global(
+    monkeypatch, _noop_symbol_persist
+) -> None:
     from app.services import candidate_backtest as cb_mod
     from app.services import kline_fetch as kf_mod
 
@@ -179,7 +199,10 @@ async def test_calibration_lookup_falls_back_to_global(monkeypatch) -> None:
     tickers = {"data": [_ticker_pair("AAA", "110", "100")]}
     fake = _FakeClient(tickers=tickers, klines_by_symbol={})
     service = CalibrationService(
-        client=fake, top_n=1, candidates_target=1  # type: ignore[arg-type]
+        client=fake,
+        calibration_id=1,
+        top_n=1,
+        candidates_target=1,  # type: ignore[arg-type]
     )
     result = await service.run()
 

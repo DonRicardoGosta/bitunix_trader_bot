@@ -9,7 +9,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import TpSlCalibrationSymbolRun
+from app.db.models import CalibrationStatus, TpSlCalibration, TpSlCalibrationSymbolRun
 from app.services.tpsl import implied_price_move_pct_from_roi
 
 
@@ -140,42 +140,119 @@ def draft_from_evaluation(
     )
 
 
+def _draft_to_row(calibration_id: int, draft: SymbolRunDraft) -> TpSlCalibrationSymbolRun:
+    return TpSlCalibrationSymbolRun(
+        calibration_id=calibration_id,
+        symbol=draft.symbol,
+        scan_rank=draft.scan_rank,
+        abs_change_24h_pct=draft.abs_change_24h_pct,
+        reason=draft.reason,
+        is_qualified=draft.is_qualified,
+        kline_samples=draft.kline_samples,
+        best_variation_label=draft.best_variation_label,
+        best_tp_roi_pct=draft.best_tp_roi_pct,
+        best_sl_roi_pct=draft.best_sl_roi_pct,
+        best_win_rate_pct=draft.best_win_rate_pct,
+        max_win_rate_pct=draft.max_win_rate_pct,
+        best_total_trades=draft.best_total_trades,
+        best_tp_wins=draft.best_tp_wins,
+        best_sl_losses=draft.best_sl_losses,
+        best_no_result=draft.best_no_result,
+        tp_move_pct=draft.tp_move_pct,
+        sl_move_pct=draft.sl_move_pct,
+        variations=draft.variations,
+        fetch_error=draft.fetch_error,
+    )
+
+
+async def persist_symbol_run(
+    session: AsyncSession,
+    calibration_id: int,
+    draft: SymbolRunDraft,
+) -> None:
+    """Egy coin scan eredmény azonnali mentése (flush, commit a hívóé)."""
+    session.add(_draft_to_row(calibration_id, draft))
+    await session.flush()
+
+
+async def persist_symbol_run_committed(
+    calibration_id: int,
+    draft: SymbolRunDraft,
+    *,
+    scanned_symbols: int,
+    candidates_found: int,
+    candidates_target: int,
+    top_n: int,
+    publish_invalidate: bool = True,
+) -> None:
+    """Coin scan külön tranzakcióban + futás progress a parent rekordon."""
+    from datetime import UTC, datetime
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.live_bus import (
+        DEFAULT_INVALIDATION_TOPICS,
+        publish_invalidate as _publish,
+    )
+
+    async with AsyncSessionLocal() as session:
+        await persist_symbol_run(session, calibration_id, draft)
+        cal = await session.get(TpSlCalibration, calibration_id)
+        if cal is not None and cal.status == CalibrationStatus.RUNNING:
+            cal.summary = {
+                "mode": "candidate_backtest",
+                "in_progress": True,
+                "scanned_symbols": scanned_symbols,
+                "candidates_found": candidates_found,
+                "candidates_target": candidates_target,
+                "top_n": top_n,
+                "symbol_runs_table": "tpsl_calibration_symbol_runs",
+            }
+        await session.commit()
+    if publish_invalidate:
+        await _publish(DEFAULT_INVALIDATION_TOPICS)
+
+
 async def persist_symbol_runs(
     session: AsyncSession,
     calibration_id: int,
     drafts: list[SymbolRunDraft],
 ) -> int:
-    """Összes coin scan bulk mentése; visszaadja a beszúrt sorok számát."""
+    """Több coin scan egyszerre (tesztek / legacy); élesben coinonként commit."""
     if not drafts:
         return 0
-    rows = [
-        TpSlCalibrationSymbolRun(
-            calibration_id=calibration_id,
-            symbol=d.symbol,
-            scan_rank=d.scan_rank,
-            abs_change_24h_pct=d.abs_change_24h_pct,
-            reason=d.reason,
-            is_qualified=d.is_qualified,
-            kline_samples=d.kline_samples,
-            best_variation_label=d.best_variation_label,
-            best_tp_roi_pct=d.best_tp_roi_pct,
-            best_sl_roi_pct=d.best_sl_roi_pct,
-            best_win_rate_pct=d.best_win_rate_pct,
-            max_win_rate_pct=d.max_win_rate_pct,
-            best_total_trades=d.best_total_trades,
-            best_tp_wins=d.best_tp_wins,
-            best_sl_losses=d.best_sl_losses,
-            best_no_result=d.best_no_result,
-            tp_move_pct=d.tp_move_pct,
-            sl_move_pct=d.sl_move_pct,
-            variations=d.variations,
-            fetch_error=d.fetch_error,
-        )
-        for d in drafts
-    ]
-    session.add_all(rows)
+    session.add_all([_draft_to_row(calibration_id, d) for d in drafts])
     await session.flush()
-    return len(rows)
+    return len(drafts)
+
+
+async def count_symbol_runs(
+    session: AsyncSession,
+    calibration_id: int,
+) -> int:
+    stmt = (
+        sa.select(sa.func.count())
+        .select_from(TpSlCalibrationSymbolRun)
+        .where(TpSlCalibrationSymbolRun.calibration_id == calibration_id)
+    )
+    return int((await session.execute(stmt)).scalar_one())
+
+
+def resolve_symbol_runs_calibration_id(
+    latest_any: TpSlCalibration | None,
+    latest_success: TpSlCalibration | None,
+) -> int | None:
+    """Melyik futás symbol-runjait mutassa a UI (soha nem kever két futást).
+
+    - Futás közben (RUNNING): az aktuális futás ID-ja.
+    - Egyébként: utolsó sikeres kalibráció (trading gate-del egyezik).
+    """
+    if latest_any is not None and latest_any.status == CalibrationStatus.RUNNING:
+        return latest_any.id
+    if latest_success is not None:
+        return latest_success.id
+    if latest_any is not None:
+        return latest_any.id
+    return None
 
 
 def symbol_run_to_dict(row: TpSlCalibrationSymbolRun) -> dict[str, Any]:
@@ -261,10 +338,17 @@ async def list_symbol_history(
     *,
     limit: int = 20,
 ) -> list[TpSlCalibrationSymbolRun]:
-    """Egy szimbólum utolsó N kalibrációs backtest sorai (visszakövethetőség)."""
+    """Egy szimbólum utolsó N sikeres kalibrációs backtest sorai."""
     stmt = (
         sa.select(TpSlCalibrationSymbolRun)
-        .where(TpSlCalibrationSymbolRun.symbol == symbol.upper())
+        .join(
+            TpSlCalibration,
+            TpSlCalibration.id == TpSlCalibrationSymbolRun.calibration_id,
+        )
+        .where(
+            TpSlCalibrationSymbolRun.symbol == symbol.upper(),
+            TpSlCalibration.status == CalibrationStatus.SUCCESS,
+        )
         .order_by(TpSlCalibrationSymbolRun.created_at.desc())
         .limit(max(1, min(limit, 100)))
     )

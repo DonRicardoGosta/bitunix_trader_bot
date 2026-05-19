@@ -25,6 +25,7 @@ from app.services.calibration_symbol_runs import (
     SymbolRunDraft,
     draft_from_evaluation,
     draft_from_fetch_failure,
+    persist_symbol_run_committed,
 )
 from app.services.hold_window import HoldWindowParams, optimize_hold_window_for_sequence
 from app.services.tpsl import implied_price_move_pct_from_roi
@@ -317,6 +318,7 @@ class CalibrationService:
         self,
         client: BitunixClient,
         *,
+        calibration_id: int,
         lookback_minutes: int = 120,
         top_n: int = 20,
         candidates_target: int = 10,
@@ -326,6 +328,7 @@ class CalibrationService:
         wf_choppiness_max: Decimal = Decimal("1.72"),
     ) -> None:
         self._client = client
+        self._calibration_id = calibration_id
         self._lookback_minutes = lookback_minutes
         self._top_n = top_n
         self._candidates_target = max(0, int(candidates_target))
@@ -361,6 +364,16 @@ class CalibrationService:
         end_ms = int(datetime.now(UTC).timestamp() * 1000)
         qualified: list[QualifiedCandidate] = []
 
+        async def _flush_symbol_run(draft: SymbolRunDraft) -> None:
+            await persist_symbol_run_committed(
+                self._calibration_id,
+                draft,
+                scanned_symbols=result.scanned_symbols,
+                candidates_found=len(qualified),
+                candidates_target=self._candidates_target,
+                top_n=self._top_n,
+            )
+
         for rank, (symbol, abs_change) in enumerate(top_symbols, start=1):
             result.scanned_symbols += 1
             try:
@@ -383,6 +396,7 @@ class CalibrationService:
                 result.failed_symbols.append(
                     {"symbol": symbol, "reason": "fetch_failed", "error": str(exc)}
                 )
+                await _flush_symbol_run(draft)
                 continue
 
             eval_out = evaluate_symbol_variations(
@@ -412,9 +426,11 @@ class CalibrationService:
                         "variations": eval_out.get("variations"),
                     }
                 )
+                await _flush_symbol_run(draft)
                 continue
 
             if not take_as_candidate:
+                await _flush_symbol_run(draft)
                 continue
 
             tp_roi = Decimal(str(best["tp_roi_pct"]))
@@ -453,6 +469,7 @@ class CalibrationService:
                 variations=list(eval_out.get("variations") or []),
             )
             qualified.append(cand)
+            await _flush_symbol_run(draft)
 
         result.candidates_found = len(qualified)
         result.qualified_candidates = [c.to_summary_dict() for c in qualified]

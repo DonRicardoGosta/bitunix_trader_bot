@@ -30,7 +30,10 @@ from app.services.calibration import (
     CalibrationService,
     load_result_from_summary,
 )
-from app.services.calibration_symbol_runs import persist_symbol_runs
+from app.services.calibration_symbol_runs import (
+    count_symbol_runs,
+    resolve_symbol_runs_calibration_id,
+)
 from app.services.candidate_backtest import BACKTEST_LOOKBACK_DAYS
 from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 from app.services.strategy_runtime_config import get_top_signal_entries_config
@@ -68,16 +71,40 @@ async def count_open_strategy_slots(
     return total_open, need
 
 
+async def supersede_stale_running_calibrations(
+    session: AsyncSession,
+    *,
+    keep_id: int,
+) -> int:
+    """Régi RUNNING kalibrációk lezárása, hogy ne keveredjen az új futással."""
+    now = datetime.now(UTC)
+    result = await session.execute(
+        sa.update(TpSlCalibration)
+        .where(
+            TpSlCalibration.status == CalibrationStatus.RUNNING,
+            TpSlCalibration.id != keep_id,
+        )
+        .values(
+            status=CalibrationStatus.FAILED,
+            error=f"superseded_by_calibration_{keep_id}",
+            finished_at=now,
+        )
+    )
+    return int(result.rowcount or 0)
+
+
 async def _build_service(
     client: BitunixClient,
     session: AsyncSession,
     *,
+    calibration_id: int,
     candidates_target: int,
     scan_limit: int,
 ) -> CalibrationService:
     lookback_minutes = BACKTEST_LOOKBACK_DAYS * 24 * 60
     return CalibrationService(
         client=client,
+        calibration_id=calibration_id,
         lookback_minutes=lookback_minutes,
         top_n=scan_limit,
         candidates_target=candidates_target,
@@ -122,6 +149,7 @@ async def run_calibration(
         session.add(row)
         await session.flush()
         row_id = row.id
+        await supersede_stale_running_calibrations(session, keep_id=row_id)
         await session.commit()
 
     if candidates_target is not None and candidates_target <= 0:
@@ -153,6 +181,7 @@ async def run_calibration(
             service = await _build_service(
                 client,
                 session,
+                calibration_id=row_id,
                 candidates_target=int(candidates_target or 0),
                 scan_limit=scan,
             )
@@ -176,10 +205,6 @@ async def run_calibration(
             else:
                 db_row.status = CalibrationStatus.SUCCESS
                 db_row.summary = result.to_dict()
-                if result.symbol_run_drafts:
-                    await persist_symbol_runs(
-                        session, row_id, result.symbol_run_drafts
-                    )
             await audit.record(
                 session,
                 f"calibration.{db_row.status.value.lower()}",

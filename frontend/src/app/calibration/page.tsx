@@ -86,11 +86,11 @@ export default function CalibrationPage() {
       ]);
       setLatest(l);
       setRuns(r);
-      const calId = l.latest_successful?.id ?? l.latest?.id;
+      const calId = l.symbol_runs_calibration_id ?? null;
       if (calId) {
         const sr = await api.calibrationSymbolRuns(calId, {
           order_by: "max_win_rate",
-          limit: 100,
+          limit: 200,
         });
         setSymbolRuns(sr.items);
         setSymbolRunsTotal(sr.total);
@@ -123,8 +123,13 @@ export default function CalibrationPage() {
   }
 
   const tradingEnabled = latest?.trading_enabled ?? false;
-  const summary = latest?.latest_successful?.summary as CalibrationSummary | undefined;
-  const qualified = summary?.qualified_candidates ?? [];
+  const isRunning = latest?.latest?.status === "RUNNING";
+  const summary = (
+    isRunning
+      ? latest?.latest?.summary
+      : latest?.latest_successful?.summary
+  ) as CalibrationSummary | undefined;
+  const qualified = isRunning ? [] : (summary?.qualified_candidates ?? []);
 
   return (
     <div className="space-y-6">
@@ -167,6 +172,14 @@ export default function CalibrationPage() {
               tone="neutral"
             />
           </div>
+          {isRunning && (
+            <p className="text-sm text-muted mb-3">
+              Futás folyamatban (kalibráció #{latest?.symbol_runs_calibration_id}
+              ) — eddig{" "}
+              <strong>{latest?.symbol_runs_persisted ?? 0}</strong> coin mentve
+              DB-be.
+            </p>
+          )}
           {summary && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
               <Metric
@@ -175,11 +188,21 @@ export default function CalibrationPage() {
               />
               <Metric
                 label="Átvizsgált coin"
-                value={String(summary.scanned_symbols ?? 0)}
+                value={String(
+                  isRunning
+                    ? (latest?.symbol_runs_persisted ?? summary.scanned_symbols ?? 0)
+                    : (summary.scanned_symbols ?? 0),
+                )}
               />
               <Metric
                 label="Lookback"
-                value={`${Math.round((latest?.latest_successful?.lookback_minutes ?? 0) / 60 / 24)} nap`}
+                value={`${Math.round(
+                  ((latest?.latest?.lookback_minutes ??
+                    latest?.latest_successful?.lookback_minutes ??
+                    0) as number) /
+                    60 /
+                    24,
+                )} nap`}
               />
               <Metric label="Mód" value={summary.mode ?? "—"} />
             </div>

@@ -903,6 +903,8 @@ export const api = {
       max_age_minutes: number;
       now: string;
       next_run_after: string | null;
+      symbol_runs_calibration_id: number | null;
+      symbol_runs_persisted: number;
       latest: CalibrationRun | null;
       latest_successful: CalibrationRun | null;
     }>("/api/calibration/latest"),
