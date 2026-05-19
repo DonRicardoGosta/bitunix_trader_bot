@@ -13,6 +13,7 @@ from app.db.models import (
     AuditEvent,
     CalibrationStatus,
     TpSlCalibration,
+    TpSlCalibrationSymbolRun,
 )
 from app.db.session import AsyncSessionLocal, engine
 from app.services.calibration import CalibrationService
@@ -238,6 +239,7 @@ async def test_run_calibration_persists_row_and_audit_events(monkeypatch) -> Non
 
     # Friss adatbázis-állapot
     async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(TpSlCalibrationSymbolRun))
         await session.execute(sa.delete(TpSlCalibration))
         await session.execute(sa.delete(AuditEvent))
         await session.commit()
@@ -263,6 +265,12 @@ async def test_run_calibration_persists_row_and_audit_events(monkeypatch) -> Non
             (await session.execute(sa.select(AuditEvent.event))).scalars().all()
         )
         assert "calibration.success" in events
+
+        sym_rows = (
+            await session.execute(sa.select(TpSlCalibrationSymbolRun))
+        ).scalars().all()
+        assert len(sym_rows) >= 1
+        assert sym_rows[0].calibration_id == rows[0].id
 
 
 @pytest.mark.asyncio

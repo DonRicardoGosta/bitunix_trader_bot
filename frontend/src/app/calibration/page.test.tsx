@@ -110,6 +110,48 @@ beforeEach(() => {
         },
       });
     }
+    if (url.includes("/api/calibration/runs/") && url.includes("/symbols")) {
+      return jsonResponse({
+        calibration_id: 1,
+        total: 2,
+        limit: 100,
+        offset: 0,
+        items: [
+          {
+            id: 10,
+            calibration_id: 1,
+            symbol: "ETHUSDT",
+            scan_rank: 2,
+            abs_change_24h_pct: "3.0",
+            reason: "no_variation_meets_target",
+            is_qualified: false,
+            max_win_rate_pct: "72.00",
+            best_win_rate_pct: null,
+            best_variation_label: null,
+            best_total_trades: 20,
+            fetch_error: null,
+            variations: null,
+            created_at: "2026-05-13T09:00:30Z",
+          },
+          {
+            id: 11,
+            calibration_id: 1,
+            symbol: "BTCUSDT",
+            scan_rank: 1,
+            abs_change_24h_pct: "2.5",
+            reason: "qualified",
+            is_qualified: true,
+            max_win_rate_pct: "85.00",
+            best_win_rate_pct: "85.00",
+            best_variation_label: "TP100/SL50",
+            best_total_trades: 6,
+            fetch_error: null,
+            variations: null,
+            created_at: "2026-05-13T09:00:30Z",
+          },
+        ],
+      });
+    }
     if (url.includes("/api/calibration/runs")) {
       return jsonResponse([]);
     }
@@ -136,8 +178,9 @@ describe("<CalibrationPage />", () => {
       expect(screen.getByText(/Tradelés/i)).toBeInTheDocument(),
     );
     expect(screen.getByText("engedélyezve")).toBeInTheDocument();
-    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
-    expect(screen.getByText("85.00%")).toBeInTheDocument();
+    expect(screen.getAllByText("BTCUSDT").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("85.00%").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Összes coin backtest/i)).toBeInTheDocument();
     expect(screen.getByText(/Minősített jelöltek/i)).toBeInTheDocument();
   });
 

@@ -3,7 +3,11 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { api, type CalibrationRun } from "@/lib/api";
+import {
+  api,
+  type CalibrationRun,
+  type CalibrationSymbolRun,
+} from "@/lib/api";
 import { useRefreshInterval } from "@/contexts/RefreshIntervalContext";
 import { useLiveEpoch } from "@/contexts/LiveUpdatesContext";
 
@@ -69,6 +73,10 @@ export default function CalibrationPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
+  const [symbolRuns, setSymbolRuns] = useState<CalibrationSymbolRun[] | null>(
+    null,
+  );
+  const [symbolRunsTotal, setSymbolRunsTotal] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -78,6 +86,18 @@ export default function CalibrationPage() {
       ]);
       setLatest(l);
       setRuns(r);
+      const calId = l.latest_successful?.id ?? l.latest?.id;
+      if (calId) {
+        const sr = await api.calibrationSymbolRuns(calId, {
+          order_by: "max_win_rate",
+          limit: 100,
+        });
+        setSymbolRuns(sr.items);
+        setSymbolRunsTotal(sr.total);
+      } else {
+        setSymbolRuns(null);
+        setSymbolRunsTotal(0);
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ismeretlen hiba");
@@ -180,6 +200,77 @@ export default function CalibrationPage() {
           </div>
         </CardContent>
       </Card>
+
+      {symbolRuns && symbolRuns.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              Összes coin backtest ({symbolRunsTotal} sor, DB)
+            </CardTitle>
+            <span className="text-xs text-muted">
+              Legjobb variáció max win % szerint · részletek:{" "}
+              <code className="text-xs">tpsl_calibration_symbol_runs</code>
+            </span>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase text-muted border-b border-border">
+                  <tr>
+                    <th className="text-left py-2 pr-3">#</th>
+                    <th className="text-left py-2 pr-3">Szimbólum</th>
+                    <th className="text-right py-2 pr-3">Max win %</th>
+                    <th className="text-right py-2 pr-3">Best win %</th>
+                    <th className="text-left py-2 pr-3">Ok</th>
+                    <th className="text-left py-2 pr-3">Variáció</th>
+                    <th className="text-right py-2 pr-3">Trade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {symbolRuns.map((row) => (
+                    <tr
+                      key={row.id}
+                      className={`border-b border-border/50 ${
+                        row.is_qualified ? "bg-profit/5" : ""
+                      }`}
+                    >
+                      <td className="py-2 pr-3 num text-muted">
+                        {row.scan_rank}
+                      </td>
+                      <td className="py-2 pr-3 font-medium">{row.symbol}</td>
+                      <td className="py-2 pr-3 text-right num">
+                        {row.max_win_rate_pct != null
+                          ? `${row.max_win_rate_pct}%`
+                          : "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-right num">
+                        {row.best_win_rate_pct != null
+                          ? `${row.best_win_rate_pct}%`
+                          : "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-xs text-muted">
+                        {row.reason}
+                        {row.is_qualified ? " ✓" : ""}
+                      </td>
+                      <td className="py-2 pr-3 text-muted">
+                        {row.best_variation_label ?? "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-right num">
+                        {row.best_total_trades ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {symbolRunsTotal > symbolRuns.length && (
+              <p className="text-xs text-muted mt-2">
+                Első {symbolRuns.length} / {symbolRunsTotal} sor (API limit).
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {qualified.length > 0 && (
         <Card>

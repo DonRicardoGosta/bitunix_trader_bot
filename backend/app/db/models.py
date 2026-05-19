@@ -13,11 +13,15 @@ from enum import Enum
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
+    ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy import (
@@ -199,6 +203,73 @@ class TpSlCalibration(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+
+class TpSlCalibrationSymbolRun(Base, TimestampMixin):
+    """Egy kalibrációs futás egy szimbólumának backtest eredménye.
+
+    Minden scan-elt coin külön sorban (FK → ``tpsl_calibrations``), indexelt
+    mezőkkel gyors szűréshez és szimbólumonkénti visszakövetéshez.
+    """
+
+    __tablename__ = "tpsl_calibration_symbol_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "calibration_id",
+            "symbol",
+            name="uq_tpsl_cal_symbol_runs_cal_symbol",
+        ),
+        Index(
+            "ix_tpsl_cal_symbol_runs_cal_qualified",
+            "calibration_id",
+            "is_qualified",
+        ),
+        Index(
+            "ix_tpsl_cal_symbol_runs_cal_rank",
+            "calibration_id",
+            "scan_rank",
+        ),
+        Index(
+            "ix_tpsl_cal_symbol_runs_cal_best_wr",
+            "calibration_id",
+            "best_win_rate_pct",
+        ),
+        Index(
+            "ix_tpsl_cal_symbol_runs_symbol_cal",
+            "symbol",
+            "calibration_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    calibration_id: Mapped[int] = mapped_column(
+        ForeignKey("tpsl_calibrations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    scan_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    abs_change_24h_pct: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_qualified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    kline_samples: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_variation_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    best_tp_roi_pct: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    best_sl_roi_pct: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    best_win_rate_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2), nullable=True
+    )
+    max_win_rate_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2), nullable=True
+    )
+    best_total_trades: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_tp_wins: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_sl_losses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_no_result: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tp_move_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    sl_move_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    variations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    fetch_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AppRuntimeSetting(Base):

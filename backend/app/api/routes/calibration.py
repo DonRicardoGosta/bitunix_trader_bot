@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -15,6 +15,11 @@ from app.services.calibration_runner import (
     get_latest_successful_calibration,
     run_calibration,
     seconds_until_next_half_hour,
+)
+from app.services.calibration_symbol_runs import (
+    list_symbol_history,
+    list_symbol_runs_for_calibration,
+    symbol_run_to_dict,
 )
 from app.services.runtime_settings import effective_require_calibration, is_trading_paused
 from app.services.trading_gate import is_calibration_trading_allowed
@@ -94,6 +99,55 @@ async def list_runs(
     )
     rows = (await session.execute(stmt)).scalars().all()
     return [_row_to_dict(r) for r in rows]
+
+
+@router.get("/runs/{calibration_id}/symbols")
+async def list_run_symbols(
+    calibration_id: int,
+    symbol: str | None = None,
+    qualified_only: bool | None = None,
+    order_by: str = "scan_rank",
+    limit: int = 200,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Egy kalibráció összes coin backtest sorai (lapozva, indexelt mezők)."""
+    cal = await session.get(TpSlCalibration, calibration_id)
+    if cal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"calibration {calibration_id} not found",
+        )
+    rows, total = await list_symbol_runs_for_calibration(
+        session,
+        calibration_id,
+        symbol=symbol,
+        qualified_only=qualified_only,
+        limit=limit,
+        offset=offset,
+        order_by=order_by,
+    )
+    return {
+        "calibration_id": calibration_id,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [symbol_run_to_dict(r) for r in rows],
+    }
+
+
+@router.get("/symbols/{symbol}/history")
+async def symbol_calibration_history(
+    symbol: str,
+    limit: int = 20,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Szimbólum backtest előzményei kalibrációk között (visszakövethetőség)."""
+    rows = await list_symbol_history(session, symbol, limit=limit)
+    return {
+        "symbol": symbol.upper(),
+        "items": [symbol_run_to_dict(r) for r in rows],
+    }
 
 
 @router.post("/run", status_code=status.HTTP_202_ACCEPTED)

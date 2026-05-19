@@ -6,10 +6,9 @@ Algoritmus röviden:
 2. Mindegyikre 7 nap 15 perces kline (paginált lekérés).
 3. Fix TP/SL margin-ROI variációk (50/50, 100/50, 150/100, 200/100) – csak
    TP és SL zárhat; belépés csak óránként :15-kor.
-4. Ha legalább egy variáció ≥80%% TP win rate → jelölt; megállunk, ha elértük
-   a ``candidates_target`` darabot (szabad slot) vagy a scan végét.
-5. A summary ``qualified_candidates`` + per-symbol TP/SL move %% a stratégia
-   és a UI számára.
+4. Ha legalább egy variáció ≥80%% TP win rate → jelölt (max. ``candidates_target``).
+5. Minden scan-elt coin eredménye a ``tpsl_calibration_symbol_runs`` táblában;
+   a summary csak összesítő + ``qualified_candidates`` (stratégia / UI).
 """
 
 from __future__ import annotations
@@ -22,6 +21,11 @@ from typing import Any
 
 from app.bitunix.client import BitunixClient
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
+from app.services.calibration_symbol_runs import (
+    SymbolRunDraft,
+    draft_from_evaluation,
+    draft_from_fetch_failure,
+)
 from app.services.hold_window import HoldWindowParams, optimize_hold_window_for_sequence
 from app.services.tpsl import implied_price_move_pct_from_roi
 
@@ -56,6 +60,7 @@ class CalibrationResult:
     global_tp_move_pct: Decimal | None = None
     global_sl_move_pct: Decimal | None = None
     failed_symbols: list[dict[str, Any]] = field(default_factory=list)
+    symbol_run_drafts: list[SymbolRunDraft] = field(default_factory=list)
     qualified_candidates: list[dict[str, Any]] = field(default_factory=list)
     lookback_minutes: int = 120
     top_n: int = 20
@@ -120,7 +125,11 @@ class CalibrationResult:
                 }
                 for sym, s in self.per_symbol.items()
             },
-            "failed_symbols": self.failed_symbols,
+            "failed_symbols": (
+                self.failed_symbols if not self.symbol_run_drafts else []
+            ),
+            "symbol_runs_count": len(self.symbol_run_drafts),
+            "symbol_runs_table": "tpsl_calibration_symbol_runs",
         }
 
     def lookup(self, symbol: str) -> tuple[Decimal, Decimal] | None:
@@ -353,8 +362,6 @@ class CalibrationService:
         qualified: list[QualifiedCandidate] = []
 
         for rank, (symbol, abs_change) in enumerate(top_symbols, start=1):
-            if len(qualified) >= self._candidates_target:
-                break
             result.scanned_symbols += 1
             try:
                 klines = await fetch_lookback_klines(
@@ -366,6 +373,13 @@ class CalibrationService:
                     end_time_ms=end_ms,
                 )
             except (BitunixAPIError, BitunixSignatureError) as exc:
+                draft = draft_from_fetch_failure(
+                    symbol=symbol,
+                    scan_rank=rank,
+                    abs_change_24h_pct=abs_change,
+                    error=str(exc),
+                )
+                result.symbol_run_drafts.append(draft)
                 result.failed_symbols.append(
                     {"symbol": symbol, "reason": "fetch_failed", "error": str(exc)}
                 )
@@ -375,7 +389,22 @@ class CalibrationService:
                 klines, choppiness_max=self._wf_choppiness_max
             )
             best = eval_out.get("best_variation")
-            if not eval_out.get("ok") or best is None:
+            meets_backtest = bool(eval_out.get("ok") and best is not None)
+            take_as_candidate = (
+                meets_backtest and len(qualified) < self._candidates_target
+            )
+
+            draft = draft_from_evaluation(
+                symbol=symbol,
+                scan_rank=rank,
+                abs_change_24h_pct=abs_change,
+                kline_samples=len(klines),
+                eval_out=eval_out,
+                is_selected_candidate=take_as_candidate,
+            )
+            result.symbol_run_drafts.append(draft)
+
+            if not meets_backtest:
                 result.failed_symbols.append(
                     {
                         "symbol": symbol,
@@ -383,6 +412,9 @@ class CalibrationService:
                         "variations": eval_out.get("variations"),
                     }
                 )
+                continue
+
+            if not take_as_candidate:
                 continue
 
             tp_roi = Decimal(str(best["tp_roi_pct"]))

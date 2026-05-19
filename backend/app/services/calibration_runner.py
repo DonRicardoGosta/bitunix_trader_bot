@@ -30,6 +30,7 @@ from app.services.calibration import (
     CalibrationService,
     load_result_from_summary,
 )
+from app.services.calibration_symbol_runs import persist_symbol_runs
 from app.services.candidate_backtest import BACKTEST_LOOKBACK_DAYS
 from app.services.live_bus import DEFAULT_INVALIDATION_TOPICS, publish_invalidate
 from app.services.strategy_runtime_config import get_top_signal_entries_config
@@ -175,6 +176,10 @@ async def run_calibration(
             else:
                 db_row.status = CalibrationStatus.SUCCESS
                 db_row.summary = result.to_dict()
+                if result.symbol_run_drafts:
+                    await persist_symbol_runs(
+                        session, row_id, result.symbol_run_drafts
+                    )
             await audit.record(
                 session,
                 f"calibration.{db_row.status.value.lower()}",

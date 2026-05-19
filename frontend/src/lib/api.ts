@@ -226,6 +226,38 @@ export interface CalibrationRun {
   finished_at: string | null;
 }
 
+export interface CalibrationSymbolRun {
+  id: number;
+  calibration_id: number;
+  symbol: string;
+  scan_rank: number;
+  abs_change_24h_pct: string;
+  reason: string;
+  is_qualified: boolean;
+  kline_samples: number | null;
+  best_variation_label: string | null;
+  best_tp_roi_pct: string | null;
+  best_sl_roi_pct: string | null;
+  best_win_rate_pct: string | null;
+  max_win_rate_pct: string | null;
+  best_total_trades: number | null;
+  fetch_error: string | null;
+  variations: Array<{
+    label: string;
+    tp_roi_pct: string;
+    sl_roi_pct: string;
+    resolved_tp_win_rate_pct: string | null;
+    meets_target: boolean;
+    summary?: {
+      total_trades: number;
+      tp_wins: number;
+      sl_losses: number;
+      no_result: number;
+    };
+  }> | null;
+  created_at: string | null;
+}
+
 export interface AuditEventRow {
   id: number;
   level: "DEBUG" | "INFO" | "WARNING" | "ERROR" | null;
@@ -876,6 +908,35 @@ export const api = {
     }>("/api/calibration/latest"),
   calibrationRuns: (limit = 20) =>
     request<CalibrationRun[]>(`/api/calibration/runs?limit=${limit}`),
+  calibrationSymbolRuns: (
+    calibrationId: number,
+    params?: {
+      symbol?: string;
+      qualified_only?: boolean;
+      order_by?: "scan_rank" | "max_win_rate" | "best_win_rate";
+      limit?: number;
+      offset?: number;
+    },
+  ) => {
+    const usp = new URLSearchParams();
+    if (params?.symbol) usp.set("symbol", params.symbol);
+    if (params?.qualified_only !== undefined) {
+      usp.set("qualified_only", String(params.qualified_only));
+    }
+    if (params?.order_by) usp.set("order_by", params.order_by);
+    usp.set("limit", String(params?.limit ?? 200));
+    usp.set("offset", String(params?.offset ?? 0));
+    const q = usp.toString();
+    return request<{
+      calibration_id: number;
+      total: number;
+      limit: number;
+      offset: number;
+      items: CalibrationSymbolRun[];
+    }>(
+      `/api/calibration/runs/${calibrationId}/symbols${q ? `?${q}` : ""}`,
+    );
+  },
   triggerCalibration: () =>
     request<{ queued: boolean }>(`/api/calibration/run`, { method: "POST" }),
   events: (params?: {
