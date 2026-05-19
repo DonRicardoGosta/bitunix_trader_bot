@@ -142,8 +142,9 @@ async def test_calibration_service_run_calibrates_top_symbols(
     captured_leverage: list[int] = []
 
     def _fake_eval(_klines, **kwargs):
-        if "leverage" in kwargs:
-            captured_leverage.append(int(kwargs["leverage"]))
+        lev = int(kwargs.get("leverage", 20))
+        captured_leverage.append(lev)
+        win = "88.00" if lev >= 50 else "85.00"
         return {
             "ok": True,
             "reason": "qualified",
@@ -152,7 +153,7 @@ async def test_calibration_service_run_calibrates_top_symbols(
                 "label": "TP100/SL50",
                 "tp_roi_pct": "100",
                 "sl_roi_pct": "50",
-                "resolved_tp_win_rate_pct": "85.00",
+                "resolved_tp_win_rate_pct": win,
                 "summary": {"total_trades": 5},
             },
         }
@@ -187,7 +188,7 @@ async def test_calibration_service_run_calibrates_top_symbols(
     assert result.global_tp_move_pct is not None
     assert len(fake.change_leverage_calls) == 2
     assert all(c["leverage"] == 50 for c in fake.change_leverage_calls)
-    assert captured_leverage == [50, 50]
+    assert captured_leverage == [20, 50, 20, 50]
 
 
 @pytest.mark.asyncio

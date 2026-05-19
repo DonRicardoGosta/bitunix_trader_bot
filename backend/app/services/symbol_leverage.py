@@ -24,6 +24,21 @@ def resolve_leverage_for_symbol(
     return effective_order_leverage(pair_max), pair_max
 
 
+async def ensure_symbol_leverage(
+    client: BitunixClient,
+    *,
+    symbol: str,
+    leverage: int,
+    margin_coin: str,
+) -> None:
+    """Tőkeáttétel beállítása a számlán (választott érték, pl. backtest győztes)."""
+    await client.change_leverage(
+        symbol=symbol.upper(),
+        leverage=int(leverage),
+        margin_coin=margin_coin,
+    )
+
+
 async def ensure_symbol_max_leverage(
     client: BitunixClient,
     *,
@@ -33,8 +48,9 @@ async def ensure_symbol_max_leverage(
 ) -> tuple[int, int]:
     """Max. engedélyezett leverage a számlán (live trade előtt / kalibráció scan)."""
     eff, pair_max = resolve_leverage_for_symbol(symbol, pair_meta)
-    await client.change_leverage(
-        symbol=symbol.upper(),
+    await ensure_symbol_leverage(
+        client,
+        symbol=symbol,
         leverage=eff,
         margin_coin=margin_coin,
     )

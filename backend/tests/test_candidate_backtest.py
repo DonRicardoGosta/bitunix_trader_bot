@@ -5,9 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
+from app.services import candidate_backtest as cb_mod
 from app.services.candidate_backtest import (
     BACKTEST_ENTRY_MINUTE,
     entry_bar_indices,
+    evaluate_symbol_best_leverage,
     evaluate_symbol_variations,
     is_hour_quarter_entry_bar,
     simulate_variation_on_klines,
@@ -87,3 +91,89 @@ def test_evaluate_symbol_variations_insufficient_data() -> None:
     out = evaluate_symbol_variations(klines)
     assert out["ok"] is False
     assert out["reason"] == "insufficient_klines"
+
+
+def test_evaluate_symbol_best_leverage_picks_higher_win_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    klines = [
+        {
+            "time": Decimal(i),
+            "open": Decimal(1),
+            "high": Decimal(1),
+            "low": Decimal(1),
+            "close": Decimal(1),
+        }
+        for i in range(40)
+    ]
+
+    def _fake_eval(
+        _klines: list,
+        *,
+        leverage: int,
+        choppiness_max: Decimal,
+    ) -> dict:
+        if leverage == 20:
+            return {
+                "ok": True,
+                "reason": "qualified",
+                "variations": [],
+                "best_variation": {
+                    "label": "TP50/SL50",
+                    "tp_roi_pct": "50",
+                    "sl_roi_pct": "50",
+                    "resolved_tp_win_rate_pct": "82.00",
+                    "meets_target": True,
+                    "summary": {"total_trades": 4},
+                },
+            }
+        return {
+            "ok": True,
+            "reason": "qualified",
+            "variations": [],
+            "best_variation": {
+                "label": "TP100/SL50",
+                "tp_roi_pct": "100",
+                "sl_roi_pct": "50",
+                "resolved_tp_win_rate_pct": "91.00",
+                "meets_target": True,
+                "summary": {"total_trades": 5},
+            },
+        }
+
+    monkeypatch.setattr(cb_mod, "evaluate_symbol_variations", _fake_eval)
+    out = evaluate_symbol_best_leverage(klines, pair_max_leverage=200)
+    assert out["selected_leverage"] == 125
+    assert out["best_variation"]["tp_roi_pct"] == "100"
+    assert len(out["leverage_runs"]) == 2
+
+
+def test_evaluate_symbol_best_leverage_single_run_when_max_is_20(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    klines = [
+        {
+            "time": Decimal(i),
+            "open": Decimal(1),
+            "high": Decimal(1),
+            "low": Decimal(1),
+            "close": Decimal(1),
+        }
+        for i in range(40)
+    ]
+    calls: list[int] = []
+
+    def _fake_eval(_klines: list, *, leverage: int, choppiness_max: Decimal) -> dict:
+        calls.append(leverage)
+        return {
+            "ok": False,
+            "reason": "no_variation_meets_target",
+            "variations": [],
+            "best_variation": None,
+        }
+
+    monkeypatch.setattr(cb_mod, "evaluate_symbol_variations", _fake_eval)
+    out = evaluate_symbol_best_leverage(klines, pair_max_leverage=20)
+    assert out["selected_leverage"] == 20
+    assert calls == [20]
+    assert len(out["leverage_runs"]) == 1

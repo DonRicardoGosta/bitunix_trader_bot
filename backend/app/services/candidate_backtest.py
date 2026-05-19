@@ -210,6 +210,77 @@ def evaluate_symbol_variations(
     }
 
 
+def _leverage_run_score(best: dict[str, Any] | None) -> tuple[int, Decimal, int]:
+    """Összehasonlításhoz: (qualifikált?, win rate %, trade szám) — nagyobb jobb."""
+    if best is None:
+        return (0, Decimal("-1"), 0)
+    rate_raw = best.get("resolved_tp_win_rate_pct")
+    rate = Decimal(str(rate_raw)) if rate_raw is not None else Decimal("-1")
+    qualified = 1 if best.get("meets_target") or rate >= BACKTEST_TARGET_WIN_RATE_PCT else 0
+    trades = int((best.get("summary") or {}).get("total_trades", 0))
+    return (qualified, rate, trades)
+
+
+def evaluate_symbol_best_leverage(
+    klines: list[dict[str, Decimal]],
+    *,
+    pair_max_leverage: int,
+    choppiness_max: Decimal = Decimal("1.72"),
+) -> dict[str, Any]:
+    """Backtest 20× és párhoz max. leverage mellett; a jobb eredményt adja vissza.
+
+    A kiválasztott leverage mező: ``selected_leverage``. A futások összehasonlítása:
+    ``leverage_runs`` (audit / summary).
+    """
+    from app.services.risk import effective_order_leverage
+
+    ref = BACKTEST_REFERENCE_LEVERAGE
+    max_eff = effective_order_leverage(pair_max_leverage)
+    levers: list[int] = [ref]
+    if max_eff != ref:
+        levers.append(max_eff)
+
+    runs: list[dict[str, Any]] = []
+    for lev in levers:
+        ev = evaluate_symbol_variations(
+            klines,
+            choppiness_max=choppiness_max,
+            leverage=lev,
+        )
+        runs.append({"leverage": lev, "evaluation": ev})
+
+    best_run = runs[0]
+    best_key = _leverage_run_score(runs[0]["evaluation"].get("best_variation"))
+    for run in runs[1:]:
+        key = _leverage_run_score(run["evaluation"].get("best_variation"))
+        if key > best_key:
+            best_key = key
+            best_run = run
+
+    chosen_ev = best_run["evaluation"]
+    leverage_runs = [
+        {
+            "leverage": r["leverage"],
+            "ok": bool(r["evaluation"].get("ok")),
+            "reason": r["evaluation"].get("reason"),
+            "best_win_rate_pct": (
+                (r["evaluation"].get("best_variation") or {}).get(
+                    "resolved_tp_win_rate_pct"
+                )
+            ),
+            "best_variation_label": (
+                (r["evaluation"].get("best_variation") or {}).get("label")
+            ),
+        }
+        for r in runs
+    ]
+    return {
+        **chosen_ev,
+        "selected_leverage": int(best_run["leverage"]),
+        "leverage_runs": leverage_runs,
+    }
+
+
 @dataclass(frozen=True)
 class QualifiedCandidate:
     """Egy backtesten átment coin + ajánlott TP/SL ROI."""
