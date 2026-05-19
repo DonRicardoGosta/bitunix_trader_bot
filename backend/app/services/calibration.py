@@ -4,10 +4,12 @@ Algoritmus röviden:
 1. Top ``scan_limit`` (alap 500) abszolút 24h mozgó szimbólum, egyesével a
    legnagyobbtól.
 2. Mindegyikre 7 nap 15 perces kline (paginált lekérés).
-3. Fix TP/SL margin-ROI variációk (50/50, 100/50, 150/100, 200/100) – csak
+3. Páronként max. tőkeáttétel lekérése (``trading_pairs``) + ``change_leverage`` a
+   számlán — ugyanaz, mint live belépésnél; a backtest ezzel a leverage-rel fut.
+4. Fix TP/SL margin-ROI variációk (50/50, 100/50, 150/100, 200/100) – csak
    TP és SL zárhat; belépés csak óránként :15-kor.
-4. Ha legalább egy variáció ≥80%% TP win rate → jelölt (max. ``candidates_target``).
-5. Minden scan-elt coin eredménye a ``tpsl_calibration_symbol_runs`` táblában;
+5. Ha legalább egy variáció ≥80%% TP win rate → jelölt (max. ``candidates_target``).
+6. Minden scan-elt coin eredménye a ``tpsl_calibration_symbol_runs`` táblában;
    a summary csak összesítő + ``qualified_candidates`` (stratégia / UI).
 """
 
@@ -21,6 +23,7 @@ from typing import Any
 
 from app.bitunix.client import BitunixClient
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
+from app.config import get_settings
 from app.services.calibration_symbol_runs import (
     SymbolRunDraft,
     draft_from_evaluation,
@@ -49,6 +52,8 @@ class SymbolCalibration:
     backtest_win_rate_pct: Decimal | None = None
     variation_label: str | None = None
     backtest_variations: list[dict[str, Any]] | None = None
+    leverage: int | None = None
+    pair_max_leverage: int | None = None
 
 
 @dataclass
@@ -123,6 +128,8 @@ class CalibrationResult:
                     ),
                     "variation_label": s.variation_label,
                     "backtest_variations": s.backtest_variations,
+                    "leverage": s.leverage,
+                    "pair_max_leverage": s.pair_max_leverage,
                 }
                 for sym, s in self.per_symbol.items()
             },
@@ -359,7 +366,19 @@ class CalibrationService:
             result.finished_at = datetime.now(UTC)
             return result
 
+        settings = get_settings()
+        margin_coin = settings.bitunix_margin_coin
+
         tickers_raw = await self._client.get_all_tickers()
+        pairs_raw = await self._client.get_trading_pairs()
+        from app.services.trading_pairs_meta import index_trading_pairs
+
+        pair_meta = index_trading_pairs(pairs_raw)
+        from app.services.symbol_leverage import (
+            SymbolLeverageError,
+            ensure_symbol_max_leverage,
+        )
+
         top_symbols = rank_top_symbols(tickers_raw, top_n=self._top_n)
         end_ms = int(datetime.now(UTC).timestamp() * 1000)
         qualified: list[QualifiedCandidate] = []
@@ -376,6 +395,50 @@ class CalibrationService:
 
         for rank, (symbol, abs_change) in enumerate(top_symbols, start=1):
             result.scanned_symbols += 1
+            try:
+                leverage, pair_max_lev = await ensure_symbol_max_leverage(
+                    self._client,
+                    symbol=symbol,
+                    pair_meta=pair_meta,
+                    margin_coin=margin_coin,
+                )
+            except SymbolLeverageError as exc:
+                draft = draft_from_fetch_failure(
+                    symbol=symbol,
+                    scan_rank=rank,
+                    abs_change_24h_pct=abs_change,
+                    error=str(exc),
+                )
+                draft.reason = "no_trading_pair_metadata"
+                result.symbol_run_drafts.append(draft)
+                result.failed_symbols.append(
+                    {
+                        "symbol": symbol,
+                        "reason": "no_trading_pair_metadata",
+                        "error": str(exc),
+                    }
+                )
+                await _flush_symbol_run(draft)
+                continue
+            except (BitunixAPIError, BitunixSignatureError) as exc:
+                draft = draft_from_fetch_failure(
+                    symbol=symbol,
+                    scan_rank=rank,
+                    abs_change_24h_pct=abs_change,
+                    error=str(exc),
+                )
+                draft.reason = "leverage_setup_failed"
+                result.symbol_run_drafts.append(draft)
+                result.failed_symbols.append(
+                    {
+                        "symbol": symbol,
+                        "reason": "leverage_setup_failed",
+                        "error": str(exc),
+                    }
+                )
+                await _flush_symbol_run(draft)
+                continue
+
             try:
                 klines = await fetch_lookback_klines(
                     self._client,
@@ -400,7 +463,9 @@ class CalibrationService:
                 continue
 
             eval_out = evaluate_symbol_variations(
-                klines, choppiness_max=self._wf_choppiness_max
+                klines,
+                choppiness_max=self._wf_choppiness_max,
+                leverage=leverage,
             )
             best = eval_out.get("best_variation")
             meets_backtest = bool(eval_out.get("ok") and best is not None)
@@ -415,6 +480,7 @@ class CalibrationService:
                 kline_samples=len(klines),
                 eval_out=eval_out,
                 is_selected_candidate=take_as_candidate,
+                leverage=leverage,
             )
             result.symbol_run_drafts.append(draft)
 
@@ -437,7 +503,7 @@ class CalibrationService:
             sl_roi = Decimal(str(best["sl_roi_pct"]))
             win_rate = Decimal(str(best["resolved_tp_win_rate_pct"]))
             tp_move, sl_move = implied_price_move_pct_from_roi(
-                leverage=20,
+                leverage=leverage,
                 tp_roi_pct=tp_roi,
                 sl_roi_pct=sl_roi,
             )
@@ -455,6 +521,8 @@ class CalibrationService:
                 backtest_win_rate_pct=win_rate,
                 variation_label=str(best.get("label", "")),
                 backtest_variations=list(eval_out.get("variations") or []),
+                leverage=leverage,
+                pair_max_leverage=pair_max_lev,
             )
             result.per_symbol[symbol] = sym_cal
             cand = QualifiedCandidate(
@@ -467,6 +535,8 @@ class CalibrationService:
                 variation_label=str(best.get("label", "")),
                 trade_count=int((best.get("summary") or {}).get("total_trades", 0)),
                 variations=list(eval_out.get("variations") or []),
+                leverage=leverage,
+                pair_max_leverage=pair_max_lev,
             )
             qualified.append(cand)
             await _flush_symbol_run(draft)
@@ -532,6 +602,16 @@ def load_result_from_summary(summary: dict[str, Any]) -> CalibrationResult:
                 ),
                 variation_label=payload.get("variation_label"),
                 backtest_variations=payload.get("backtest_variations"),
+                leverage=(
+                    int(payload["leverage"])
+                    if payload.get("leverage") is not None
+                    else None
+                ),
+                pair_max_leverage=(
+                    int(payload["pair_max_leverage"])
+                    if payload.get("pair_max_leverage") is not None
+                    else None
+                ),
             )
         except (KeyError, TypeError, ValueError):
             continue

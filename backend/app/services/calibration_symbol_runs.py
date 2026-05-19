@@ -84,6 +84,7 @@ def draft_from_evaluation(
     kline_samples: int,
     eval_out: dict[str, Any],
     is_selected_candidate: bool,
+    leverage: int,
 ) -> SymbolRunDraft:
     """``evaluate_symbol_variations`` kimenetéből draft (qualified vagy elutasított)."""
     variations = list(eval_out.get("variations") or [])
@@ -112,7 +113,7 @@ def draft_from_evaluation(
         no_r = int(summary.get("no_result", 0))
         if best_tp is not None and best_sl is not None:
             tp_move, sl_move = implied_price_move_pct_from_roi(
-                leverage=20,
+                leverage=leverage,
                 tp_roi_pct=best_tp,
                 sl_roi_pct=best_sl,
             )

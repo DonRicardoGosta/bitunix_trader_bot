@@ -169,6 +169,7 @@ def test_draft_from_evaluation_not_selected() -> None:
         kline_samples=100,
         eval_out=eval_out,
         is_selected_candidate=False,
+        leverage=20,
     )
     assert draft.is_qualified is False
     assert draft.max_win_rate_pct == Decimal("90.00")

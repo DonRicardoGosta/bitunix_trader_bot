@@ -33,13 +33,38 @@ class _FakeClient:
         *,
         tickers: dict,
         klines_by_symbol: dict[str, dict],
+        max_leverage: str = "50",
     ) -> None:
         self._tickers = tickers
         self._klines = klines_by_symbol
+        self._max_leverage = max_leverage
         self.kline_calls: list[str] = []
+        self.change_leverage_calls: list[dict] = []
 
     async def get_all_tickers(self) -> dict:
         return self._tickers
+
+    async def get_trading_pairs(self) -> dict:
+        symbols = [
+            item["symbol"]
+            for item in (self._tickers.get("data") or [])
+            if isinstance(item, dict) and item.get("symbol")
+        ]
+        return {
+            "data": [
+                {
+                    "symbol": sym,
+                    "maxLeverage": self._max_leverage,
+                    "basePrecision": "3",
+                    "pricePrecision": "2",
+                }
+                for sym in symbols
+            ]
+        }
+
+    async def change_leverage(self, **kwargs) -> dict:
+        self.change_leverage_calls.append(kwargs)
+        return {"dryRun": True}
 
     async def get_klines(self, symbol: str, **kwargs) -> dict:
         self.kline_calls.append(symbol)
@@ -114,7 +139,11 @@ async def test_calibration_service_run_calibrates_top_symbols(
     async def _fake_fetch(_client, symbol, **kwargs):
         return _synth_15m_klines()
 
+    captured_leverage: list[int] = []
+
     def _fake_eval(_klines, **kwargs):
+        if "leverage" in kwargs:
+            captured_leverage.append(int(kwargs["leverage"]))
         return {
             "ok": True,
             "reason": "qualified",
@@ -154,7 +183,41 @@ async def test_calibration_service_run_calibrates_top_symbols(
     for sc in result.per_symbol.values():
         assert sc.backtest_win_rate_pct is not None
         assert sc.tp_roi_pct == Decimal("100")
+        assert sc.leverage == 50
     assert result.global_tp_move_pct is not None
+    assert len(fake.change_leverage_calls) == 2
+    assert all(c["leverage"] == 50 for c in fake.change_leverage_calls)
+    assert captured_leverage == [50, 50]
+
+
+@pytest.mark.asyncio
+async def test_calibration_skips_symbol_without_trading_pair_meta(
+    monkeypatch, _noop_symbol_persist
+) -> None:
+    from app.services import kline_fetch as kf_mod
+
+    async def _fake_fetch(_client, symbol, **kwargs):
+        return _synth_15m_klines()
+
+    monkeypatch.setattr(kf_mod, "fetch_lookback_klines", _fake_fetch)
+
+    tickers = {"data": [_ticker_pair("AAA", "110", "100")]}
+    fake = _FakeClient(tickers=tickers, klines_by_symbol={})
+    async def _empty_pairs() -> dict:
+        return {"data": []}
+
+    fake.get_trading_pairs = _empty_pairs  # type: ignore[method-assign]
+
+    service = CalibrationService(
+        client=fake,  # type: ignore[arg-type]
+        calibration_id=1,
+        top_n=1,
+        candidates_target=1,
+    )
+    result = await service.run()
+    assert result.per_symbol == {}
+    assert result.failed_symbols[0]["reason"] == "no_trading_pair_metadata"
+    assert fake.change_leverage_calls == []
 
 
 @pytest.mark.asyncio
@@ -248,6 +311,12 @@ async def test_run_calibration_persists_row_and_audit_events(monkeypatch) -> Non
 
         async def get_all_tickers(self):
             return await self._wrapped.get_all_tickers()
+
+        async def get_trading_pairs(self):
+            return await self._wrapped.get_trading_pairs()
+
+        async def change_leverage(self, **kwargs):
+            return await self._wrapped.change_leverage(**kwargs)
 
         async def get_positions(self):
             return {"data": []}

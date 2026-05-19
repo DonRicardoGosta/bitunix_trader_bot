@@ -24,6 +24,7 @@ from app.services.tpsl import implied_price_move_pct_from_roi
 BACKTEST_LOOKBACK_DAYS = 7
 BACKTEST_TARGET_WIN_RATE_PCT = Decimal("80")
 BACKTEST_MIN_TRADES = 2
+# Fallback, ha nincs trading_pairs meta (kalibráció ilyen coin-t kihagy).
 BACKTEST_REFERENCE_LEVERAGE = 20
 BACKTEST_ENTRY_MINUTE = 15
 BACKTEST_MIN_TRAIN_BARS = 15
@@ -222,14 +223,16 @@ class QualifiedCandidate:
     variation_label: str
     trade_count: int
     variations: list[dict[str, Any]]
+    leverage: int
+    pair_max_leverage: int | None = None
 
     def to_summary_dict(self) -> dict[str, Any]:
         tp_move, sl_move = implied_price_move_pct_from_roi(
-            leverage=BACKTEST_REFERENCE_LEVERAGE,
+            leverage=self.leverage,
             tp_roi_pct=self.tp_roi_pct,
             sl_roi_pct=self.sl_roi_pct,
         )
-        return {
+        out: dict[str, Any] = {
             "symbol": self.symbol,
             "rank": self.rank,
             "abs_change_24h_pct": str(self.abs_change_24h_pct),
@@ -241,4 +244,8 @@ class QualifiedCandidate:
             "variation_label": self.variation_label,
             "trade_count": self.trade_count,
             "variations": self.variations,
+            "leverage": self.leverage,
         }
+        if self.pair_max_leverage is not None:
+            out["pair_max_leverage"] = self.pair_max_leverage
+        return out
