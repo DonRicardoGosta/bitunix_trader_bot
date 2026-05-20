@@ -23,6 +23,7 @@ from app.services.calibration import parse_klines
 from app.services.strategy.base import StrategyContext
 from app.services.strategy.mover_ranking import Mover
 from app.services.runtime_settings import set_runtime_bool
+from app.services.strategy import top_signal_entries as tse_mod
 from app.services.strategy.top_signal_entries import (
     TopSignalEntriesStrategy,
     entry_side_from_mover_and_klines,
@@ -377,6 +378,61 @@ def _highlev_klines_raw() -> dict:
 
 
 @pytest.mark.asyncio
+async def test_strategy_sets_leverage_before_compute_quantity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live belépés: change_leverage a qty számítás előtt fut."""
+    leverage_done = False
+
+    async def _ensure_after_leverage(*_a, **_k) -> None:
+        nonlocal leverage_done
+        leverage_done = True
+
+    def _qty_after_leverage(**kwargs):
+        assert leverage_done, "compute_quantity must run after change_leverage"
+        from app.services.risk import compute_quantity as real
+
+        return real(**kwargs)
+
+    monkeypatch.setattr(tse_mod, "ensure_symbol_leverage", _ensure_after_leverage)
+    monkeypatch.setattr(tse_mod, "compute_quantity", _qty_after_leverage)
+
+    await _seed_fresh_calibration()
+    async with AsyncSessionLocal() as session:
+        await session.execute(sa.delete(Order))
+        await session.commit()
+
+    fake = _FakeClient(
+        tickers=_make_tickers(),
+        trading_pairs=_make_pairs(),
+        account={"data": {"available": "1000"}},
+        klines_by_symbol={
+            "BBB": _bbb_klines_raw(),
+            "CCC": _ccc_klines_raw(),
+        },
+    )
+    strategy = TopSignalEntriesStrategy()
+    async with AsyncSessionLocal() as session:
+        await set_runtime_bool(session, "strategy_top_signal_entries_enabled", True)
+        await session.commit()
+    async with AsyncSessionLocal() as session:
+        ctx = make_strategy_context(
+            session,
+            fake,
+            triggered_by="test",
+            count=2,
+            scan_limit=60,
+            kline_lookahead=10,
+            wf_gate_enabled=False,
+            min_tp_roi_pct="0",
+        )
+        await strategy.run(ctx)
+        await session.commit()
+
+    assert leverage_done
+
+
+@pytest.mark.asyncio
 async def test_top_signal_entries_caps_leverage_for_order_request() -> None:
     """maxLeverage=200 a tőzsdén → belső rendelés legfeljebb 125 (OrderRequest)."""
     await _seed_fresh_calibration()
@@ -436,7 +492,8 @@ async def test_top_signal_entries_caps_leverage_for_order_request() -> None:
     assert placed.get("leverage_capped") is True
     assert placed.get("pair_max_leverage") == 200
     assert len(fake.place_order_calls) == 1
-    assert len(fake.change_leverage_calls) == 1
+    # Stratégia (qty előtt) + prepare_open_entry_order (place_order előtt)
+    assert len(fake.change_leverage_calls) == 2
     assert fake.change_leverage_calls[0]["leverage"] == 125
     assert fake.change_leverage_calls[0]["symbol"] == "HIGHLEV"
 

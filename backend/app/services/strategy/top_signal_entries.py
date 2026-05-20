@@ -38,6 +38,7 @@ from typing import Any
 import sqlalchemy as sa
 
 from app.bitunix.exceptions import BitunixAPIError, BitunixSignatureError
+from app.config import get_settings
 from app.db import audit
 from app.db.models import AuditLevel, Order
 from app.schemas.trading import OrderRequest
@@ -58,6 +59,7 @@ from app.services.coin_analyze import (
     walk_forward_live_gate_from_klines,
 )
 from app.services.risk import compute_margin, compute_quantity, effective_order_leverage
+from app.services.symbol_leverage import ensure_symbol_leverage
 from app.services.strategy.base import Strategy, StrategyContext, StrategyResult
 from app.services.entry_schedule import LIVE_ENTRY_MINUTES, is_live_entry_window_now
 from app.services.strategy.mover_ranking import (
@@ -120,6 +122,28 @@ def entry_side_from_mover_and_klines(
         return None, "short_range_ok_but_no_kline_confirm"
 
     return None, "range_or_direction_mismatch"
+
+
+def resolve_entry_leverage(
+    symbol: str,
+    meta: PairMeta,
+    calibration: Any | None,
+) -> tuple[int, int, bool]:
+    """Belépési tőkeáttétel: kalibráció győztese, különben párhoz max (clamp 125).
+
+    Returns:
+        ``(leverage, pair_max_leverage, leverage_capped)``.
+    """
+    pair_max = max(1, int(meta.max_leverage))
+    leverage = effective_order_leverage(pair_max)
+    if calibration is not None:
+        sym_cal = calibration.per_symbol.get(symbol)
+        if sym_cal is not None and sym_cal.leverage is not None:
+            leverage = effective_order_leverage(int(sym_cal.leverage))
+            if sym_cal.pair_max_leverage is not None:
+                pair_max = max(1, int(sym_cal.pair_max_leverage))
+    capped = leverage < pair_max
+    return leverage, pair_max, capped
 
 
 class TopSignalEntriesStrategy(Strategy):
@@ -645,11 +669,34 @@ class TopSignalEntriesStrategy(Strategy):
             )
             return out
 
-        pair_max_leverage = max(1, int(meta.max_leverage))
-        leverage = effective_order_leverage(pair_max_leverage)
-        if leverage < pair_max_leverage:
+        leverage, pair_max_leverage, leverage_capped = resolve_entry_leverage(
+            symbol, meta, calibration
+        )
+        if leverage_capped:
             out["pair_max_leverage"] = pair_max_leverage
             out["leverage_capped"] = True
+
+        settings = get_settings()
+        try:
+            await ensure_symbol_leverage(
+                ctx.client,
+                symbol=symbol,
+                leverage=leverage,
+                margin_coin=settings.bitunix_margin_coin,
+            )
+        except (BitunixAPIError, BitunixSignatureError) as exc:
+            out["placed"] = False
+            out["reason"] = "leverage_set_failed"
+            out["error"] = str(exc)
+            await audit.record(
+                ctx.session,
+                "strategy.top_signal_entries.leverage_set_failed",
+                level=AuditLevel.WARNING,
+                message=f"{symbol} tőkeáttétel beállítás sikertelen: {exc}",
+                payload=out,
+                strategy_name=self.name,
+            )
+            return out
 
         qty = compute_quantity(
             margin_usdt=margin_usdt,
